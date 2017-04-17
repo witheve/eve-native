@@ -296,13 +296,14 @@ pub mod tests {
 
         let mut results: Vec<u32> = vec![];
         start_ns = time::precise_time_ns();
-        let mut results = vec![];
+        let mut all_results = vec![];
         for _ in 0..20 {
-            results = program.exec_query();
+            let results = program.exec_query();
+            all_results.push(results);
         }
         end_ns = time::precise_time_ns();
         println!("Run took {:?}", (end_ns - start_ns) as f64 / 20_000_000.0);
-        println!("Results: {:?}", results.len());
+        println!("Results: {:?}", all_results[0].len());
         // println!("Results: {:?}", results);
     }
 
@@ -348,7 +349,7 @@ pub mod tests {
 
     pub fn do_bench(b: &mut Bencher, func: fn(&mut Program) -> Vec<Constraint>) {
         let mut program = Program::new();
-        setup(&mut program, 10);
+        setup(&mut program, 1000);
 
         let constraints = func(&mut program);
 
@@ -356,12 +357,13 @@ pub mod tests {
         program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
         let mut dur = start.elapsed();
         println!("Compile took {:?}", (dur.as_secs() * 1000) as f32 + (dur.subsec_nanos() as f32) / 1_000_000.0);
-        let mut results = vec![];
+        let mut all_results = vec![];
         // start = Instant::now();
         b.iter(|| {
-            results = program.exec_query();
+            let results = program.exec_query();
+            all_results.push(results);
         });
-        println!("results: {:?}", results.len());
+        println!("results: {:?}", all_results[0].len());
     }
 
     #[bench] pub fn bench_lubm_1(b: &mut Bencher) { do_bench(b, lubm_1); }
@@ -380,7 +382,7 @@ pub mod tests {
     // #[test]
     pub fn test_lubm() {
         let mut program = Program::new();
-        setup(&mut program, 10);
+        setup(&mut program, 1000);
 
         println!("\nQuery 1");
         let query_1 = lubm_1(&mut program);
