@@ -128,7 +128,7 @@ impl HashIndexLevel {
 
     pub fn propose(&self, iter:&mut EstimateIter, e:u32, v:u32) {
         match *iter {
-            EstimateIter::Scan { ref mut estimate, ref mut output, ref mut values_ptr, ref mut len, ref pos } => {
+            EstimateIter::Scan { ref mut estimate, ref mut output, ref mut values_ptr, ref mut len, ref pos, ref constraint } => {
                 if e > 0 {
                     if let Some(vs) = self.find_values(e) {
                         let vs_len = vs.len();
@@ -217,6 +217,7 @@ impl HashIndex {
         added
     }
 
+    #[inline(never)]
     pub fn check(&self, e: u32, a:u32, v:u32) -> bool {
         if e > 0 && a > 0 && v > 0 {
             self.eavs.contains_key(&(e,a,v))
@@ -255,7 +256,7 @@ impl HashIndex {
                 vals.push(*key);
             }
             match iter {
-                &mut EstimateIter::Scan { ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output } => {
+                &mut EstimateIter::Scan { ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output, ref constraint } => {
                     let attrs_len = self.attrs.len();
                     *output = 1;
                     *pos = 0;

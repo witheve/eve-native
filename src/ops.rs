@@ -6,6 +6,8 @@
 //  - index insert
 //  - functions
 
+extern crate time;
+
 use indexes::{HashIndex, DistinctIndex, DistinctIter};
 use std::collections::HashMap;
 use std::mem::transmute;
@@ -13,6 +15,8 @@ use std::time::Instant;
 use std::collections::hash_map::Entry;
 use std::cmp;
 use std::slice;
+use std::fmt;
+
 
 //-------------------------------------------------------------------------
 // Change
@@ -102,12 +106,13 @@ impl EstimateIterPool {
 
     pub fn release(&mut self, mut iter:EstimateIter) {
         match iter {
-            EstimateIter::Scan {ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output} => {
+            EstimateIter::Scan {ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output, ref mut constraint} => {
                 *estimate = 0;
                 *pos = 0;
                 *values_ptr = self.empty_values.as_ptr();
                 *len = 0;
                 *output = 0;
+                *constraint = 0;
             },
         }
         self.available.push(iter);
@@ -116,7 +121,7 @@ impl EstimateIterPool {
     pub fn get(&mut self) -> EstimateIter {
         match self.available.pop() {
             Some(iter) => iter,
-            None => EstimateIter::Scan { estimate:0, pos:0, values_ptr:self.empty_values.as_ptr(), len:0, output:0 },
+            None => EstimateIter::Scan { estimate:0, pos:0, values_ptr:self.empty_values.as_ptr(), len:0, output:0, constraint: 0 },
         }
     }
 }
@@ -124,14 +129,14 @@ impl EstimateIterPool {
 
 #[derive(Clone, Debug)]
 pub enum EstimateIter {
-    Scan {estimate: u32, pos: u32, values_ptr: *const u32, len:usize, output: u32},
+    Scan {estimate: u32, pos: u32, values_ptr: *const u32, len:usize, output: u32, constraint: u32},
     // Function {estimate: u32, args:Vec<Value>, func: fn(args:Vec<Value>), output: u32},
 }
 
 impl EstimateIter {
     pub fn estimate(&self) -> u32 {
         match self {
-            &EstimateIter::Scan {ref estimate, ref pos, ref values_ptr, ref len, ref output} => {
+            &EstimateIter::Scan {ref estimate, ref pos, ref values_ptr, ref len, ref output, ref constraint} => {
                 *estimate
             },
         }
@@ -139,7 +144,7 @@ impl EstimateIter {
 
     pub fn next(&mut self, row:&mut Row) -> bool {
         match self {
-            &mut EstimateIter::Scan {ref estimate, ref mut pos, ref values_ptr, ref len, ref output} => {
+            &mut EstimateIter::Scan {ref estimate, ref mut pos, ref values_ptr, ref len, ref output, ref constraint} => {
                 if *pos >= *len as u32 {
                     false
                 } else {
@@ -156,7 +161,7 @@ impl EstimateIter {
 
     pub fn clear(&mut self, row:&mut Row) {
         match self {
-            &mut EstimateIter::Scan {ref mut estimate, ref mut pos, ref values_ptr, ref len, ref output} => {
+            &mut EstimateIter::Scan {ref mut estimate, ref mut pos, ref values_ptr, ref len, ref output, ref constraint} => {
                 row.clear(*output);
             },
         }
@@ -166,6 +171,31 @@ impl EstimateIter {
 //-------------------------------------------------------------------------
 // Frame
 //-------------------------------------------------------------------------
+
+pub struct Counters {
+    total_ns: u64,
+    instructions: u64,
+    iter_next: u64,
+    accept: u64,
+    accept_bail: u64,
+    accept_ns: u64,
+}
+
+impl fmt::Debug for Counters {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Counters: [\n");
+        write!(f, "  time:\n");
+        write!(f, "     total:  {}\n", self.total_ns);
+        write!(f, "     accept: {} ({})\n", self.accept_ns, (self.accept_ns as f64) / (self.total_ns as f64));
+        write!(f, "\n");
+        write!(f, "  counts:\n");
+        write!(f, "     instructions:  {}\n", self.instructions);
+        write!(f, "     iter_next:     {}\n", self.iter_next);
+        write!(f, "     accept:        {}\n", self.accept);
+        write!(f, "     accept_bail:   {}\n", self.accept_bail);
+        write!(f, "]")
+    }
+}
 
 pub struct Frame<'a> {
     input: Option<Change>,
@@ -178,11 +208,12 @@ pub struct Frame<'a> {
     rounds: &'a mut RoundHolder,
     iter_pool: &'a mut EstimateIterPool,
     results: Vec<u32>,
+    counters: Counters,
 }
 
 impl<'a> Frame<'a> {
     pub fn new(index: &'a mut HashIndex, rounds: &'a mut RoundHolder, distinct: &'a mut DistinctIndex, blocks: &'a Vec<Block>, iter_pool: &'a mut EstimateIterPool) -> Frame<'a> {
-        Frame {row: Row::new(64), index, rounds, distinct, input: None, blocks, constraints: None, iters: vec![None; 64], results: vec![], iter_pool}
+        Frame {row: Row::new(64), index, rounds, distinct, input: None, blocks, constraints: None, iters: vec![None; 64], results: vec![], iter_pool, counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> u32 {
@@ -206,7 +237,7 @@ impl<'a> Frame<'a> {
         } else {
             10000000000
         };
-        // println!("   cur estimate {:?}", iter.estimate());
+        // println!("{:?}  estimate {:?} less than? {:?}", iter_ix, iter.estimate(), cur_estimate);
 
         let neue = match cur {
             None => {
@@ -236,7 +267,7 @@ pub enum Instruction {
     start_block { block: u32 },
     get_iterator {iterator: u32, bail: i32, constraint: u32},
     iterator_next {iterator: u32, bail: i32},
-    accept {bail: i32, constraint:u32},
+    accept {bail: i32, constraint:u32, iterator:u32},
     move_input_field { from:u32, to:u32, },
     clear_rounds,
     get_rounds {bail: i32, constraint: u32},
@@ -266,9 +297,9 @@ pub fn move_input_field(frame: &mut Frame, from:u32, to:u32) -> i32 {
 }
 
 #[inline(never)]
-pub fn get_iterator(frame: &mut Frame, iter_ix:u32, constraint:u32, bail:i32) -> i32 {
+pub fn get_iterator(frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
     let cur = match frame.constraints {
-        Some(ref constraints) => &constraints[constraint as usize],
+        Some(ref constraints) => &constraints[cur_constraint as usize],
         None => return bail,
     };
     match cur {
@@ -286,7 +317,8 @@ pub fn get_iterator(frame: &mut Frame, iter_ix:u32, constraint:u32, bail:i32) ->
             let mut iter = frame.iter_pool.get();
             frame.index.propose(&mut iter, resolved_e, resolved_a, resolved_v);
             match iter {
-                EstimateIter::Scan {estimate, pos, ref values_ptr, ref len, ref mut output} => {
+                EstimateIter::Scan {estimate, pos, ref values_ptr, ref len, ref mut output, ref mut constraint} => {
+                    *constraint = cur_constraint;
                     *output = match (*output, e, a, v) {
                         (0, &Field::Register(reg), _, _) => reg as u32,
                         (1, _, &Field::Register(reg), _) => reg as u32,
@@ -295,6 +327,7 @@ pub fn get_iterator(frame: &mut Frame, iter_ix:u32, constraint:u32, bail:i32) ->
                     };
                 }
             }
+            // println!("get iter: {:?}", cur_constraint);
             frame.check_iter(iter_ix, iter);
         },
         &Constraint::Function {ref op, ref out, ref params} => {
@@ -317,7 +350,10 @@ pub fn iterator_next(frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
                         cur.clear(&mut frame.row);
                         bail
                     },
-                    true => 1,
+                    true => {
+                        // frame.counters.iter_next += 1;
+                        1
+                    },
                 }
             },
             None => bail,
@@ -331,11 +367,20 @@ pub fn iterator_next(frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
 }
 
 #[inline(never)]
-pub fn accept(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
+pub fn accept(frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32) -> i32 {
+    // frame.counters.accept += 1;
     let cur = match frame.constraints {
-        Some(ref constraints) => &constraints[constraint as usize],
-        None => return bail as i32,
+        Some(ref constraints) => &constraints[cur_constraint as usize],
+        None => panic!("Accepting for non-existent iterator"),
     };
+    if cur_iterator > 0 {
+        if let Some(EstimateIter::Scan {ref estimate, ref pos, ref values_ptr, ref len, ref output, constraint}) = frame.iters[(cur_iterator - 1) as usize] {
+            if constraint == cur_constraint {
+                // frame.counters.accept_bail += 1;
+                return 1;
+            }
+        }
+    }
     match cur {
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
             // if we aren't solving for something this scan cares about, then we
@@ -348,7 +393,7 @@ pub fn accept(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             let checked = frame.index.check(resolved_e, resolved_a, resolved_v);
-            // println!("scan accept {:?} {:?}", cur, checked);
+            // println!("scan accept {:?} {:?}", cur_constraint, checked);
             match checked {
                 true => 1,
                 false => bail,
@@ -557,9 +602,8 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
     // println!("Doing work");
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
-    // let mut total = 0;
     while pointer < len {
-        // total += 1;
+        // frame.counters.instructions += 1;
         let inst = &pipe[pointer as usize];
         pointer += match *inst {
             Instruction::start_block {block} => {
@@ -574,8 +618,11 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
             Instruction::iterator_next { iterator, bail } => {
                 iterator_next(&mut frame, iterator, bail)
             },
-            Instruction::accept { constraint, bail } => {
-                accept(&mut frame, constraint, bail)
+            Instruction::accept { constraint, bail, iterator } => {
+                // let start_ns = time::precise_time_ns();
+                let next = accept(&mut frame, constraint, iterator, bail);
+                // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
+                next
             },
             Instruction::clear_rounds => {
                 clear_rounds(&mut frame)
@@ -594,7 +641,6 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
             }
         }
     };
-    // println!("Total: {:?}", total);
 }
 
 //-------------------------------------------------------------------------
@@ -791,7 +837,10 @@ impl Program {
     pub fn exec_query(&mut self) -> Vec<u32> {
         let mut rounds = RoundHolder::new();
         let mut frame = Frame::new(&mut self.index, &mut rounds, &mut self.distinct, &self.blocks, &mut self.iter_pool);
+        // let start_ns = time::precise_time_ns();
         interpret(&mut frame, &self.blocks[0].pipes[0]);
+        // frame.counters.total_ns += time::precise_time_ns() - start_ns;
+        // println!("counters: {:?}", frame.counters);
         return frame.results;
     }
 
@@ -839,7 +888,7 @@ impl Program {
                 &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
                     scans.push(ix);
                     get_iters.push(Instruction::get_iterator { bail: 0, constraint: ix, iterator: 0});
-                    accepts.push(Instruction::accept { bail: 0, constraint: ix });
+                    accepts.push(Instruction::accept { bail: 0, constraint: ix, iterator: 0});
                     get_rounds.push(Instruction::get_rounds { bail: 0, constraint: ix });
 
                     let mut scan_moves = vec![];
@@ -885,10 +934,10 @@ impl Program {
                     to_solve -= 1;
                 }
                 for accept in accepts.iter() {
-                    if let &Instruction::accept { bail, constraint } = accept {
+                    if let &Instruction::accept { bail, constraint, iterator } = accept {
                         if constraint != *scan_ix {
                             let mut neue = accept.clone();
-                            if let Instruction::accept { ref mut bail, constraint } = neue {
+                            if let Instruction::accept { ref mut bail, constraint, iterator } = neue {
                                 *bail = PIPE_FINISHED;
                             }
                             pipe.push(neue);
@@ -922,11 +971,12 @@ impl Program {
                 last_iter_next = 0;
 
                 for accept in accepts.iter() {
-                    if let &Instruction::accept { bail, constraint } = accept {
+                    if let &Instruction::accept { bail, constraint, iterator } = accept {
                         if constraint != *scan_ix {
                             last_iter_next -= 1;
                             let mut neue = accept.clone();
-                            if let Instruction::accept { ref mut bail, constraint } = neue {
+                            if let Instruction::accept { ref mut bail, constraint, ref mut iterator } = neue {
+                                *iterator = (ix + 1) as u32;
                                 *bail = last_iter_next;
                             }
                             pipe.push(neue);
@@ -935,22 +985,22 @@ impl Program {
                 }
             }
 
-            pipe.push(Instruction::clear_rounds);
-            last_iter_next -= 1;
+            // @TODO turn get_rounds back on
+            // pipe.push(Instruction::clear_rounds);
+            // last_iter_next -= 1;
 
-            for inst in get_rounds.iter() {
-                if let &Instruction::get_rounds { bail, constraint } = inst {
-                    if constraint != *scan_ix {
-                        last_iter_next -= 1;
-                        let mut neue = inst.clone();
-                        if let Instruction::get_rounds { ref mut bail, constraint } = neue {
-                            // @TODO figure out bail position
-                            *bail = last_iter_next;
-                        }
-                        pipe.push(neue);
-                    }
-                }
-            }
+            // for inst in get_rounds.iter() {
+            //     if let &Instruction::get_rounds { bail, constraint } = inst {
+            //         if constraint != *scan_ix {
+            //             last_iter_next -= 1;
+            //             let mut neue = inst.clone();
+            //             if let Instruction::get_rounds { ref mut bail, constraint } = neue {
+            //                 *bail = last_iter_next;
+            //             }
+            //             pipe.push(neue);
+            //         }
+            //     }
+            // }
 
             for (ix, output) in outputs.iter().enumerate() {
                 last_iter_next -= 1;
