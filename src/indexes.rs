@@ -12,7 +12,7 @@ extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::BuildHasherDefault;
 
-type MyHasher = BuildHasherDefault<FnvHasher>;
+pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
 //-------------------------------------------------------------------------
 // Utils
@@ -53,12 +53,8 @@ impl HashIndexLevel {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
                 let mut vs = o.get_mut();
-                if vs.contains(&v) {
-                    false
-                } else {
-                    vs.push(v);
-                    true
-                }
+                vs.push(v);
+                true
             }
             Entry::Vacant(o) => {
                 self.es.push(e);
@@ -181,35 +177,50 @@ impl HashIndexLevel {
 
 pub struct HashIndex {
     a: HashMap<u32, HashIndexLevel, MyHasher>,
+    eavs: HashMap<(u32, u32, u32), bool, MyHasher>,
     attrs: Vec<u32>,
     pub size: u32,
 }
 
 impl HashIndex {
     pub fn new() -> HashIndex{
-        HashIndex { a: HashMap::default(), size: 0, attrs: vec![] }
+        HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, attrs: vec![] }
     }
 
     pub fn insert(&mut self, e: u32, a:u32, v:u32) -> bool {
-        let added = match self.a.entry(a) {
-            Entry::Occupied(mut o) => {
-                let mut level = o.get_mut();
-                level.insert(e, v)
+        let added = match self.eavs.entry((e,a,v)) {
+            Entry::Occupied(_) => {
+                false
             }
             Entry::Vacant(o) => {
-                self.attrs.push(a);
-                let mut level = HashIndexLevel::new();
-                level.insert(e,v);
-                o.insert(level);
+                o.insert(true);
                 true
             },
+
         };
-        if added { self.size += 1; }
+        if added {
+            self.size += 1;
+            match self.a.entry(a) {
+                Entry::Occupied(mut o) => {
+                    let mut level = o.get_mut();
+                    level.insert(e, v)
+                }
+                Entry::Vacant(o) => {
+                    self.attrs.push(a);
+                    let mut level = HashIndexLevel::new();
+                    level.insert(e,v);
+                    o.insert(level);
+                    true
+                },
+            };
+        }
         added
     }
 
     pub fn check(&self, e: u32, a:u32, v:u32) -> bool {
-        if a > 0 {
+        if e > 0 && a > 0 && v > 0 {
+            self.eavs.contains_key(&(e,a,v))
+        } else if a > 0 {
             match self.a.get(&a) {
                 Some(level) => level.check(e, v),
                 None => false,

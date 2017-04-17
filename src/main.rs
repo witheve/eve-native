@@ -11,7 +11,7 @@ use ops::doit;
 
 mod indexes;
 mod lubm;
-use lubm::tests::lubm_1;
+use lubm::tests::test_lubm;
 
 fn rand(rseed:u32) -> u32 {
 	return ((Wrapping(rseed) * Wrapping(1103515245) + Wrapping(12345)) & Wrapping(0x7fffffff)).0;
@@ -19,5 +19,5 @@ fn rand(rseed:u32) -> u32 {
 
 fn main() {
     // doit();
-    lubm_1()
+    test_lubm()
 }

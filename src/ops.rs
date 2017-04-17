@@ -206,6 +206,7 @@ impl<'a> Frame<'a> {
         } else {
             10000000000
         };
+        // println!("   cur estimate {:?}", iter.estimate());
 
         let neue = match cur {
             None => {
@@ -243,12 +244,14 @@ pub enum Instruction {
     project {next: i32, from:u32},
 }
 
+#[inline(never)]
 pub fn start_block(frame: &mut Frame, block:u32) -> i32 {
     // println!("STARTING! {:?}", block);
     frame.constraints = Some(&frame.blocks[block as usize].constraints);
     1
 }
 
+#[inline(never)]
 pub fn move_input_field(frame: &mut Frame, from:u32, to:u32) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(change) = frame.input {
@@ -262,6 +265,7 @@ pub fn move_input_field(frame: &mut Frame, from:u32, to:u32) -> i32 {
     1
 }
 
+#[inline(never)]
 pub fn get_iterator(frame: &mut Frame, iter_ix:u32, constraint:u32, bail:i32) -> i32 {
     let cur = match frame.constraints {
         Some(ref constraints) => &constraints[constraint as usize],
@@ -301,6 +305,7 @@ pub fn get_iterator(frame: &mut Frame, iter_ix:u32, constraint:u32, bail:i32) ->
     1
 }
 
+#[inline(never)]
 pub fn iterator_next(frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
     let go = {
         let mut iter = frame.iters[iterator as usize].as_mut();
@@ -325,6 +330,7 @@ pub fn iterator_next(frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
     go
 }
 
+#[inline(never)]
 pub fn accept(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
     let cur = match frame.constraints {
         Some(ref constraints) => &constraints[constraint as usize],
@@ -356,6 +362,7 @@ pub fn accept(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
     }
 }
 
+#[inline(never)]
 pub fn clear_rounds(frame: &mut Frame) -> i32 {
     frame.rounds.clear();
     if let Some(change) = frame.input {
@@ -364,6 +371,7 @@ pub fn clear_rounds(frame: &mut Frame) -> i32 {
     1
 }
 
+#[inline(never)]
 pub fn get_rounds(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
     // println!("get rounds!");
     let cur = match frame.constraints {
@@ -384,6 +392,7 @@ pub fn get_rounds(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
 
 }
 
+#[inline(never)]
 pub fn output(frame: &mut Frame, constraint:u32, next:i32) -> i32 {
     let cur = match frame.constraints {
         Some(ref constraints) => &constraints[constraint as usize],
@@ -407,6 +416,7 @@ pub fn output(frame: &mut Frame, constraint:u32, next:i32) -> i32 {
     next
 }
 
+#[inline(never)]
 pub fn project(frame: &mut Frame, from:u32, next:i32) -> i32 {
     let value = frame.get_register(from);
     frame.results.push(value);
@@ -547,7 +557,9 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
     // println!("Doing work");
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
+    // let mut total = 0;
     while pointer < len {
+        // total += 1;
         let inst = &pipe[pointer as usize];
         pointer += match *inst {
             Instruction::start_block {block} => {
@@ -581,7 +593,8 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
                 panic!("Unknown instruction: {:?}", inst);
             }
         }
-    }
+    };
+    // println!("Total: {:?}", total);
 }
 
 //-------------------------------------------------------------------------
@@ -757,7 +770,7 @@ impl<'a> RoundHolderIter {
 
 pub struct Program {
     pipe_lookup: HashMap<(u32,u32,u32), Vec<Vec<Instruction>>>,
-    blocks: Vec<Block>,
+    pub blocks: Vec<Block>,
     pub index: HashIndex,
     pub distinct: DistinctIndex,
     pub interner: Interner,
@@ -914,12 +927,7 @@ impl Program {
                             last_iter_next -= 1;
                             let mut neue = accept.clone();
                             if let Instruction::accept { ref mut bail, constraint } = neue {
-                                if ix == 0 {
-                                    *bail = PIPE_FINISHED;
-                                } else {
-                                // @TODO figure out bail position
-                                    *bail = last_iter_next;
-                                }
+                                *bail = last_iter_next;
                             }
                             pipe.push(neue);
                         }
@@ -988,11 +996,11 @@ impl Program {
 
         for pipe in pipes.iter() {
             block.pipes.push(pipe.clone());
-            println!("\npipe: [");
-            for inst in pipe {
-                println!("  {:?}", inst);
-            }
-            println!("]");
+            // println!("\npipe: [");
+            // for inst in pipe {
+            //     println!("  {:?}", inst);
+            // }
+            // println!("]");
         }
 
         let shapes_per_pipe = self.to_shapes(scans.iter().skip(1).map(|scan_ix| &block.constraints[*scan_ix as usize]).collect::<Vec<&Constraint>>());
