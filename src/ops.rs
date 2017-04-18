@@ -985,22 +985,21 @@ impl Program {
                 }
             }
 
-            // @TODO turn get_rounds back on
-            // pipe.push(Instruction::clear_rounds);
-            // last_iter_next -= 1;
+            pipe.push(Instruction::clear_rounds);
+            last_iter_next -= 1;
 
-            // for inst in get_rounds.iter() {
-            //     if let &Instruction::get_rounds { bail, constraint } = inst {
-            //         if constraint != *scan_ix {
-            //             last_iter_next -= 1;
-            //             let mut neue = inst.clone();
-            //             if let Instruction::get_rounds { ref mut bail, constraint } = neue {
-            //                 *bail = last_iter_next;
-            //             }
-            //             pipe.push(neue);
-            //         }
-            //     }
-            // }
+            for inst in get_rounds.iter() {
+                if let &Instruction::get_rounds { bail, constraint } = inst {
+                    if constraint != *scan_ix {
+                        last_iter_next -= 1;
+                        let mut neue = inst.clone();
+                        if let Instruction::get_rounds { ref mut bail, constraint } = neue {
+                            *bail = last_iter_next;
+                        }
+                        pipe.push(neue);
+                    }
+                }
+            }
 
             for (ix, output) in outputs.iter().enumerate() {
                 last_iter_next -= 1;

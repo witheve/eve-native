@@ -307,46 +307,6 @@ pub mod tests {
         // println!("Results: {:?}", results);
     }
 
-    #[bench]
-    pub fn sorted_array_hash(b: &mut Bencher) {
-        let mut map: HashMap<u32, bool, MyHasher> = HashMap::default();
-        let mut map2: HashMap<u32, bool, MyHasher> = HashMap::default();
-        let mut map3: HashMap<u32, bool, MyHasher> = HashMap::default();
-        let mut seed = 0;
-        let mut arr = vec![];
-        for _ in 0..1_000_0 {
-            let v = rand_between(&mut seed, 0, 100000);
-            match map.entry(v) {
-                Entry::Occupied(_) => {},
-                Entry::Vacant(o) => {
-                    o.insert(true);
-                    arr.push(v);
-                }
-            }
-        }
-        // seed = 0;
-        for _ in 0..1_000_000 {
-            let v = rand_between(&mut seed, 0, 100000);
-            map2.insert(v, true);
-        }
-        for _ in 0..1_000_000 {
-            let v = rand_between(&mut seed, 0, 10000);
-            map3.insert(v, true);
-        }
-        let mut things = vec![];
-        let mut init = true;
-        b.iter(|| {
-            let mut results = vec![];
-            for v in map.keys() {
-                if map2.contains_key(&v) && map3.contains_key(&v) {
-                    results.push(v);
-                }
-            }
-            things.push(results);
-        });
-        println!("len {:?}", &things[0..3].iter().map(|v| v.len()).collect::<Vec<usize>>());
-    }
-
     pub fn do_bench(b: &mut Bencher, func: fn(&mut Program) -> Vec<Constraint>) {
         let mut program = Program::new();
         setup(&mut program, 1000);
