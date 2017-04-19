@@ -330,7 +330,12 @@ pub fn get_iterator(frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32
             // println!("get iter: {:?}", cur_constraint);
             frame.check_iter(iter_ix, iter);
         },
-        &Constraint::Function {ref op, ref out, ref params} => {
+        &Constraint::Function {ref op, ref outputs, ref params, param_mask, output_mask} => {
+            let solved = frame.row.solved_fields;
+            if check_bits(solved, param_mask) && check_bits(solved, output_mask) {
+                let resolved = params.iter().map(|v| frame.resolve(v));
+
+            }
             // println!("get function iterator {:?}", cur);
         },
         _ => {}
@@ -399,8 +404,11 @@ pub fn accept(frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32)
                 false => bail,
             }
         },
-        &Constraint::Function {ref op, ref out, ref params} => {
-            // println!("function accept {:?}", cur);
+        &Constraint::Function {ref op, ref outputs, ref params, ref param_mask, ref output_mask} => {
+            let solved = frame.row.solved_fields;
+            if check_bits(solved, *param_mask) && check_bits(solved, *output_mask) {
+
+            }
             1
         },
         _ => { 1 }
@@ -552,7 +560,8 @@ impl Interner {
 #[derive(Debug)]
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
-    Function {op: String, out: Vec<Field>, params: Vec<Field>},
+    Function {op: String, outputs: Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64},
+    Filter {op: String, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field},
     Project {registers: Vec<u32>},
 }
@@ -571,6 +580,12 @@ pub fn make_register_mask(fields: Vec<&Field>) -> u64 {
 pub fn make_scan(e:Field, a:Field, v:Field) -> Constraint {
     let register_mask = make_register_mask(vec![&e,&a,&v]);
     Constraint::Scan{e, a, v, register_mask }
+}
+
+pub fn make_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) -> Constraint {
+    let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
+    let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
+    Constraint::Function {op: op.to_string(), params, outputs, param_mask, output_mask }
 }
 
 //-------------------------------------------------------------------------
@@ -906,10 +921,13 @@ impl Program {
                     }
                     moves.insert(ix, scan_moves);
                 },
-                &Constraint::Function {ref op, ref out, ref params} => {
+                &Constraint::Function {ref op, ref outputs, ref params, ref param_mask, ref output_mask} => {
                     // @TODO: count the registers in the functions
                     // get_iters.push(Instruction::get_iterator { bail: 0, constraint: ix, iterator: 0 });
                     // accepts.push(Instruction::accept { bail: 0, constraint: ix });
+                },
+                &Constraint::Filter {ref op, ref left, ref right, ref param_mask} => {
+                    // @TODO
                 },
                 &Constraint::Insert {ref e, ref a, ref v} => {
                     outputs.push(Instruction::output { next: 1, constraint: ix });
@@ -1224,8 +1242,8 @@ pub fn doit() {
     let constraints = vec![
         make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
         make_scan(register(0), program.interner.string("name"), register(1)),
-        Constraint::Function {op: "concat".to_string(), out: vec![register(2)], params: vec![program.interner.string("name: "), register(1)]},
-        Constraint::Function {op: "gen_id".to_string(), out: vec![register(3)], params: vec![register(0), register(2)]},
+        make_function("concat", vec![program.interner.string("name: "), register(1)], vec![register(2)]),
+        make_function("gen_id", vec![register(0), register(2)], vec![register(3)]),
         // Constraint::Insert {e: register(3), a: int.string("tag"), v: int.string("html/div")},
         // Constraint::Insert {e: register(3), a: int.string("person"), v: register(0)},
         // Constraint::Insert {e: register(3), a: int.string("text"), v: register(2)},
