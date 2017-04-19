@@ -3,9 +3,8 @@
 //-------------------------------------------------------------------------
 
 use std::collections::HashMap;
-use ops::{EstimateIter, EstimateIterPool, Change, RoundHolder};
+use ops::{EstimateIter, Change, RoundHolder};
 use std::cmp;
-use std;
 use std::collections::hash_map::Entry;
 
 extern crate fnv;
@@ -128,7 +127,7 @@ impl HashIndexLevel {
 
     pub fn propose(&self, iter:&mut EstimateIter, e:u32, v:u32) {
         match *iter {
-            EstimateIter::Scan { ref mut estimate, ref mut output, ref mut values_ptr, ref mut len, ref pos, ref constraint } => {
+            EstimateIter::Scan { ref mut estimate, ref mut output, ref mut values_ptr, ref mut len, .. } => {
                 if e > 0 {
                     if let Some(vs) = self.find_values(e) {
                         let vs_len = vs.len();
@@ -167,6 +166,7 @@ impl HashIndexLevel {
                     }
                 }
             }
+            _ => panic!("Non scan iter passed to index propose"),
         }
     }
 }
@@ -256,7 +256,7 @@ impl HashIndex {
                 vals.push(*key);
             }
             match iter {
-                &mut EstimateIter::Scan { ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output, ref constraint } => {
+                &mut EstimateIter::Scan { ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output, .. } => {
                     let attrs_len = self.attrs.len();
                     *output = 1;
                     *pos = 0;
@@ -335,6 +335,7 @@ impl DistinctIndex {
         }
     }
 
+    #[allow(dead_code)]
     pub fn raw_insert(&mut self, e:u32, a:u32, v:u32, round:u32, count:i32) {
         let key = (e,a,v);
         let mut counts = self.index.entry(key).or_insert_with(|| vec![]);
@@ -407,6 +408,7 @@ mod DistinctTests {
 
     use super::*;
     use self::test::Bencher;
+    use ops::{EstimateIterPool};
 
     fn round_counts_to_changes(counts: Vec<(u32, i32)>) -> Vec<Change> {
         let mut changes = vec![];

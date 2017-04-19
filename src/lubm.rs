@@ -1,12 +1,7 @@
 use std::num::Wrapping;
-use ops::{Program, make_scan, Constraint, Block, register};
+use ops::{Program};
 extern crate time;
-use std::time::Instant;
 use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::hash_map::Entry;
-use std;
-use indexes::MyHasher;
 
 // In each University
     // 15~25 Departments are subOrgnization of the University
@@ -63,7 +58,7 @@ fn make_faculty(program:&mut Program, eavs:&mut Vec<(u32,u32,u32)>, university_c
     eav(program, eavs, &prof, "telephone", "123-123-1234");
     eav(program, eavs, &prof, "research interest", "blah");
     // every Faculty is teacherOf 1~2 Courses
-    for course in 0..rand_between(&mut seed, 1, 2) {
+    for _ in 0..rand_between(&mut seed, 1, 2) {
         let course = format!("{}|course{}", department, *course_ix);
         eav(program, eavs, &course, "tag", "course");
         eav(program, eavs, &course, "name", "foo");
@@ -71,7 +66,7 @@ fn make_faculty(program:&mut Program, eavs:&mut Vec<(u32,u32,u32)>, university_c
         *course_ix += 1;
     }
     // every Faculty is teacherOf 1~2 GraduateCourses
-    for graduate_course in 0..rand_between(&mut seed, 1, 2) {
+    for _ in 0..rand_between(&mut seed, 1, 2) {
         let course = format!("{}|graduate_course{}", department, *grad_course_ix);
         eav(program, eavs, &course, "tag", "graduate course");
         eav(program, eavs, &course, "name", "foo");
@@ -116,6 +111,7 @@ fn random_professor(seed:&mut u32, department:&str, fulls:u32, associates:u32, a
     format!("{}|{}{}", department, prof_type, id)
 }
 
+#[allow(dead_code)]
 fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)> {
     let mut counter = 0;
     let mut eavs:Vec<(u32,u32,u32)> = vec![];
@@ -211,8 +207,8 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
                 }
             }
             // GraduateStudent : Faculty = 3~4 : 1
-            let TA_ratio = rand_between(&mut seed, 4, 5);
-            let RA_ratio = rand_between(&mut seed, 3, 4);
+            let ta_ratio = rand_between(&mut seed, 4, 5);
+            let ra_ratio = rand_between(&mut seed, 3, 4);
             let grads_count = rand_between(&mut seed, 3, 4) * total_faculty;
             // @TODO this should be grads_count
             for g_ix in 0..grads_count {
@@ -248,12 +244,12 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
                     eav(program, &mut eavs, &publication, "author", &grad);
                 }
                 // 1/5~1/4 of the GraduateStudents are chosen as TeachingAssistant for one Course
-                if g_ix % TA_ratio == 0 {
+                if g_ix % ta_ratio == 0 {
                     let course = rand_between(&mut seed, 0, course_ix);
                     eav(program, &mut eavs, &grad, "teaching assistant for", &format!("{}|course{}", department, course));
                 }
                 // 1/4~1/3 of the GraduateStudents are chosen as ResearchAssistant
-                if g_ix % RA_ratio == 0 {
+                if g_ix % ra_ratio == 0 {
                     eav(program, &mut eavs, &grad, "tag", "research assistant");
                 }
             }
@@ -263,14 +259,15 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
     eavs
 }
 
-// #[cfg(test)]
+#[cfg(test)]
 pub mod tests {
     extern crate test;
 
     use super::*;
     use self::test::Bencher;
-    use self::test::BenchMode;
-    use std::time::Duration;
+    use ops::{Program, make_scan, Constraint, Block, register};
+    extern crate time;
+    use std::time::Instant;
 
     fn setup(program: &mut Program, size:usize) {
         let mut start = Instant::now();
@@ -289,19 +286,15 @@ pub mod tests {
     pub fn exec_query(program:&mut Program, constraints: Vec<Constraint>) {
         program.blocks.pop();
 
-        let mut start_ns = time::precise_time_ns();
         program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
-        let mut end_ns = time::precise_time_ns();
-        // println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
-        let mut results: Vec<u32> = vec![];
-        start_ns = time::precise_time_ns();
+        let start_ns = time::precise_time_ns();
         let mut all_results = vec![];
         for _ in 0..20 {
             let results = program.exec_query();
             all_results.push(results);
         }
-        end_ns = time::precise_time_ns();
+        let end_ns = time::precise_time_ns();
         println!("Run took {:?}", (end_ns - start_ns) as f64 / 20_000_000.0);
         println!("Results: {:?}", all_results[0].len());
         // println!("Results: {:?}", results);
@@ -313,9 +306,9 @@ pub mod tests {
 
         let constraints = func(&mut program);
 
-        let mut start = Instant::now();
+        let start = Instant::now();
         program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
-        let mut dur = start.elapsed();
+        let dur = start.elapsed();
         println!("Compile took {:?}", (dur.as_secs() * 1000) as f32 + (dur.subsec_nanos() as f32) / 1_000_000.0);
         let mut all_results = vec![];
         // start = Instant::now();
@@ -339,10 +332,10 @@ pub mod tests {
     #[bench] pub fn bench_lubm_13(b: &mut Bencher) { do_bench(b, lubm_13); }
     #[bench] pub fn bench_lubm_14(b: &mut Bencher) { do_bench(b, lubm_14); }
 
-    // #[test]
+    #[test]
     pub fn test_lubm() {
         let mut program = Program::new();
-        setup(&mut program, 1000);
+        setup(&mut program, 100);
 
         println!("\nQuery 1");
         let query_1 = lubm_1(&mut program);
