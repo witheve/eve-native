@@ -398,606 +398,185 @@ impl DistinctIndex {
     }
 }
 
-//-------------------------------------------------------------------------
-// Distinct tests
-//-------------------------------------------------------------------------
-
-#[cfg(test)]
-mod DistinctTests {
-    extern crate test;
-
-    use super::*;
-    use self::test::Bencher;
-    use ops::{EstimateIterPool};
-
-    fn round_counts_to_changes(counts: Vec<(u32, i32)>) -> Vec<Change> {
-        let mut changes = vec![];
-        let cur = Change { e: 1, a: 2, v: 3, n: 4, transaction: 1, round: 0, count: 0 };
-        for &(round, count) in counts.iter() {
-            changes.push(cur.with_round_count(round, count));
-        }
-        changes
-    }
-
-    fn test_distinct(counts: Vec<(u32, i32)>, expected: Vec<(u32, i32)>) {
-        let mut index = DistinctIndex::new();
-        let changes = round_counts_to_changes(counts);
-
-        let mut final_results: HashMap<u32, i32> = HashMap::new();
-        let mut distinct_changes = RoundHolder::new();
-        for change in changes.iter() {
-            index.distinct(change, &mut distinct_changes);
-        }
-        let mut iter = distinct_changes.iter();
-        while let Some(distinct) = iter.next(&mut distinct_changes) {
-            println!("distinct: {:?}", distinct);
-            let cur = if final_results.contains_key(&distinct.round) { final_results[&distinct.round] } else { 0 };
-            final_results.insert(distinct.round, cur + distinct.count);
-        }
-
-        for (round, count) in index.iter(changes[0].e, changes[0].a, changes[0].v) {
-            let valid = match final_results.get(&round) {
-                Some(&actual) => actual == count,
-                None => count == 0,
-            };
-            assert!(valid, "iterator round {:?} :: expected {:?}, actual {:?}", round, count, final_results.get(&round));
-        }
-
-        println!("final {:?}", final_results);
-
-        let mut expected_map = HashMap::new();
-        for &(round, count) in expected.iter() {
-            expected_map.insert(round, count);
-            let valid = match final_results.get(&round) {
-                Some(&actual) => actual == count,
-                None => count == 0,
-            };
-            assert!(valid, "round {:?} :: expected {:?}, actual {:?}", round, count, final_results.get(&round));
-        }
-
-        for (round, count) in final_results.iter() {
-            let valid = match expected_map.get(&round) {
-                Some(&actual) => actual == *count,
-                None => *count == 0,
-            };
-            assert!(valid, "round {:?} :: expected {:?}, actual {:?}", round, expected_map.get(&round), count);
-        }
-
-    }
-
-    #[test]
-    fn basic() {
-        test_distinct(vec![
-            (1,1),
-            (2,-1),
-
-            (1, 1),
-            (3, -1),
-        ], vec![
-            (1, 1),
-            (3, -1)
-        ])
-    }
-
-    #[test]
-    fn basic_2() {
-        test_distinct(vec![
-            (1,1),
-            (2,-1),
-
-            (3, 1),
-            (4, -1),
-        ], vec![
-            (1, 1),
-            (2, -1),
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_2_reverse_order() {
-        test_distinct(vec![
-            (3,1),
-            (4,-1),
-
-            (1, 1),
-            (2, -1),
-        ], vec![
-            (1, 1),
-            (2, -1),
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_2_undone() {
-        test_distinct(vec![
-            (1,1),
-            (2,-1),
-
-            (3, 1),
-            (4, -1),
-
-            (1,-1),
-            (2,1),
-        ], vec![
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_multiple() {
-        test_distinct(vec![
-            (1,1),
-            (1,1),
-            (1,1),
-            (1,1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-
-            (3, 1),
-            (3, 1),
-            (3, 1),
-            (4, -1),
-            (4, -1),
-            (4, -1),
-        ], vec![
-            (1, 1),
-            (2, -1),
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_multiple_reversed() {
-        test_distinct(vec![
-            (3, 1),
-            (3, 1),
-            (3, 1),
-            (4, -1),
-            (4, -1),
-            (4, -1),
-
-            (1,1),
-            (1,1),
-            (1,1),
-            (1,1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-        ], vec![
-            (1, 1),
-            (2, -1),
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_interleaved() {
-        test_distinct(vec![
-            (3, 1),
-            (4, -1),
-            (3, 1),
-            (4, -1),
-            (3, 1),
-            (4, -1),
-
-            (1,1),
-            (2,-1),
-            (1,1),
-            (2,-1),
-            (1,1),
-            (2,-1),
-            (1,1),
-            (2,-1),
-        ], vec![
-            (1, 1),
-            (2, -1),
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_multiple_negative_first() {
-        test_distinct(vec![
-            (2,-1),
-            (2,-1),
-            (2,-1),
-            (1,1),
-            (1,1),
-            (1,1),
-
-            (4, -1),
-            (4, -1),
-            (4, -1),
-            (3, 1),
-            (3, 1),
-            (3, 1),
-        ], vec![
-            (1, 1),
-            (2, -1),
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_multiple_undone() {
-        test_distinct(vec![
-            (1,1),
-            (1,1),
-            (1,1),
-            (1,1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-
-            (3, 1),
-            (3, 1),
-            (3, 1),
-            (4, -1),
-            (4, -1),
-            (4, -1),
-
-            (1,-1),
-            (1,-1),
-            (1,-1),
-            (1,-1),
-            (2,1),
-            (2,1),
-            (2,1),
-            (2,1),
-        ], vec![
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_multiple_undone_interleaved() {
-        test_distinct(vec![
-            (1,1),
-            (1,1),
-            (1,1),
-            (1,1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-
-            (1,-1),
-            (1,-1),
-            (1,-1),
-            (1,-1),
-
-            (3, 1),
-            (3, 1),
-            (3, 1),
-            (4, -1),
-            (4, -1),
-            (4, -1),
-
-            (2,1),
-            (2,1),
-            (2,1),
-            (2,1),
-        ], vec![
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_multiple_different_counts() {
-        test_distinct(vec![
-            (1,1),
-            (1,1),
-            (1,1),
-            (1,1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-
-            (3, 1),
-            (4, -1),
-        ], vec![
-            (1, 1),
-            (2, -1),
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn basic_multiple_different_counts_extra_removes() {
-        test_distinct(vec![
-            (1,1),
-            (1,1),
-            (1,1),
-            (1,1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-            (2,-1),
-
-            (1,-1),
-            (1,-1),
-            (1,-1),
-            (1,-1),
-            (2,1),
-            (2,1),
-            (2,1),
-            (2,1),
-
-            (3, 1),
-            (4, -1),
-        ], vec![
-            (3, 1),
-            (4, -1),
-        ])
-    }
-
-    #[test]
-    fn simple_round_promotion() {
-        test_distinct(vec![
-            (8,1),
-            (9,-1),
-
-            (5,1),
-            (6,-1),
-            (8,-1),
-            (9,1),
-        ], vec![
-            (5, 1),
-            (6, -1)
-        ])
-    }
-
-    #[test]
-    fn full_promotion() {
-        test_distinct(vec![
-            (9,1),
-            (9,1),
-            (10,-1),
-            (10,-1),
-
-            (9,1),
-            (9,1),
-            (10,-1),
-            (10,-1),
-
-            (9,-1),
-            (10,1),
-            (9,-1),
-            (10,1),
-
-            (9,-1),
-            (10,1),
-            (9,-1),
-            (10,1),
-        ], vec![
-            (9, 0),
-            (10, 0)
-        ])
-    }
-
-    #[test]
-    fn positive_full_promotion() {
-        test_distinct(vec![
-            (7,1),
-            (8,-1),
-            (8,1),
-            (7,1),
-            (8,-1),
-            (4,1),
-            (8, -1),
-            (7, 1),
-            (8, -1),
-            (8, 1),
-            (5, -1),
-            (7, -3),
-            (8, 1),
-            (8, 3),
-            (5, 1),
-            (8, 1),
-            (8, -2),
-            (8, -1),
-        ], vec![
-            (4, 1),
-        ])
-    }
-}
-
-//-------------------------------------------------------------------------
-// HashIndex Tests
-//-------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    extern crate test;
-
-    use super::*;
-    use self::test::Bencher;
-    use std::num::Wrapping;
-
-    #[test]
-    fn basic() {
-        let mut index = HashIndex::new();
-        index.insert(1,1,1);
-        index.insert(1,2,1);
-        index.insert(2,3,1);
-        index.insert(1,3,100);
-        assert!(index.check(1,1,1));
-        assert!(index.check(1,2,1));
-        assert!(index.check(2,3,1));
-        assert!(index.check(1,3,100));
-        assert!(!index.check(100,300,100));
-    }
-
-    #[test]
-    fn basic2() {
-        let mut index = HashIndex::new();
-        index.insert(5,3,8);
-        index.insert(9,3,8);
-        assert!(index.check(5,3,8));
-        assert!(index.check(9,3,8));
-        assert!(!index.check(100,300,100));
-    }
-
-    #[test]
-    fn find_entities() {
-        let mut index = HashIndexLevel::new();
-        index.insert(1,1);
-        index.insert(2,1);
-        index.insert(300,1);
-        let entities = index.get(0, 1).unwrap();
-        assert!(entities.contains(&1));
-        assert!(entities.contains(&2));
-        assert!(entities.contains(&300));
-        assert!(!entities.contains(&3));
-    }
-
-    #[test]
-    fn find_values() {
-        let mut index = HashIndexLevel::new();
-        index.insert(1,1);
-        index.insert(1,2);
-        index.insert(1,300);
-        {
-            let values = index.get(1, 0).unwrap();
-            assert!(values.contains(&1));
-            assert!(values.contains(&2));
-            assert!(values.contains(&300));
-            assert!(!values.contains(&3));
-        }
-
-        index.insert(5,8);
-        index.insert(9,8);
-        let values2 = index.get(9, 0).unwrap();
-        assert!(values2.contains(&8));
-    }
-
-     #[test]
-    fn basic_propose() {
-        let mut index = HashIndex::new();
-        let mut pool = EstimateIterPool::new();
-        index.insert(1,1,1);
-        index.insert(2,1,1);
-        index.insert(2,1,7);
-        index.insert(3,1,1);
-        index.insert(2,3,1);
-        index.insert(1,3,100);
-        let mut proposal1 = pool.get();
-        index.propose(&mut proposal1, 0,1,1);
-        assert_eq!(proposal1.estimate(), 3);
-        let mut proposal2 = pool.get();
-        index.propose(&mut proposal2, 2,1,0);
-        assert_eq!(proposal2.estimate(), 2);
-    }
-
-
-    fn rand(rseed:u32) -> u32 {
-        return ((Wrapping(rseed) * Wrapping(1103515245) + Wrapping(12345)) & Wrapping(0x7fffffff)).0;
-    }
-
-
-    #[bench]
-    fn bench_hash_write(b:&mut Bencher) {
-        let mut total = 0;
-        let mut times = 0;
-        let mut index = HashIndex::new();
-        let mut seed = 0;
-        // for ix in 0..10_000_000 {
-        //     let e = rand(seed);
-        //     seed = e;
-        //     let a = rand(seed);
-        //     seed = a;
-        //     let val = rand(seed);
-        //     seed = val;
-        //     index.insert(e % 10000, (a % 50) + 1, val % 10000);
-        // }
-        seed = 0;
-        b.iter(|| {
-            times += 1;
-            let e = rand(seed);
-            seed = e;
-            let a = rand(seed);
-            seed = a;
-            let val = rand(seed);
-            seed = val;
-            index.insert(e % 100000, (a % 50) + 1, val % 100000);
-            // if(index.size > 100000) {
-            //     index = HashIndex3::new();
-            // }
-            // total += index.size;
-        });
-        println!("{:?} : {:?}", times, index.size);
-    }
-
-    #[bench]
-    fn bench_hash_write_200_000(b:&mut Bencher) {
-        let mut total = 0;
-        let mut times = 0;
-        let mut seed = 0;
-        seed = 0;
-        b.iter(|| {
-            let mut index = HashIndex::new();
-            for _ in 0..200_000 {
-                let e = rand(seed);
-                seed = e;
-                let a = rand(seed);
-                seed = a;
-                let val = rand(seed);
-                seed = val;
-                index.insert(e % 100000, (a % 50) + 1, val % 100000);
-            }
-        });
-        // println!("{:?} : {:?}", times, index.size);
-    }
-
-    #[bench]
-    fn bench_hash_read(b:&mut Bencher) {
-        let mut total = 0;
-        let mut times = 0;
-        let mut levels = 0;
-        let mut index = HashIndex::new();
-        let mut seed = 0;
-        for ix in 0..100_000 {
-            let e = rand(seed);
-            seed = e;
-            let a = rand(seed);
-            seed = a;
-            let val = rand(seed);
-            seed = val;
-            index.insert(e % 100000, (a % 50) + 1, val % 100000);
-        }
-        seed = 0;
-        // let mut v = vec![];
-        b.iter(|| {
-            let e = rand(seed);
-            seed = e;
-            let a = rand(seed);
-            seed = a;
-            let val = rand(seed);
-            seed = val;
-            total += seed;
-            index.check(e % 100000, (a % 50) + 1, val % 100000);
-        });
-        println!("results: {:?}", total);
-    }
-
-
-
-}
+////-------------------------------------------------------------------------
+//// HashIndex Tests
+////-------------------------------------------------------------------------
+
+//// #[cfg(test)]
+//// mod tests {
+////     extern crate test;
+
+////     use super::*;
+////     use self::test::Bencher;
+////     use std::num::Wrapping;
+
+////     #[test]
+////     fn basic() {
+////         let mut index = HashIndex::new();
+////         index.insert(1,1,1);
+////         index.insert(1,2,1);
+////         index.insert(2,3,1);
+////         index.insert(1,3,100);
+////         assert!(index.check(1,1,1));
+////         assert!(index.check(1,2,1));
+////         assert!(index.check(2,3,1));
+////         assert!(index.check(1,3,100));
+////         assert!(!index.check(100,300,100));
+////     }
+
+////     #[test]
+////     fn basic2() {
+////         let mut index = HashIndex::new();
+////         index.insert(5,3,8);
+////         index.insert(9,3,8);
+////         assert!(index.check(5,3,8));
+////         assert!(index.check(9,3,8));
+////         assert!(!index.check(100,300,100));
+////     }
+
+////     #[test]
+////     fn find_entities() {
+////         let mut index = HashIndexLevel::new();
+////         index.insert(1,1);
+////         index.insert(2,1);
+////         index.insert(300,1);
+////         let entities = index.get(0, 1).unwrap();
+////         assert!(entities.contains(&1));
+////         assert!(entities.contains(&2));
+////         assert!(entities.contains(&300));
+////         assert!(!entities.contains(&3));
+////     }
+
+////     #[test]
+////     fn find_values() {
+////         let mut index = HashIndexLevel::new();
+////         index.insert(1,1);
+////         index.insert(1,2);
+////         index.insert(1,300);
+////         {
+////             let values = index.get(1, 0).unwrap();
+////             assert!(values.contains(&1));
+////             assert!(values.contains(&2));
+////             assert!(values.contains(&300));
+////             assert!(!values.contains(&3));
+////         }
+
+////         index.insert(5,8);
+////         index.insert(9,8);
+////         let values2 = index.get(9, 0).unwrap();
+////         assert!(values2.contains(&8));
+////     }
+
+////      #[test]
+////     fn basic_propose() {
+////         let mut index = HashIndex::new();
+////         let mut pool = EstimateIterPool::new();
+////         index.insert(1,1,1);
+////         index.insert(2,1,1);
+////         index.insert(2,1,7);
+////         index.insert(3,1,1);
+////         index.insert(2,3,1);
+////         index.insert(1,3,100);
+////         let mut proposal1 = pool.get();
+////         index.propose(&mut proposal1, 0,1,1);
+////         assert_eq!(proposal1.estimate(), 3);
+////         let mut proposal2 = pool.get();
+////         index.propose(&mut proposal2, 2,1,0);
+////         assert_eq!(proposal2.estimate(), 2);
+////     }
+
+
+////     fn rand(rseed:u32) -> u32 {
+////         return ((Wrapping(rseed) * Wrapping(1103515245) + Wrapping(12345)) & Wrapping(0x7fffffff)).0;
+////     }
+
+
+////     #[bench]
+////     fn bench_hash_write(b:&mut Bencher) {
+////         let mut total = 0;
+////         let mut times = 0;
+////         let mut index = HashIndex::new();
+////         let mut seed = 0;
+////         // for ix in 0..10_000_000 {
+////         //     let e = rand(seed);
+////         //     seed = e;
+////         //     let a = rand(seed);
+////         //     seed = a;
+////         //     let val = rand(seed);
+////         //     seed = val;
+////         //     index.insert(e % 10000, (a % 50) + 1, val % 10000);
+////         // }
+////         seed = 0;
+////         b.iter(|| {
+////             times += 1;
+////             let e = rand(seed);
+////             seed = e;
+////             let a = rand(seed);
+////             seed = a;
+////             let val = rand(seed);
+////             seed = val;
+////             index.insert(e % 100000, (a % 50) + 1, val % 100000);
+////             // if(index.size > 100000) {
+////             //     index = HashIndex3::new();
+////             // }
+////             // total += index.size;
+////         });
+////         println!("{:?} : {:?}", times, index.size);
+////     }
+
+////     #[bench]
+////     fn bench_hash_write_200_000(b:&mut Bencher) {
+////         let mut total = 0;
+////         let mut times = 0;
+////         let mut seed = 0;
+////         seed = 0;
+////         b.iter(|| {
+////             let mut index = HashIndex::new();
+////             for _ in 0..200_000 {
+////                 let e = rand(seed);
+////                 seed = e;
+////                 let a = rand(seed);
+////                 seed = a;
+////                 let val = rand(seed);
+////                 seed = val;
+////                 index.insert(e % 100000, (a % 50) + 1, val % 100000);
+////             }
+////         });
+////         // println!("{:?} : {:?}", times, index.size);
+////     }
+
+////     #[bench]
+////     fn bench_hash_read(b:&mut Bencher) {
+////         let mut total = 0;
+////         let mut times = 0;
+////         let mut levels = 0;
+////         let mut index = HashIndex::new();
+////         let mut seed = 0;
+////         for ix in 0..100_000 {
+////             let e = rand(seed);
+////             seed = e;
+////             let a = rand(seed);
+////             seed = a;
+////             let val = rand(seed);
+////             seed = val;
+////             index.insert(e % 100000, (a % 50) + 1, val % 100000);
+////         }
+////         seed = 0;
+////         // let mut v = vec![];
+////         b.iter(|| {
+////             let e = rand(seed);
+////             seed = e;
+////             let a = rand(seed);
+////             seed = a;
+////             let val = rand(seed);
+////             seed = val;
+////             total += seed;
+////             index.check(e % 100000, (a % 50) + 1, val % 100000);
+////         });
+////         println!("results: {:?}", total);
+////     }
+
+
+
+//// }
 

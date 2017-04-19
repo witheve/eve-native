@@ -11,7 +11,6 @@ extern crate time;
 use indexes::{HashIndex, DistinctIndex, DistinctIter};
 use std::collections::HashMap;
 use std::mem::transmute;
-use std::time::Instant;
 use std::collections::hash_map::Entry;
 use std::cmp;
 use std::slice;
@@ -614,15 +613,15 @@ pub fn make_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) -> Const
 // Bit helpers
 //-------------------------------------------------------------------------
 
-fn check_bits(solved:u64, checking:u64) -> bool {
+pub fn check_bits(solved:u64, checking:u64) -> bool {
     solved & checking == checking
 }
 
-fn set_bit(solved:u64, bit:u32) -> u64 {
+pub fn set_bit(solved:u64, bit:u32) -> u64 {
     solved | (1 << bit)
 }
 
-fn clear_bit(solved:u64, bit:u32) -> u64 {
+pub fn clear_bit(solved:u64, bit:u32) -> u64 {
     solved & !(1 << bit)
 }
 
@@ -678,7 +677,7 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
 //-------------------------------------------------------------------------
 
 pub struct RoundHolder {
-    output_rounds: Vec<(u32, i32)>,
+    pub output_rounds: Vec<(u32, i32)>,
     rounds: Vec<HashMap<(u32,u32,u32), Change>>,
     pub max_round: usize,
 }
@@ -1269,114 +1268,15 @@ pub fn doit() {
         Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
     ];
     program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
-    let start = Instant::now();
+    let start = time::precise_time_ns();
     for ix in 0..100000 {
         let mut txn = Transaction::new();
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);
         txn.exec(&mut program);
     }
-    let dur = start.elapsed();
-    println!("TOOK {:?}", (dur.as_secs() * 1000) as f32 + (dur.subsec_nanos() as f32) / 1_000_000.0);
+    let end = time::precise_time_ns();
+    println!("TOOK {:?}", (end - start) as f64 / 1_000_000.0);
 }
 
-
-#[cfg(test)]
-pub mod tests {
-    extern crate test;
-
-    use super::*;
-    use self::test::Bencher;
-
-    #[test]
-    fn test_check_bits() {
-        let solved = 45;
-        let checking = 41;
-        assert!(check_bits(solved, checking));
-    }
-
-    #[test]
-    fn test_set_bit() {
-        let mut solved = 41;
-        let setting = 2;
-        solved = set_bit(solved, setting);
-        assert_eq!(45, solved);
-    }
-
-    #[test]
-    fn test_has_bit() {
-        let solved = 41;
-        assert!(has_bit(solved, 5));
-        assert!(has_bit(solved, 3));
-        assert!(has_bit(solved, 0));
-        assert!(!has_bit(solved, 1));
-        assert!(!has_bit(solved, 2));
-    }
-
-    fn check_output_rounds(existing: Vec<(u32, i32)>, neue_rounds: Vec<i32>, expected: Vec<(u32, i32)>) {
-        let mut holder = RoundHolder::new();
-        let iter = DistinctIter::new(&neue_rounds);
-        holder.output_rounds = existing;
-        holder.compute_output_rounds(iter);
-        assert_eq!(holder.output_rounds, expected);
-
-    }
-
-    #[test]
-    fn round_holder_compute_output_rounds() {
-        check_output_rounds(vec![(3,1), (5,1)], vec![1,-1,0,0,1,0,-1], vec![(4,1), (5,1), (6,-2)]);
-        check_output_rounds(vec![(3,1), (5,1)], vec![1,-1,0,1,0,0,-1], vec![(3,1), (5,1), (6,-2)]);
-        check_output_rounds(vec![(3,1), (5,1)], vec![1,-1,0,0], vec![]);
-        check_output_rounds(vec![(3,1), (5,1)], vec![1,0,0,0,0,0,-1], vec![(3,1), (5,1), (6,-2)]);
-        check_output_rounds(vec![(0,1), (6,-1)], vec![1,0,0,0,0,0,-1], vec![(0,1), (6,-1)]);
-    }
-
-    #[bench]
-    pub fn round_holder_compute_output_rounds_bench(b:&mut Bencher) {
-        let mut holder = RoundHolder::new();
-        let rounds = vec![1,-1,0,0,1,0,-1];
-        holder.output_rounds = vec![(3,1), (5,1)];
-        b.iter(|| {
-            let mut iter = DistinctIter::new(&rounds);
-            holder.compute_output_rounds(iter);
-        });
-    }
-
-    #[bench]
-    fn bench_simple_GJ(b:&mut Bencher) {
-        // prog.block("simple block", ({find, record, lib}) => {
-        //  let person = find("person");
-        //  let text = `name: ${person.name}`;
-        //  return [
-        //    record("html/div", {person, text})
-        //  ]
-        // });
-        //
-        let mut program = Program::new();
-        let constraints = vec![
-            make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
-            make_scan(register(0), program.interner.string("name"), register(1)),
-            make_function("concat", vec![program.interner.string("name: "), register(1)], vec![register(2)]),
-            make_function("gen_id", vec![register(0), register(2)], vec![register(3)]),
-            // Constraint::Insert {e: register(3), a: int.string("tag"), v: int.string("html/div")},
-            // Constraint::Insert {e: register(3), a: int.string("person"), v: register(0)},
-            // Constraint::Insert {e: register(3), a: int.string("text"), v: register(2)},
-            Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("tag"), v: program.interner.string("html/div")},
-            Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("person"), v: register(0)},
-            Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
-        ];
-        program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
-
-        let mut ix = 0;
-        b.iter(|| {
-            let mut txn = Transaction::new();
-            txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
-            txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);
-            txn.exec(&mut program);
-            ix += 1;
-        });
-        println!("Size: {:?}", program.index.size);
-    }
-
-}
 
