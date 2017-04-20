@@ -78,16 +78,15 @@ impl Row {
         self.solved_fields = clear_bit(self.solved_fields, field_index);
     }
 
-    // @TODO: reuse frames
-    // pub fn reset(&mut self, size:u32) {
-    //     self.count = 0;
-    //     self.round = 0;
-    //     self.solved_fields = 0;
-    //     self.solving_for = 0;
-    //     for field_index in 0..size {
-    //         self.fields[field_index as usize] = 0;
-    //     }
-    // }
+    pub fn reset(&mut self, size:u32) {
+        self.count = 0;
+        self.round = 0;
+        self.solved_fields = 0;
+        self.solving_for = 0;
+        for field_index in 0..size {
+            self.fields[field_index as usize] = 0;
+        }
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -204,23 +203,19 @@ impl fmt::Debug for Counters {
     }
 }
 
-pub struct Frame<'a> {
+pub struct Frame {
     input: Option<Change>,
     row: Row,
-    index: &'a mut HashIndex,
-    constraints: Option<&'a Vec<Constraint>>,
-    blocks: &'a Vec<Block>,
+    block_ix: usize,
     iters: Vec<Option<EstimateIter>>,
-    rounds: &'a mut RoundHolder,
-    iter_pool: &'a mut EstimateIterPool,
     results: Vec<u32>,
     #[allow(dead_code)]
     counters: Counters,
 }
 
-impl<'a> Frame<'a> {
-    pub fn new(index: &'a mut HashIndex, rounds: &'a mut RoundHolder, blocks: &'a Vec<Block>, iter_pool: &'a mut EstimateIterPool) -> Frame<'a> {
-        Frame {row: Row::new(64), index, rounds, input: None, blocks, constraints: None, iters: vec![None; 64], results: vec![], iter_pool, counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0}}
+impl Frame {
+    pub fn new() -> Frame {
+        Frame {row: Row::new(64), block_ix:0, input: None, iters: vec![None; 64], results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> u32 {
@@ -234,7 +229,7 @@ impl<'a> Frame<'a> {
         }
     }
 
-    pub fn check_iter(&mut self, iter_ix:u32, iter: EstimateIter) {
+    pub fn check_iter(&mut self, iter_pool: &mut EstimateIterPool, iter_ix:u32, iter: EstimateIter) {
         // @FIXME: it seems like there should be a better way to pull a value
         // out of a vector and potentially replace it
         let ix = iter_ix as usize;
@@ -251,7 +246,7 @@ impl<'a> Frame<'a> {
                 Some(iter)
             },
             Some(_) if cur_estimate > iter.estimate() => {
-                self.iter_pool.release(cur.take().unwrap());
+                iter_pool.release(cur.take().unwrap());
                 Some(iter)
             },
             old => old,
@@ -262,10 +257,11 @@ impl<'a> Frame<'a> {
         }
     }
 
-    // @TODO: reuse frames
-    // pub fn reset(&mut self) {
-    //     self.row.reset(64);
-    // }
+    pub fn reset(&mut self) {
+        self.input = None;
+        self.results.clear();
+        self.row.reset(64);
+    }
 }
 
 
@@ -276,7 +272,7 @@ impl<'a> Frame<'a> {
 
 #[derive(Debug, Copy, Clone)]
 pub enum Instruction {
-    StartBlock { block: u32 },
+    StartBlock { block: usize },
     GetIterator {iterator: u32, bail: i32, constraint: u32},
     IteratorNext {iterator: u32, bail: i32},
     Accept {bail: i32, constraint:u32, iterator:u32},
@@ -288,14 +284,14 @@ pub enum Instruction {
 }
 
 #[inline(never)]
-pub fn start_block(frame: &mut Frame, block:u32) -> i32 {
+pub fn start_block(program: &mut Program, frame: &mut Frame, block:usize) -> i32 {
     // println!("STARTING! {:?}", block);
-    frame.constraints = Some(&frame.blocks[block as usize].constraints);
+    frame.block_ix = block;
     1
 }
 
 #[inline(never)]
-pub fn move_input_field(frame: &mut Frame, from:u32, to:u32) -> i32 {
+pub fn move_input_field(program: &mut Program, frame: &mut Frame, from:u32, to:u32) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(change) = frame.input {
         match from {
@@ -309,11 +305,8 @@ pub fn move_input_field(frame: &mut Frame, from:u32, to:u32) -> i32 {
 }
 
 #[inline(never)]
-pub fn get_iterator(frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
-    let cur = match frame.constraints {
-        Some(ref constraints) => &constraints[cur_constraint as usize],
-        None => return bail,
-    };
+pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
+    let cur = &program.blocks[frame.block_ix].constraints[cur_constraint as usize];
     match cur {
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
             // if we have already solved all of this scan's vars, we just move on
@@ -326,8 +319,8 @@ pub fn get_iterator(frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32
             let resolved_v = frame.resolve(v);
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
-            let mut iter = frame.iter_pool.get();
-            frame.index.propose(&mut iter, resolved_e, resolved_a, resolved_v);
+            let mut iter = program.iter_pool.get();
+            program.index.propose(&mut iter, resolved_e, resolved_a, resolved_v);
             match iter {
                 EstimateIter::Scan {ref mut output, ref mut constraint, ..} => {
                     *constraint = cur_constraint;
@@ -341,7 +334,7 @@ pub fn get_iterator(frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32
                 _ => panic!("Implement me"),
             }
             // println!("get iter: {:?}", cur_constraint);
-            frame.check_iter(iter_ix, iter);
+            frame.check_iter(&mut program.iter_pool, iter_ix, iter);
         },
         // &Constraint::Function {ref op, ref outputs, ref params, param_mask, output_mask} => {
         //     let solved = frame.row.solved_fields;
@@ -357,7 +350,7 @@ pub fn get_iterator(frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32
 }
 
 #[inline(never)]
-pub fn iterator_next(frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
+pub fn iterator_next(program: &mut Program, frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
     let go = {
         let mut iter = frame.iters[iterator as usize].as_mut();
         // println!("Iter Next: {:?}", iter);
@@ -385,12 +378,9 @@ pub fn iterator_next(frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
 }
 
 #[inline(never)]
-pub fn accept(frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32) -> i32 {
+pub fn accept(program: &mut Program, frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32) -> i32 {
     // frame.counters.accept += 1;
-    let cur = match frame.constraints {
-        Some(ref constraints) => &constraints[cur_constraint as usize],
-        None => panic!("Accepting for non-existent iterator"),
-    };
+    let cur = &program.blocks[frame.block_ix].constraints[cur_constraint as usize];
     if cur_iterator > 0 {
         if let Some(EstimateIter::Scan { constraint, .. }) = frame.iters[(cur_iterator - 1) as usize] {
             if constraint == cur_constraint {
@@ -410,7 +400,7 @@ pub fn accept(frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32)
             let resolved_e = frame.resolve(e);
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
-            let checked = frame.index.check(resolved_e, resolved_a, resolved_v);
+            let checked = program.index.check(resolved_e, resolved_a, resolved_v);
             // println!("scan accept {:?} {:?}", cur_constraint, checked);
             match checked {
                 true => 1,
@@ -429,28 +419,25 @@ pub fn accept(frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32)
 }
 
 #[inline(never)]
-pub fn clear_rounds(frame: &mut Frame) -> i32 {
-    frame.rounds.clear();
+pub fn clear_rounds(program: &mut Program, frame: &mut Frame) -> i32 {
+    program.rounds.clear();
     if let Some(change) = frame.input {
-        frame.rounds.output_rounds.push((change.round, change.count));
+        program.rounds.output_rounds.push((change.round, change.count));
     }
     1
 }
 
 #[inline(never)]
-pub fn get_rounds(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
+pub fn get_rounds(program: &mut Program, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
     // println!("get rounds!");
-    let cur = match frame.constraints {
-        Some(ref constraints) => &constraints[constraint as usize],
-        None => return bail as i32,
-    };
+    let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Scan {ref e, ref a, ref v, .. } => {
             let resolved_e = frame.resolve(e);
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
-            frame.rounds.compute_output_rounds(frame.index.distinct_iter(resolved_e, resolved_a, resolved_v));
+            program.rounds.compute_output_rounds(program.index.distinct_iter(resolved_e, resolved_a, resolved_v));
             1
         },
         _ => { panic!("Get rounds on non-scan") }
@@ -459,21 +446,18 @@ pub fn get_rounds(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
 }
 
 #[inline(never)]
-pub fn output(frame: &mut Frame, constraint:u32, next:i32) -> i32 {
-    let cur = match frame.constraints {
-        Some(ref constraints) => &constraints[constraint as usize],
-        None => return next,
-    };
+pub fn output(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+    let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Insert {ref e, ref a, ref v} => {
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n: 0, round:0, transaction: 0, count:0, };
             // println!("want to output {:?}", c);
-            let ref mut rounds = frame.rounds;
+            let ref mut rounds = program.rounds;
             // println!("rounds {:?}", rounds.output_rounds);
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
-                frame.index.distinct(output, rounds);
+                program.index.distinct(output, rounds);
                 // println!("insert {:?}", output);
             }
         },
@@ -483,7 +467,7 @@ pub fn output(frame: &mut Frame, constraint:u32, next:i32) -> i32 {
 }
 
 #[inline(never)]
-pub fn project(frame: &mut Frame, from:u32, next:i32) -> i32 {
+pub fn project(program: &mut Program, frame: &mut Frame, from:u32, next:i32) -> i32 {
     let value = frame.get_register(from);
     frame.results.push(value);
     next
@@ -628,7 +612,7 @@ pub fn clear_bit(solved:u64, bit:u32) -> u64 {
 //-------------------------------------------------------------------------
 
 #[inline(never)]
-pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
+pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>) {
     // println!("Doing work");
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
@@ -637,34 +621,34 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
         let inst = &pipe[pointer as usize];
         pointer += match *inst {
             Instruction::StartBlock {block} => {
-                start_block(&mut frame, block)
+                start_block(program, frame, block)
             },
             Instruction::MoveInputField { from, to } => {
-                move_input_field(&mut frame, from, to)
+                move_input_field(program, frame, from, to)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
-                get_iterator(&mut frame, iterator, constraint, bail)
+                get_iterator(program, frame, iterator, constraint, bail)
             },
             Instruction::IteratorNext { iterator, bail } => {
-                iterator_next(&mut frame, iterator, bail)
+                iterator_next(program, frame, iterator, bail)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();
-                let next = accept(&mut frame, constraint, iterator, bail);
+                let next = accept(program, frame, constraint, iterator, bail);
                 // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
                 next
             },
             Instruction::ClearRounds => {
-                clear_rounds(&mut frame)
+                clear_rounds(program, frame)
             },
             Instruction::GetRounds { constraint, bail } => {
-                get_rounds(&mut frame, constraint, bail)
+                get_rounds(program, frame, constraint, bail)
             },
             Instruction::Output { constraint, next } => {
-                output(&mut frame, constraint, next)
+                output(program, frame, constraint, next)
             },
             Instruction::Project { from, next } => {
-                project(&mut frame, from, next)
+                project(program, frame, from, next)
             },
         }
     };
@@ -806,6 +790,8 @@ impl RoundHolder {
         for ix in 0..self.max_round {
             self.rounds[ix].clear();
         }
+        self.output_rounds.clear();
+        self.prev_output_rounds.clear();
         self.max_round = 0;
     }
 
@@ -854,6 +840,7 @@ impl<'a> RoundHolderIter {
 //-------------------------------------------------------------------------
 
 pub struct Program {
+    rounds: RoundHolder,
     pipe_lookup: HashMap<(u32,u32,u32), Vec<Vec<Instruction>>>,
     pub blocks: Vec<Block>,
     pub index: HashIndex,
@@ -868,15 +855,18 @@ impl Program {
         let iter_pool = EstimateIterPool::new();
         let mut interner = Interner::new();
         let tag_id = interner.string_id("tag");
-        Program { interner, pipe_lookup: HashMap::new(), blocks: vec![], index, tag_id, iter_pool }
+        let rounds = RoundHolder::new();
+        let blocks = vec![];
+        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, index, tag_id, iter_pool }
     }
 
     #[allow(dead_code)]
     pub fn exec_query(&mut self) -> Vec<u32> {
         let mut rounds = RoundHolder::new();
-        let mut frame = Frame::new(&mut self.index, &mut rounds, &self.blocks, &mut self.iter_pool);
+        let mut frame = Frame::new();
         // let start_ns = time::precise_time_ns();
-        interpret(&mut frame, &self.blocks[0].pipes[0]);
+        let pipe = self.blocks[0].pipes[0].clone();
+        interpret(self, &mut frame, &pipe);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
         // println!("counters: {:?}", frame.counters);
         return frame.results;
@@ -968,7 +958,7 @@ impl Program {
         let outputs_len = outputs.len();
         for scan_ix in &scans {
             let mut to_solve = registers;
-            let mut pipe = vec![Instruction::StartBlock { block: block_ix as u32 }];
+            let mut pipe = vec![Instruction::StartBlock { block: block_ix }];
             if *scan_ix != NO_INPUTS_PIPE {
                 for move_inst in &moves[scan_ix] {
                     pipe.push(move_inst.clone());
@@ -1235,16 +1225,22 @@ impl Transaction {
 
         let mut pipes = vec![];
         let mut items = rounds.iter();
+        let mut frame = Frame::new();
         while let Some(change) = items.next(rounds) {
             pipes.clear();
             program.get_pipes(change, &mut pipes);
-            let mut frame = Frame::new(&mut program.index, rounds, &program.blocks, &mut program.iter_pool);
+            frame.reset();
             frame.input = Some(change);
             for pipe in pipes.iter() {
-                interpret(&mut frame, pipe);
+                interpret(program, &mut frame, pipe);
             }
-            frame.index.insert(change.e, change.a, change.v);
+            program.index.insert(change.e, change.a, change.v);
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.rounds.clear();
+        self.changes.clear();
     }
 }
 
@@ -1276,8 +1272,9 @@ pub fn doit() {
     ];
     program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
     let start = time::precise_time_ns();
+    let mut txn = Transaction::new();
     for ix in 0..100000 {
-        let mut txn = Transaction::new();
+        txn.clear();
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);
         txn.exec(&mut program);

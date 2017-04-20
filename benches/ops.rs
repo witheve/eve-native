@@ -44,8 +44,9 @@ fn bench_simple_gj(b:&mut Bencher) {
     program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
 
         let mut ix = 0;
+        let mut txn = Transaction::new();
         b.iter(|| {
-            let mut txn = Transaction::new();
+            txn.clear();
             txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
             txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);
             txn.exec(&mut program);
