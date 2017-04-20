@@ -8,7 +8,7 @@
 
 extern crate time;
 
-use indexes::{HashIndex, DistinctIndex, DistinctIter};
+use indexes::{HashIndex, DistinctIter};
 use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
@@ -211,7 +211,6 @@ pub struct Frame<'a> {
     constraints: Option<&'a Vec<Constraint>>,
     blocks: &'a Vec<Block>,
     iters: Vec<Option<EstimateIter>>,
-    distinct: &'a mut DistinctIndex,
     rounds: &'a mut RoundHolder,
     iter_pool: &'a mut EstimateIterPool,
     results: Vec<u32>,
@@ -220,8 +219,8 @@ pub struct Frame<'a> {
 }
 
 impl<'a> Frame<'a> {
-    pub fn new(index: &'a mut HashIndex, rounds: &'a mut RoundHolder, distinct: &'a mut DistinctIndex, blocks: &'a Vec<Block>, iter_pool: &'a mut EstimateIterPool) -> Frame<'a> {
-        Frame {row: Row::new(64), index, rounds, distinct, input: None, blocks, constraints: None, iters: vec![None; 64], results: vec![], iter_pool, counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0}}
+    pub fn new(index: &'a mut HashIndex, rounds: &'a mut RoundHolder, blocks: &'a Vec<Block>, iter_pool: &'a mut EstimateIterPool) -> Frame<'a> {
+        Frame {row: Row::new(64), index, rounds, input: None, blocks, constraints: None, iters: vec![None; 64], results: vec![], iter_pool, counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> u32 {
@@ -451,7 +450,7 @@ pub fn get_rounds(frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
-            frame.rounds.compute_output_rounds(frame.distinct.iter(resolved_e, resolved_a, resolved_v));
+            frame.rounds.compute_output_rounds(frame.index.distinct_iter(resolved_e, resolved_a, resolved_v));
             1
         },
         _ => { panic!("Get rounds on non-scan") }
@@ -472,9 +471,9 @@ pub fn output(frame: &mut Frame, constraint:u32, next:i32) -> i32 {
             let ref mut rounds = frame.rounds;
             // println!("rounds {:?}", rounds.output_rounds);
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(round, count) in rounds.output_rounds.clone().iter() {
+            for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
-                frame.distinct.distinct(output, rounds);
+                frame.index.distinct(output, rounds);
                 // println!("insert {:?}", output);
             }
         },
@@ -508,7 +507,7 @@ pub fn register(ix: usize) -> Field {
 // Interner
 //-------------------------------------------------------------------------
 
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum Internable {
     String(String),
     Number(u32),
@@ -531,9 +530,8 @@ impl Interner {
             Some(&id) => id,
             None => {
                 let next = self.next_id;
+                self.value_to_id.push(thing.clone());
                 self.id_to_value.insert(thing, next);
-                // @FIXME: trying to fix this gets me into borrow checker sadness
-                // self.value_to_id.push(thing.copy());
                 self.next_id += 1;
                 next
             }
@@ -678,6 +676,7 @@ pub fn interpret(mut frame:&mut Frame, pipe:&Vec<Instruction>) {
 
 pub struct RoundHolder {
     pub output_rounds: Vec<(u32, i32)>,
+    prev_output_rounds: Vec<(u32, i32)>,
     rounds: Vec<HashMap<(u32,u32,u32), Change>>,
     pub max_round: usize,
 }
@@ -695,14 +694,26 @@ impl RoundHolder {
         for _ in 0..100 {
             rounds.push(HashMap::new());
         }
-        RoundHolder { rounds, output_rounds:vec![], max_round: 0 }
+        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], max_round: 0 }
+    }
+
+    pub fn get_output_rounds(&self) -> &Vec<(u32, i32)> {
+        match (self.output_rounds.len(), self.prev_output_rounds.len()) {
+            (0, _) => &self.prev_output_rounds,
+            (_, 0) => &self.output_rounds,
+            (_, _) => panic!("neither round array is empty"),
+        }
     }
 
     pub fn compute_output_rounds(&mut self, mut right_iter: DistinctIter) {
-        let mut neue = vec![];
+        let (neue, current) = match (self.output_rounds.len(), self.prev_output_rounds.len()) {
+            (0, _) => (&mut self.output_rounds, &mut self.prev_output_rounds),
+            (_, 0) => (&mut self.prev_output_rounds, &mut self.output_rounds),
+            (_, _) => panic!("neither round array is empty"),
+        };
         {
             // let len = self.output_rounds.len();
-            let mut left_iter = self.output_rounds.drain(..);
+            let mut left_iter = current.drain(..);
             let mut left_round = 0;
             let mut left_count = 0;
             let mut right_round = 0;
@@ -775,7 +786,6 @@ impl RoundHolder {
 
             }
         }
-        self.output_rounds = neue;
     }
 
     pub fn insert(&mut self, change:Change) {
@@ -847,7 +857,6 @@ pub struct Program {
     pipe_lookup: HashMap<(u32,u32,u32), Vec<Vec<Instruction>>>,
     pub blocks: Vec<Block>,
     pub index: HashIndex,
-    pub distinct: DistinctIndex,
     pub interner: Interner,
     iter_pool: EstimateIterPool,
     tag_id: u32,
@@ -855,18 +864,17 @@ pub struct Program {
 
 impl Program {
     pub fn new() -> Program {
-        let distinct = DistinctIndex::new();
         let index = HashIndex::new();
         let iter_pool = EstimateIterPool::new();
         let mut interner = Interner::new();
         let tag_id = interner.string_id("tag");
-        Program { interner, pipe_lookup: HashMap::new(), blocks: vec![], distinct, index, tag_id, iter_pool }
+        Program { interner, pipe_lookup: HashMap::new(), blocks: vec![], index, tag_id, iter_pool }
     }
 
     #[allow(dead_code)]
     pub fn exec_query(&mut self) -> Vec<u32> {
         let mut rounds = RoundHolder::new();
-        let mut frame = Frame::new(&mut self.index, &mut rounds, &mut self.distinct, &self.blocks, &mut self.iter_pool);
+        let mut frame = Frame::new(&mut self.index, &mut rounds, &self.blocks, &mut self.iter_pool);
         // let start_ns = time::precise_time_ns();
         interpret(&mut frame, &self.blocks[0].pipes[0]);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
@@ -876,8 +884,7 @@ impl Program {
 
     #[allow(dead_code)]
     pub fn raw_insert(&mut self, e:u32, a:u32, v:u32, round:u32, count:i32) {
-        self.distinct.raw_insert(e,a,v,round,count);
-        self.index.insert(e,a,v);
+        self.index.insert_distinct(e,a,v,round,count);
     }
 
     pub fn register_block(&mut self, mut block:Block) {
@@ -1223,7 +1230,7 @@ impl Transaction {
         let ref mut rounds = self.rounds;
 
         for change in self.changes.iter() {
-            program.distinct.distinct(&change, rounds);
+            program.index.distinct(&change, rounds);
         }
 
         let mut pipes = vec![];
@@ -1231,7 +1238,7 @@ impl Transaction {
         while let Some(change) = items.next(rounds) {
             pipes.clear();
             program.get_pipes(change, &mut pipes);
-            let mut frame = Frame::new(&mut program.index, rounds, &mut program.distinct, &program.blocks, &mut program.iter_pool);
+            let mut frame = Frame::new(&mut program.index, rounds, &program.blocks, &mut program.iter_pool);
             frame.input = Some(change);
             for pipe in pipes.iter() {
                 interpret(&mut frame, pipe);

@@ -175,25 +175,34 @@ impl HashIndexLevel {
 // HashIndex
 //-------------------------------------------------------------------------
 
+pub struct RoundEntry {
+    inserted: bool,
+    rounds: Vec<i32>,
+}
+
 pub struct HashIndex {
     a: HashMap<u32, HashIndexLevel, MyHasher>,
-    eavs: HashMap<(u32, u32, u32), bool, MyHasher>,
+    eavs: HashMap<(u32, u32, u32), RoundEntry, MyHasher>,
     attrs: Vec<u32>,
+    empty: Vec<i32>,
     pub size: u32,
 }
 
 impl HashIndex {
     pub fn new() -> HashIndex{
-        HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, attrs: vec![] }
+        HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, attrs: vec![], empty: vec![] }
     }
 
     pub fn insert(&mut self, e: u32, a:u32, v:u32) -> bool {
         let added = match self.eavs.entry((e,a,v)) {
-            Entry::Occupied(_) => {
-                false
+            Entry::Occupied(mut entry) => {
+                let info = entry.get_mut();
+                let needs_insert = info.inserted;
+                info.inserted = true;
+                !needs_insert
             }
             Entry::Vacant(o) => {
-                o.insert(true);
+                o.insert(RoundEntry { inserted: true, rounds: vec![] });
                 true
             },
 
@@ -251,10 +260,6 @@ impl HashIndex {
         if a == 0 {
             // @FIXME: this isn't always safe. In the case where we have an arbitrary lookup, if we
             // then propose, we might propose values that we then never actually check are correct.
-            let mut vals = vec![];
-            for key in self.a.keys() {
-                vals.push(*key);
-            }
             match iter {
                 &mut EstimateIter::Scan { ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output, .. } => {
                     let attrs_len = self.attrs.len();
@@ -274,79 +279,37 @@ impl HashIndex {
             level.propose(iter, e, v);
         }
     }
-}
 
-//-------------------------------------------------------------------------
-// Distinct Index
-//-------------------------------------------------------------------------
+    //---------------------------------------------------------------------
+    // Distinct methods
+    //---------------------------------------------------------------------
 
-pub struct DistinctIter<'a> {
-    ix: usize,
-    total: i32,
-    len: usize,
-    rounds: &'a Vec<i32>,
-}
-
-impl<'a> DistinctIter<'a> {
-    pub fn new(rounds:&'a Vec<i32>) -> DistinctIter<'a> {
-        DistinctIter { rounds, ix: 0, total: 0, len: rounds.len() }
-    }
-}
-
-impl<'a> Iterator for DistinctIter<'a> {
-    type Item = (u32, i32);
-
-    fn next(&mut self) -> Option<(u32, i32)> {
-        let mut ix = self.ix;
-        let mut total = self.total;
-        let ref mut rounds = self.rounds;
-        let mut delta = 0;
-        while ix < self.len && delta == 0 {
-            let next = rounds[ix];
-            delta = get_delta(total, total + next);
-            total += next;
-            ix += 1;
-        }
-        self.ix = ix;
-        self.total = total;
-        if delta == 0 {
-            None
-        } else {
-            Some(((ix - 1) as u32, delta))
-        }
-    }
-}
-
-pub struct DistinctIndex {
-    index: HashMap<(u32, u32, u32), Vec<i32>>,
-    empty: Vec<i32>,
-}
-
-impl DistinctIndex {
-    pub fn new() -> DistinctIndex {
-        DistinctIndex { index: HashMap::new(), empty: vec![] }
-    }
-
-    pub fn iter(&self, e:u32, a:u32, v:u32) -> DistinctIter {
+    pub fn insert_distinct(&mut self, e:u32, a:u32, v:u32, round:u32, count:i32) {
         let key = (e, a, v);
-        match self.index.get(&key) {
-            Some(rounds) => DistinctIter::new(rounds),
+        let needs_insert = {
+            let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] });
+            let ref mut counts = info.rounds;
+            ensure_len(counts, (round + 1) as usize);
+            counts[round as usize] += count;
+            !info.inserted
+        };
+        if needs_insert {
+            self.insert(e,a,v);
+        }
+    }
+
+    pub fn distinct_iter(&self, e:u32, a:u32, v:u32) -> DistinctIter {
+        let key = (e, a, v);
+        match self.eavs.get(&key) {
+            Some(&RoundEntry { ref rounds, .. }) => DistinctIter::new(rounds),
             None => DistinctIter::new(&self.empty),
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn raw_insert(&mut self, e:u32, a:u32, v:u32, round:u32, count:i32) {
-        let key = (e,a,v);
-        let mut counts = self.index.entry(key).or_insert_with(|| vec![]);
-        ensure_len(counts, (round + 1) as usize);
-        counts[round as usize] += count;
     }
 
     pub fn distinct(&mut self, input:&Change, rounds:&mut RoundHolder) {
         let key = (input.e, input.a, input.v);
         let input_count = input.count;
-        let mut counts = self.index.entry(key).or_insert_with(|| vec![]);
+        let ref mut counts = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
         // println!("Pre counts {:?}", counts);
         ensure_len(counts, (input.round + 1) as usize);
         let counts_len = counts.len() as u32;
@@ -395,5 +358,46 @@ impl DistinctIndex {
             cur_count = next_count_changed;
         }
         // println!("Post counts {:?}", counts);
+    }
+}
+
+//-------------------------------------------------------------------------
+// Distinct Iter
+//-------------------------------------------------------------------------
+
+pub struct DistinctIter<'a> {
+    ix: usize,
+    total: i32,
+    len: usize,
+    rounds: &'a Vec<i32>,
+}
+
+impl<'a> DistinctIter<'a> {
+    pub fn new(rounds:&'a Vec<i32>) -> DistinctIter<'a> {
+        DistinctIter { rounds, ix: 0, total: 0, len: rounds.len() }
+    }
+}
+
+impl<'a> Iterator for DistinctIter<'a> {
+    type Item = (u32, i32);
+
+    fn next(&mut self) -> Option<(u32, i32)> {
+        let mut ix = self.ix;
+        let mut total = self.total;
+        let ref mut rounds = self.rounds;
+        let mut delta = 0;
+        while ix < self.len && delta == 0 {
+            let next = rounds[ix];
+            delta = get_delta(total, total + next);
+            total += next;
+            ix += 1;
+        }
+        self.ix = ix;
+        self.total = total;
+        if delta == 0 {
+            None
+        } else {
+            Some(((ix - 1) as u32, delta))
+        }
     }
 }

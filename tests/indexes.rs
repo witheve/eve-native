@@ -93,7 +93,7 @@ fn round_counts_to_changes(counts: Vec<(u32, i32)>) -> Vec<Change> {
 }
 
 fn test_distinct(counts: Vec<(u32, i32)>, expected: Vec<(u32, i32)>) {
-    let mut index = DistinctIndex::new();
+    let mut index = HashIndex::new();
     let changes = round_counts_to_changes(counts);
 
     let mut final_results: HashMap<u32, i32> = HashMap::new();
@@ -108,7 +108,7 @@ fn test_distinct(counts: Vec<(u32, i32)>, expected: Vec<(u32, i32)>) {
         final_results.insert(distinct.round, cur + distinct.count);
     }
 
-    for (round, count) in index.iter(changes[0].e, changes[0].a, changes[0].v) {
+    for (round, count) in index.distinct_iter(changes[0].e, changes[0].a, changes[0].v) {
         let valid = match final_results.get(&round) {
             Some(&actual) => actual == count,
             None => count == 0,
