@@ -1203,12 +1203,14 @@ impl Program {
 pub struct Transaction {
     rounds: RoundHolder,
     changes: Vec<Change>,
+    frame: Frame,
 }
 
 impl Transaction {
     pub fn new() -> Transaction {
         let rounds = RoundHolder::new();
-        Transaction { changes: vec![], rounds}
+        let frame = Frame::new();
+        Transaction { changes: vec![], rounds, frame}
     }
 
     pub fn input(&mut self, e:u32, a:u32, v:u32, count: i32) {
@@ -1223,16 +1225,16 @@ impl Transaction {
             program.index.distinct(&change, rounds);
         }
 
+        let ref mut frame = self.frame;
         let mut pipes = vec![];
         let mut items = rounds.iter();
-        let mut frame = Frame::new();
         while let Some(change) = items.next(rounds) {
             pipes.clear();
             program.get_pipes(change, &mut pipes);
             frame.reset();
             frame.input = Some(change);
             for pipe in pipes.iter() {
-                interpret(program, &mut frame, pipe);
+                interpret(program, frame, pipe);
             }
             program.index.insert(change.e, change.a, change.v);
         }
