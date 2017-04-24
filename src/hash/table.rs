@@ -1243,30 +1243,28 @@ impl<K, V> ExactSizeIterator for DangerousRawBuckets<K, V> {
 
 /// Iterator over shared references to entries in a table.
 #[derive(Clone)]
-pub struct DangerousKeysIter<'a, K: 'a, V> {
+pub struct DangerousKeysIter<K: Copy, V> {
     iter: DangerousRawBuckets<K, V>,
-    marker: marker::PhantomData<&'a ()>,
 }
 
-impl<'a, K, V> DangerousKeysIter<'a, K, V> {
-    pub fn from_table(table: &RawTable<K, V>) -> DangerousKeysIter<'a, K, V> {
+impl<K:Copy, V> DangerousKeysIter<K, V> {
+    pub fn from_table(table: &RawTable<K, V>) -> DangerousKeysIter<K, V> {
         DangerousKeysIter {
             iter: DangerousRawBuckets {
                 raw: table.raw_bucket_at(0),
                 elems_left: table.size(),
             },
-            marker: marker::PhantomData,
         }
     }
 }
 
-impl<'a, K, V> Iterator for DangerousKeysIter<'a, K, V> {
-    type Item = &'a K;
+impl<K:Copy, V> Iterator for DangerousKeysIter<K, V> {
+    type Item = K;
 
-    fn next(&mut self) -> Option<&'a K> {
+    fn next(&mut self) -> Option<K> {
         self.iter.next().map(|raw| unsafe {
             let pair_ptr = raw.pair();
-            &(*pair_ptr).0
+            (*pair_ptr).0
         })
     }
 
@@ -1275,7 +1273,7 @@ impl<'a, K, V> Iterator for DangerousKeysIter<'a, K, V> {
     }
 }
 
-impl<'a, K, V> ExactSizeIterator for DangerousKeysIter<'a, K, V> {
+impl<K:Copy, V> ExactSizeIterator for DangerousKeysIter<K, V> {
     fn len(&self) -> usize {
         self.iter.len()
     }

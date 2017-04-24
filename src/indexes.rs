@@ -9,9 +9,8 @@ use std::cmp;
 extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::BuildHasherDefault;
-use hash::map::GetDangerousKeys;
-use hash::map::HashMap;
-use hash::map::Entry;
+use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
+use std::iter::{Iterator, ExactSizeIterator};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -34,32 +33,68 @@ pub fn get_delta(last:i32, next:i32) -> i32 {
 }
 
 //-------------------------------------------------------------------------
+// HashIndexIter
+//-------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub enum HashIndexIter {
+    Empty,
+    Root(DangerousKeys<u32, HashIndexLevel>),
+    Middle(DangerousKeys<u32, HashMap<u32, (), MyHasher>>),
+    Leaf(DangerousKeys<u32, ()>),
+}
+
+impl HashIndexIter {
+    pub fn len(&self) -> usize {
+        match self {
+            &HashIndexIter::Empty => 0,
+            &HashIndexIter::Root(ref iter) => iter.len(),
+            &HashIndexIter::Middle(ref iter) => iter.len(),
+            &HashIndexIter::Leaf(ref iter) => iter.len(),
+        }
+    }
+}
+
+impl Iterator for HashIndexIter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        match self {
+            &mut HashIndexIter::Empty => None,
+            &mut HashIndexIter::Root(ref mut iter) => iter.next(),
+            &mut HashIndexIter::Middle(ref mut iter) => iter.next(),
+            &mut HashIndexIter::Leaf(ref mut iter) => iter.next(),
+        }
+    }
+}
+
+//-------------------------------------------------------------------------
 // HashIndexLevel
 //-------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct HashIndexLevel {
-    e: HashMap<u32, Vec<u32>, MyHasher>,
-    v: HashMap<u32, Vec<u32>, MyHasher>,
-    es: Vec<u32>,
-    vs: Vec<u32>,
+    e: HashMap<u32, HashMap<u32, (), MyHasher>, MyHasher>,
+    v: HashMap<u32, HashMap<u32, (), MyHasher>, MyHasher>,
     size: u32,
 }
 
 impl HashIndexLevel {
     pub fn new() -> HashIndexLevel {
-        HashIndexLevel { e: HashMap::default(), v: HashMap::default(), es:vec![], vs:vec![], size: 0 }
+        HashIndexLevel { e: HashMap::default(), v: HashMap::default(), size: 0 }
     }
 
     pub fn insert(&mut self, e: u32, v:u32) -> bool {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
                 let mut vs = o.get_mut();
-                vs.push(v);
+                vs.insert(v, ());
                 true
             }
             Entry::Vacant(o) => {
-                self.es.push(e);
-                o.insert(vec![v]);
+                let mut neue = HashMap::default();
+                neue.insert(v, ());
+                o.insert(neue);
                 true
             },
         };
@@ -68,11 +103,12 @@ impl HashIndexLevel {
             match self.v.entry(v) {
                 Entry::Occupied(mut o) => {
                     let mut es = o.get_mut();
-                    es.push(e);
+                    es.insert(e, ());
                 }
                 Entry::Vacant(o) => {
-                    self.vs.push(v);
-                    o.insert(vec![e]);
+                    let mut neue = HashMap::default();
+                    neue.insert(e, ());
+                    o.insert(neue);
                 },
             };
         }
@@ -82,7 +118,7 @@ impl HashIndexLevel {
     pub fn check(&self, e: u32, v:u32) -> bool {
         if e > 0 && v > 0 {
             match self.e.get(&e) {
-                Some(es) => es.contains(&v),
+                Some(es) => es.contains_key(&v),
                 None => false,
             }
         } else if e > 0 {
@@ -94,15 +130,21 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn find_values(&self, e:u32) -> Option<&Vec<u32>>  {
-        self.e.get(&e)
+    pub fn find_values(&self, e:u32) -> Option<HashIndexIter>  {
+        match self.e.get(&e) {
+            Some(index) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
+            None => None,
+        }
     }
 
-    pub fn find_entities(&self, v:u32) -> Option<&Vec<u32>> {
-        self.v.get(&v)
+    pub fn find_entities(&self, v:u32) -> Option<HashIndexIter> {
+        match self.v.get(&v) {
+            Some(index) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
+            None => None,
+        }
     }
 
-    pub fn get(&self, e:u32, v:u32) -> Option<&Vec<u32>> {
+    pub fn get(&self, e:u32, v:u32) -> Option<HashIndexIter> {
         if e > 0 {
             // println!("here looking for v {:?}", e);
             self.find_values(e)
@@ -113,13 +155,13 @@ impl HashIndexLevel {
             let vs_len = self.v.len();
             if es_len < vs_len {
                 if es_len > 0 {
-                    Some(&self.es)
+                    Some(HashIndexIter::Middle(self.e.get_dangerous_keys()))
                 } else {
                     None
                 }
             } else {
                 if vs_len > 0 {
-                    Some(&self.vs)
+                    Some(HashIndexIter::Middle(self.v.get_dangerous_keys()))
                 } else {
                     None
                 }
@@ -129,21 +171,17 @@ impl HashIndexLevel {
 
     pub fn propose(&self, iter:&mut EstimateIter, e:u32, v:u32) {
         match *iter {
-            EstimateIter::Scan { ref mut estimate, ref mut output, ref mut values_ptr, ref mut len, .. } => {
+            EstimateIter::Scan { ref mut estimate, ref mut output, ref mut iter, .. } => {
                 if e > 0 {
-                    if let Some(vs) = self.find_values(e) {
-                        let vs_len = vs.len();
-                        *values_ptr = vs.as_ptr();
-                        *len = vs_len;
-                        *estimate = vs_len as u32;
+                    if let Some(hash_iter) = self.find_values(e) {
+                        *estimate = hash_iter.len() as u32;
+                        *iter = hash_iter;
                         *output = 2;
                     }
                 } else if v > 0 {
-                    if let Some(es) = self.find_entities(v) {
-                        let es_len = es.len();
-                        *values_ptr = es.as_ptr();
-                        *len = es_len;
-                        *estimate = es_len as u32;
+                    if let Some(hash_iter) = self.find_entities(v) {
+                        *estimate = hash_iter.len() as u32;
+                        *iter = hash_iter;
                         *output = 0;
                     }
                 } else {
@@ -152,17 +190,17 @@ impl HashIndexLevel {
                     if es_len < vs_len {
                         // only if we have values do we fill in the iter
                         if es_len > 0 {
-                            *values_ptr = self.es.as_ptr();
-                            *len = es_len;
-                            *estimate = es_len as u32;
+                            let hash_iter = self.e.get_dangerous_keys();
+                            *estimate = hash_iter.len() as u32;
+                            *iter = HashIndexIter::Middle(hash_iter);
                             *output = 0;
                         }
                     } else {
                         // only if we have values do we fill in the iter
                         if vs_len > 0 {
-                            *values_ptr = self.vs.as_ptr();
-                            *len = vs_len;
-                            *estimate = vs_len as u32;
+                            let hash_iter = self.v.get_dangerous_keys();
+                            *estimate = hash_iter.len() as u32;
+                            *iter = HashIndexIter::Middle(hash_iter);
                             *output = 2;
                         }
                     }
@@ -185,14 +223,13 @@ pub struct RoundEntry {
 pub struct HashIndex {
     a: HashMap<u32, HashIndexLevel, MyHasher>,
     eavs: HashMap<(u32, u32, u32), RoundEntry, MyHasher>,
-    attrs: Vec<u32>,
     empty: Vec<i32>,
     pub size: u32,
 }
 
 impl HashIndex {
     pub fn new() -> HashIndex{
-        HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, attrs: vec![], empty: vec![] }
+        HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, empty: vec![] }
     }
 
     pub fn insert(&mut self, e: u32, a:u32, v:u32) -> bool {
@@ -217,7 +254,6 @@ impl HashIndex {
                     level.insert(e, v)
                 }
                 Entry::Vacant(o) => {
-                    self.attrs.push(a);
                     let mut level = HashIndexLevel::new();
                     level.insert(e,v);
                     o.insert(level);
@@ -242,10 +278,10 @@ impl HashIndex {
         }
     }
 
-    pub fn get(&self, e:u32, a:u32, v:u32) -> Option<&Vec<u32>> {
+    pub fn get(&self, e:u32, a:u32, v:u32) -> Option<HashIndexIter> {
         if a == 0 {
-            if self.attrs.len() > 0 {
-                Some(&self.attrs)
+            if self.a.len() > 0 {
+                Some(HashIndexIter::Root(self.a.get_dangerous_keys()))
             } else {
                 None
             }
@@ -263,13 +299,11 @@ impl HashIndex {
             // @FIXME: this isn't always safe. In the case where we have an arbitrary lookup, if we
             // then propose, we might propose values that we then never actually check are correct.
             match iter {
-                &mut EstimateIter::Scan { ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output, .. } => {
-                    let attrs_len = self.attrs.len();
+                &mut EstimateIter::Scan { ref mut estimate, ref mut iter, ref mut output, .. } => {
+                    let attrs_iter = self.a.get_dangerous_keys();
                     *output = 1;
-                    *pos = 0;
-                    *len = attrs_len;
-                    *estimate = attrs_len as u32;
-                    *values_ptr = self.attrs.as_ptr();
+                    *estimate = attrs_iter.len() as u32;
+                    *iter = HashIndexIter::Root(attrs_iter);
                 },
                 _ => panic!("Non scan iter passed to propose"),
             }

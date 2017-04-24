@@ -2466,12 +2466,12 @@ fn assert_covariance() {
 /// [`keys`]: struct.HashMap.html#method.keys
 /// [`HashMap`]: struct.HashMap.html
 
-pub trait GetDangerousKeys<K, V, S> {
-    fn get_dangerous_keys<'a>(&self) -> DangerousKeys<'a, K, V>;
+pub trait GetDangerousKeys<K:Copy, V, S> {
+    fn get_dangerous_keys(&self) -> DangerousKeys<K, V>;
 }
 
-impl<K, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
-    fn get_dangerous_keys<'a>(&self) -> DangerousKeys<'a, K, V> {
+impl<K:Copy, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
+    fn get_dangerous_keys(&self) -> DangerousKeys<K, V> {
         DangerousKeys {
             inner: table::DangerousKeysIter::from_table(&self.table)
         }
@@ -2479,15 +2479,21 @@ impl<K, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
 }
 
 #[derive(Clone)]
-pub struct DangerousKeys<'a, K:'a, V> {
-    inner: table::DangerousKeysIter<'a, K, V>,
+pub struct DangerousKeys<K:Copy, V> {
+    inner: table::DangerousKeysIter<K, V>,
 }
 
-impl<'a, K, V> Iterator for DangerousKeys<'a, K, V> {
-    type Item = &'a K;
+impl<K:Copy, V> fmt::Debug for DangerousKeys<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("DangerousKeys { .. }")
+    }
+}
+
+impl<K:Copy, V> Iterator for DangerousKeys<K, V> {
+    type Item = K;
 
     #[inline]
-    fn next(&mut self) -> Option<&'a K> {
+    fn next(&mut self) -> Option<K> {
         self.inner.next()
     }
     #[inline]
@@ -2496,7 +2502,7 @@ impl<'a, K, V> Iterator for DangerousKeys<'a, K, V> {
     }
 }
 
-impl<'a, K, V> ExactSizeIterator for DangerousKeys<'a, K, V> {
+impl<K:Copy, V> ExactSizeIterator for DangerousKeys<K, V> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()

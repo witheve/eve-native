@@ -8,12 +8,13 @@
 
 extern crate time;
 
-use indexes::{HashIndex, DistinctIter};
+use indexes::{HashIndex, DistinctIter, HashIndexIter};
 use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
 use std::cmp;
 use std::slice;
+use std::iter::Iterator;
 use std::fmt;
 
 
@@ -105,11 +106,9 @@ impl EstimateIterPool {
 
     pub fn release(&mut self, mut iter:EstimateIter) {
         match iter {
-            EstimateIter::Scan {ref mut estimate, ref mut pos, ref mut values_ptr, ref mut len, ref mut output, ref mut constraint} => {
+            EstimateIter::Scan {ref mut estimate, ref mut iter, ref mut output, ref mut constraint} => {
                 *estimate = 0;
-                *pos = 0;
-                *values_ptr = self.empty_values.as_ptr();
-                *len = 0;
+                *iter = HashIndexIter::Empty;
                 *output = 0;
                 *constraint = 0;
             },
@@ -121,7 +120,7 @@ impl EstimateIterPool {
     pub fn get(&mut self) -> EstimateIter {
         match self.available.pop() {
             Some(iter) => iter,
-            None => EstimateIter::Scan { estimate:0, pos:0, values_ptr:self.empty_values.as_ptr(), len:0, output:0, constraint: 0 },
+            None => EstimateIter::Scan { estimate:0, iter:HashIndexIter::Empty, output:0, constraint: 0 },
         }
     }
 }
@@ -129,7 +128,7 @@ impl EstimateIterPool {
 
 #[derive(Clone, Debug)]
 pub enum EstimateIter {
-    Scan {estimate: u32, pos: u32, values_ptr: *const u32, len:usize, output: u32, constraint: u32},
+    Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
     Function {estimate: u32, args:Vec<Field>, func: fn(args:Vec<Field>), output: u32},
 }
 
@@ -147,16 +146,12 @@ impl EstimateIter {
 
     pub fn next(&mut self, row:&mut Row) -> bool {
         match self {
-            &mut EstimateIter::Scan {ref mut pos, ref values_ptr, ref len, ref output, .. } => {
-                if *pos >= *len as u32 {
-                    false
-                } else {
-                    let vs = unsafe {
-                        slice::from_raw_parts(*values_ptr, *len)
-                    };
-                    row.set(*output, vs[*pos as usize]);
-                    *pos = *pos + 1;
+            &mut EstimateIter::Scan {ref mut iter, ref output, .. } => {
+                if let Some(v) = iter.next() {
+                    row.set(*output, v);
                     true
+                } else {
+                    false
                 }
             },
             _ => panic!("Implement me"),
@@ -1172,7 +1167,7 @@ impl Program {
         //  for each tag, lookup (e, a, 0) and (e, a, v)
         if let Some(tags) = self.index.get(input.e, self.tag_id, 0) {
             for tag in tags {
-                tuple.0 = *tag;
+                tuple.0 = tag;
                 tuple.2 = 0;
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
