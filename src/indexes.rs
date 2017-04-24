@@ -82,11 +82,18 @@ pub enum HashIndexLeaf {
 }
 
 impl HashIndexLeaf {
-    pub fn into_many(prev_value:u32, neue_value:u32) -> HashIndexLeaf {
-        let mut neue = HashMap::default();
-        neue.insert(prev_value, ());
-        neue.insert(neue_value, ());
-        HashIndexLeaf::Many(neue)
+    pub fn insert(&mut self, neue_value:u32) {
+        match self {
+            &mut HashIndexLeaf::Single(prev) => {
+                let mut neue = HashMap::default();
+                neue.insert(prev, ());
+                neue.insert(neue_value, ());
+                *self = HashIndexLeaf::Many(neue);
+            },
+            &mut HashIndexLeaf::Many(ref mut prev) => {
+                prev.insert(neue_value, ());
+            },
+        }
     }
 }
 
@@ -109,11 +116,7 @@ impl HashIndexLevel {
     pub fn insert(&mut self, e: u32, v:u32) -> bool {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
-                let cur = o.get_mut();
-                match cur {
-                    &mut HashIndexLeaf::Single(prev) => { *cur = HashIndexLeaf::into_many(prev, v); },
-                    &mut HashIndexLeaf::Many(ref mut prev) => { prev.insert(v, ()); },
-                };
+                o.get_mut().insert(v);
                 true
             }
             Entry::Vacant(o) => {
@@ -125,11 +128,7 @@ impl HashIndexLevel {
             self.size += 1;
             match self.v.entry(v) {
                 Entry::Occupied(mut o) => {
-                    let cur = o.get_mut();
-                    match cur {
-                        &mut HashIndexLeaf::Single(prev) => { *cur = HashIndexLeaf::into_many(prev, e); },
-                        &mut HashIndexLeaf::Many(ref mut prev) => { prev.insert(e, ()); },
-                    }
+                    o.get_mut().insert(e);
                 }
                 Entry::Vacant(o) => {
                     o.insert(HashIndexLeaf::Single(e));
