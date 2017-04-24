@@ -39,8 +39,9 @@ pub fn get_delta(last:i32, next:i32) -> i32 {
 #[derive(Clone, Debug)]
 pub enum HashIndexIter {
     Empty,
+    Single { value:u32, returned:bool },
     Root(DangerousKeys<u32, HashIndexLevel>),
-    Middle(DangerousKeys<u32, HashMap<u32, (), MyHasher>>),
+    Middle(DangerousKeys<u32, HashIndexLeaf>),
     Leaf(DangerousKeys<u32, ()>),
 }
 
@@ -48,6 +49,7 @@ impl HashIndexIter {
     pub fn len(&self) -> usize {
         match self {
             &HashIndexIter::Empty => 0,
+            &HashIndexIter::Single {..} => 1,
             &HashIndexIter::Root(ref iter) => iter.len(),
             &HashIndexIter::Middle(ref iter) => iter.len(),
             &HashIndexIter::Leaf(ref iter) => iter.len(),
@@ -61,10 +63,30 @@ impl Iterator for HashIndexIter {
     fn next(&mut self) -> Option<u32> {
         match self {
             &mut HashIndexIter::Empty => None,
+            &mut HashIndexIter::Single { value, ref mut returned } => if *returned { None } else { *returned = true; Some(value) },
             &mut HashIndexIter::Root(ref mut iter) => iter.next(),
             &mut HashIndexIter::Middle(ref mut iter) => iter.next(),
             &mut HashIndexIter::Leaf(ref mut iter) => iter.next(),
         }
+    }
+}
+
+//-------------------------------------------------------------------------
+// HashIndexLeaf
+//-------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub enum HashIndexLeaf {
+    Single(u32),
+    Many(HashMap<u32, (), MyHasher>),
+}
+
+impl HashIndexLeaf {
+    pub fn into_many(prev_value:u32, neue_value:u32) -> HashIndexLeaf {
+        let mut neue = HashMap::default();
+        neue.insert(prev_value, ());
+        neue.insert(neue_value, ());
+        HashIndexLeaf::Many(neue)
     }
 }
 
@@ -74,8 +96,8 @@ impl Iterator for HashIndexIter {
 
 #[derive(Clone)]
 pub struct HashIndexLevel {
-    e: HashMap<u32, HashMap<u32, (), MyHasher>, MyHasher>,
-    v: HashMap<u32, HashMap<u32, (), MyHasher>, MyHasher>,
+    e: HashMap<u32, HashIndexLeaf, MyHasher>,
+    v: HashMap<u32, HashIndexLeaf, MyHasher>,
     size: u32,
 }
 
@@ -87,14 +109,15 @@ impl HashIndexLevel {
     pub fn insert(&mut self, e: u32, v:u32) -> bool {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
-                let mut vs = o.get_mut();
-                vs.insert(v, ());
+                let cur = o.get_mut();
+                match cur {
+                    &mut HashIndexLeaf::Single(prev) => { *cur = HashIndexLeaf::into_many(prev, v); },
+                    &mut HashIndexLeaf::Many(ref mut prev) => { prev.insert(v, ()); },
+                };
                 true
             }
             Entry::Vacant(o) => {
-                let mut neue = HashMap::default();
-                neue.insert(v, ());
-                o.insert(neue);
+                o.insert(HashIndexLeaf::Single(v));
                 true
             },
         };
@@ -102,13 +125,14 @@ impl HashIndexLevel {
             self.size += 1;
             match self.v.entry(v) {
                 Entry::Occupied(mut o) => {
-                    let mut es = o.get_mut();
-                    es.insert(e, ());
+                    let cur = o.get_mut();
+                    match cur {
+                        &mut HashIndexLeaf::Single(prev) => { *cur = HashIndexLeaf::into_many(prev, e); },
+                        &mut HashIndexLeaf::Many(ref mut prev) => { prev.insert(e, ()); },
+                    }
                 }
                 Entry::Vacant(o) => {
-                    let mut neue = HashMap::default();
-                    neue.insert(e, ());
-                    o.insert(neue);
+                    o.insert(HashIndexLeaf::Single(e));
                 },
             };
         }
@@ -118,7 +142,8 @@ impl HashIndexLevel {
     pub fn check(&self, e: u32, v:u32) -> bool {
         if e > 0 && v > 0 {
             match self.e.get(&e) {
-                Some(es) => es.contains_key(&v),
+                Some(&HashIndexLeaf::Single(cur)) => cur == v,
+                Some(&HashIndexLeaf::Many(ref cur)) => cur.contains_key(&v),
                 None => false,
             }
         } else if e > 0 {
@@ -132,14 +157,16 @@ impl HashIndexLevel {
 
     pub fn find_values(&self, e:u32) -> Option<HashIndexIter>  {
         match self.e.get(&e) {
-            Some(index) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
+            Some(&HashIndexLeaf::Single(value)) => Some(HashIndexIter::Single{ value, returned: false }),
+            Some(&HashIndexLeaf::Many(ref index)) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
             None => None,
         }
     }
 
     pub fn find_entities(&self, v:u32) -> Option<HashIndexIter> {
         match self.v.get(&v) {
-            Some(index) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
+            Some(&HashIndexLeaf::Single(value)) => Some(HashIndexIter::Single{value, returned: false}),
+            Some(&HashIndexLeaf::Many(ref index)) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
             None => None,
         }
     }
