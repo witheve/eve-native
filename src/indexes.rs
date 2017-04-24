@@ -95,6 +95,20 @@ impl HashIndexLeaf {
             },
         }
     }
+
+    pub fn check(&self, v:u32) -> bool {
+        match self {
+            &HashIndexLeaf::Single(cur) => cur == v,
+            &HashIndexLeaf::Many(ref cur) => cur.contains_key(&v),
+        }
+    }
+
+    pub fn iter(&self) -> HashIndexIter {
+        match self {
+            &HashIndexLeaf::Single(value) => HashIndexIter::Single{ value, returned: false },
+            &HashIndexLeaf::Many(ref index) => HashIndexIter::Leaf(index.get_dangerous_keys()),
+        }
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -141,8 +155,7 @@ impl HashIndexLevel {
     pub fn check(&self, e: u32, v:u32) -> bool {
         if e > 0 && v > 0 {
             match self.e.get(&e) {
-                Some(&HashIndexLeaf::Single(cur)) => cur == v,
-                Some(&HashIndexLeaf::Many(ref cur)) => cur.contains_key(&v),
+                Some(leaf) => leaf.check(v),
                 None => false,
             }
         } else if e > 0 {
@@ -156,16 +169,14 @@ impl HashIndexLevel {
 
     pub fn find_values(&self, e:u32) -> Option<HashIndexIter>  {
         match self.e.get(&e) {
-            Some(&HashIndexLeaf::Single(value)) => Some(HashIndexIter::Single{ value, returned: false }),
-            Some(&HashIndexLeaf::Many(ref index)) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
+            Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
     pub fn find_entities(&self, v:u32) -> Option<HashIndexIter> {
         match self.v.get(&v) {
-            Some(&HashIndexLeaf::Single(value)) => Some(HashIndexIter::Single{value, returned: false}),
-            Some(&HashIndexLeaf::Many(ref index)) => Some(HashIndexIter::Leaf(index.get_dangerous_keys())),
+            Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
