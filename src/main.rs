@@ -1,4 +1,16 @@
 #![feature(link_args)]
+#![feature(dropck_eyepatch)]
+#![feature(generic_param_attrs)]
+#![feature(sip_hash_13)]
+#![feature(core_intrinsics)]
+#![feature(shared)]
+#![feature(unique)]
+#![feature(placement_new_protocol)]
+#![feature(fused)]
+#![feature(rand)]
+#![feature(alloc)]
+#![feature(heap_api)]
+#![feature(oom)]
 
 // #[link_args = "-s TOTAL_MEMORY=500000000 EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 // #[link_args = "-s TOTAL_MEMORY=503316480"]
@@ -7,6 +19,7 @@ extern {}
 mod ops;
 use ops::doit;
 mod indexes;
+pub mod hash;
 
 fn main() {
     doit();

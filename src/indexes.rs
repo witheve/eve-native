@@ -2,14 +2,16 @@
 // Indexes
 //-------------------------------------------------------------------------
 
-use std::collections::HashMap;
+// use std::collections::HashMap;
 use ops::{EstimateIter, Change, RoundHolder};
 use std::cmp;
-use std::collections::hash_map::Entry;
 
 extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::BuildHasherDefault;
+use hash::map::GetDangerousKeys;
+use hash::map::HashMap;
+use hash::map::Entry;
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
