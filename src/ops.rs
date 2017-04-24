@@ -17,6 +17,14 @@ use std::slice;
 use std::iter::Iterator;
 use std::fmt;
 
+//-------------------------------------------------------------------------
+// Interned value
+//-------------------------------------------------------------------------
+
+pub type Interned = u32;
+pub type Round = u32;
+pub type TransactionId = u32;
+pub type Count = i32;
 
 //-------------------------------------------------------------------------
 // Change
@@ -24,17 +32,17 @@ use std::fmt;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Change {
-    pub e: u32,
-    pub a: u32,
-    pub v: u32,
-    pub n: u32,
-    pub round: u32,
-    pub transaction: u32,
-    pub count: i32,
+    pub e: Interned,
+    pub a: Interned,
+    pub v: Interned,
+    pub n: Interned,
+    pub round: Round,
+    pub transaction: TransactionId,
+    pub count: Count,
 }
 
 impl Change {
-    pub fn with_round_count(&self, round: u32, count:i32) -> Change {
+    pub fn with_round_count(&self, round:Round, count:Count) -> Change {
         Change {e: self.e, a: self.a, v: self.v, n: self.n, round, transaction: self.transaction, count}
     }
 }
@@ -55,19 +63,17 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct Row {
-    fields: Vec<u32>,
-    count: u32,
-    round: u32,
+    fields: Vec<Interned>,
     solved_fields: u64,
     solving_for:u64,
 }
 
 impl Row {
     pub fn new(size:usize) -> Row {
-        Row { fields: vec![0; size], count: 0, round: 0, solved_fields: 0, solving_for: 0 }
+        Row { fields: vec![0; size], solved_fields: 0, solving_for: 0 }
     }
 
-    pub fn set(&mut self, field_index:u32, value:u32) {
+    pub fn set(&mut self, field_index:u32, value:Interned) {
         self.fields[field_index as usize] = value;
         self.solving_for = set_bit(0, field_index);
         self.solved_fields = set_bit(self.solved_fields, field_index);
@@ -80,8 +86,6 @@ impl Row {
     }
 
     pub fn reset(&mut self, size:u32) {
-        self.count = 0;
-        self.round = 0;
         self.solved_fields = 0;
         self.solving_for = 0;
         for field_index in 0..size {
@@ -96,7 +100,7 @@ impl Row {
 
 pub struct EstimateIterPool {
     available: Vec<EstimateIter>,
-    empty_values: Vec<u32>,
+    empty_values: Vec<Interned>,
 }
 
 impl EstimateIterPool {
@@ -129,7 +133,8 @@ impl EstimateIterPool {
 #[derive(Clone, Debug)]
 pub enum EstimateIter {
     Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
-    Function {estimate: u32, args:Vec<Field>, func: fn(args:Vec<Field>), output: u32},
+    Function {estimate: u32, args:Vec<Field>, func: fn(args:Vec<Internable>), output: u32, result: Interned, returned: bool},
+    MultiRowFunction {estimate: u32, args:Vec<Field>, func: fn(args:Vec<Internable>), output: u32, results: Vec<Interned>, returned: bool},
 }
 
 impl EstimateIter {
@@ -139,6 +144,9 @@ impl EstimateIter {
                 *estimate
             },
             &EstimateIter::Function {ref estimate, .. } => {
+                *estimate
+            },
+            &EstimateIter::MultiRowFunction {ref estimate, .. } => {
                 *estimate
             },
         }
@@ -203,7 +211,7 @@ pub struct Frame {
     row: Row,
     block_ix: usize,
     iters: Vec<Option<EstimateIter>>,
-    results: Vec<u32>,
+    results: Vec<Interned>,
     #[allow(dead_code)]
     counters: Counters,
 }
@@ -213,11 +221,11 @@ impl Frame {
         Frame {row: Row::new(64), block_ix:0, input: None, iters: vec![None; 64], results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0}}
     }
 
-    pub fn get_register(&self, register:u32) -> u32 {
+    pub fn get_register(&self, register:u32) -> Interned {
         self.row.fields[register as usize]
     }
 
-    pub fn resolve(&self, field:&Field) -> u32 {
+    pub fn resolve(&self, field:&Field) -> Interned {
         match field {
             &Field::Register(cur) => self.row.fields[cur],
             &Field::Value(cur) => cur,
@@ -335,7 +343,9 @@ pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_c
         //     let solved = frame.row.solved_fields;
         //     if check_bits(solved, param_mask) && check_bits(solved, output_mask) {
         //         let resolved = params.iter().map(|v| frame.resolve(v));
+        //         let iter = program.iter_pool.get_func();
 
+        //         frame.check_iter(&mut program.iter_pool, iter_ix, iter);
         //     }
         //     // println!("get function iterator {:?}", cur);
         // },
@@ -475,7 +485,7 @@ pub fn project(program: &mut Program, frame: &mut Frame, from:u32, next:i32) -> 
 #[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
 pub enum Field {
     Register(usize),
-    Value(u32),
+    Value(Interned),
 }
 
 pub fn register(ix: usize) -> Field {
@@ -494,9 +504,9 @@ pub enum Internable {
 }
 
 pub struct Interner {
-    id_to_value: HashMap<Internable, u32>,
+    id_to_value: HashMap<Internable, Interned>,
     value_to_id: Vec<Internable>,
-    next_id: u32,
+    next_id: Interned,
 }
 
 impl Interner {
@@ -504,7 +514,7 @@ impl Interner {
         Interner {id_to_value: HashMap::new(), value_to_id:vec![Internable::Null], next_id:1}
     }
 
-    pub fn internable_to_id(&mut self, thing:Internable) -> u32 {
+    pub fn internable_to_id(&mut self, thing:Internable) -> Interned {
         match self.id_to_value.get(&thing) {
             Some(&id) => id,
             None => {
@@ -522,7 +532,7 @@ impl Interner {
         Field::Value(self.internable_to_id(thing))
     }
 
-    pub fn string_id(&mut self, string:&str) -> u32 {
+    pub fn string_id(&mut self, string:&str) -> Interned {
         let thing = Internable::String(string.to_string());
         self.internable_to_id(thing)
     }
@@ -536,7 +546,7 @@ impl Interner {
         Field::Value(self.internable_to_id(thing))
     }
 
-    pub fn number_id(&mut self, num:f32) -> u32 {
+    pub fn number_id(&mut self, num:f32) -> Interned {
         let bitpattern = unsafe {
             transmute::<f32, u32>(num)
         };
@@ -584,6 +594,19 @@ pub fn make_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) -> Const
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
     let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
     Constraint::Function {op: op.to_string(), params, outputs, param_mask, output_mask }
+}
+
+pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
+    let param_mask = make_register_mask(vec![&left,&right]);
+    Constraint::Filter {op:op.to_string(), left, right, param_mask }
+}
+
+//-------------------------------------------------------------------------
+// Functions
+//-------------------------------------------------------------------------
+
+pub fn add(params: Vec<Internable>) -> Interned {
+    0
 }
 
 //-------------------------------------------------------------------------
@@ -654,13 +677,13 @@ pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>
 //-------------------------------------------------------------------------
 
 pub struct RoundHolder {
-    pub output_rounds: Vec<(u32, i32)>,
-    prev_output_rounds: Vec<(u32, i32)>,
-    rounds: Vec<HashMap<(u32,u32,u32), Change>>,
+    pub output_rounds: Vec<(Round, Count)>,
+    prev_output_rounds: Vec<(Round, Count)>,
+    rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
     pub max_round: usize,
 }
 
-pub fn move_output_round(info:&Option<(u32, i32)>, round:&mut u32, count:&mut i32) {
+pub fn move_output_round(info:&Option<(Round, Count)>, round:&mut Round, count:&mut Count) {
     if let &Some((r, c)) = info {
         *round = r;
         *count += c;
@@ -676,7 +699,7 @@ impl RoundHolder {
         RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], max_round: 0 }
     }
 
-    pub fn get_output_rounds(&self) -> &Vec<(u32, i32)> {
+    pub fn get_output_rounds(&self) -> &Vec<(Round, Count)> {
         match (self.output_rounds.len(), self.prev_output_rounds.len()) {
             (0, _) => &self.prev_output_rounds,
             (_, 0) => &self.output_rounds,
@@ -836,12 +859,12 @@ impl<'a> RoundHolderIter {
 
 pub struct Program {
     rounds: RoundHolder,
-    pipe_lookup: HashMap<(u32,u32,u32), Vec<Vec<Instruction>>>,
+    pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
     pub blocks: Vec<Block>,
     pub index: HashIndex,
     pub interner: Interner,
     iter_pool: EstimateIterPool,
-    tag_id: u32,
+    tag_id: Interned,
 }
 
 impl Program {
@@ -856,7 +879,7 @@ impl Program {
     }
 
     #[allow(dead_code)]
-    pub fn exec_query(&mut self) -> Vec<u32> {
+    pub fn exec_query(&mut self) -> Vec<Interned> {
         let mut rounds = RoundHolder::new();
         let mut frame = Frame::new();
         // let start_ns = time::precise_time_ns();
@@ -868,7 +891,7 @@ impl Program {
     }
 
     #[allow(dead_code)]
-    pub fn raw_insert(&mut self, e:u32, a:u32, v:u32, round:u32, count:i32) {
+    pub fn raw_insert(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
         self.index.insert_distinct(e,a,v,round,count);
     }
 
@@ -1089,10 +1112,10 @@ impl Program {
         // println!("shapes: {:?}", shapes_per_pipe);
     }
 
-    pub fn to_shapes(&mut self, scans: Vec<&Constraint>) -> Vec<Vec<(u32, u32, u32)>> {
+    pub fn to_shapes(&mut self, scans: Vec<&Constraint>) -> Vec<Vec<(Interned, Interned, Interned)>> {
         let mut shapes = vec![];
         let tag = self.tag_id;
-        let mut tag_mappings:HashMap<Field, Vec<u32>> = HashMap::new();
+        let mut tag_mappings:HashMap<Field, Vec<Interned>> = HashMap::new();
         // find all the e -> tag mappings
         for scan in scans.iter() {
             if let &&Constraint::Scan {ref e, ref a, ref v, ..} = scan {
@@ -1208,7 +1231,7 @@ impl Transaction {
         Transaction { changes: vec![], rounds, frame}
     }
 
-    pub fn input(&mut self, e:u32, a:u32, v:u32, count: i32) {
+    pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
         let change = Change { e,a,v,n: 0, transaction:0, round:0, count };
         self.changes.push(change);
     }

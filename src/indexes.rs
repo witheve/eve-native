@@ -3,7 +3,7 @@
 //-------------------------------------------------------------------------
 
 // use std::collections::HashMap;
-use ops::{EstimateIter, Change, RoundHolder};
+use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count};
 use std::cmp;
 
 extern crate fnv;
@@ -39,10 +39,10 @@ pub fn get_delta(last:i32, next:i32) -> i32 {
 #[derive(Clone, Debug)]
 pub enum HashIndexIter {
     Empty,
-    Single { value:u32, returned:bool },
-    Root(DangerousKeys<u32, HashIndexLevel>),
-    Middle(DangerousKeys<u32, HashIndexLeaf>),
-    Leaf(DangerousKeys<u32, ()>),
+    Single { value:Interned, returned:bool },
+    Root(DangerousKeys<Interned, HashIndexLevel>),
+    Middle(DangerousKeys<Interned, HashIndexLeaf>),
+    Leaf(DangerousKeys<Interned, ()>),
 }
 
 impl HashIndexIter {
@@ -58,9 +58,9 @@ impl HashIndexIter {
 }
 
 impl Iterator for HashIndexIter {
-    type Item = u32;
+    type Item = Interned;
 
-    fn next(&mut self) -> Option<u32> {
+    fn next(&mut self) -> Option<Interned> {
         match self {
             &mut HashIndexIter::Empty => None,
             &mut HashIndexIter::Single { value, ref mut returned } => if *returned { None } else { *returned = true; Some(value) },
@@ -77,12 +77,12 @@ impl Iterator for HashIndexIter {
 
 #[derive(Clone)]
 pub enum HashIndexLeaf {
-    Single(u32),
-    Many(HashMap<u32, (), MyHasher>),
+    Single(Interned),
+    Many(HashMap<Interned, (), MyHasher>),
 }
 
 impl HashIndexLeaf {
-    pub fn insert(&mut self, neue_value:u32) {
+    pub fn insert(&mut self, neue_value:Interned) {
         match self {
             &mut HashIndexLeaf::Single(prev) => {
                 let mut neue = HashMap::default();
@@ -96,7 +96,7 @@ impl HashIndexLeaf {
         }
     }
 
-    pub fn check(&self, v:u32) -> bool {
+    pub fn check(&self, v:Interned) -> bool {
         match self {
             &HashIndexLeaf::Single(cur) => cur == v,
             &HashIndexLeaf::Many(ref cur) => cur.contains_key(&v),
@@ -117,8 +117,8 @@ impl HashIndexLeaf {
 
 #[derive(Clone)]
 pub struct HashIndexLevel {
-    e: HashMap<u32, HashIndexLeaf, MyHasher>,
-    v: HashMap<u32, HashIndexLeaf, MyHasher>,
+    e: HashMap<Interned, HashIndexLeaf, MyHasher>,
+    v: HashMap<Interned, HashIndexLeaf, MyHasher>,
     size: u32,
 }
 
@@ -127,7 +127,7 @@ impl HashIndexLevel {
         HashIndexLevel { e: HashMap::default(), v: HashMap::default(), size: 0 }
     }
 
-    pub fn insert(&mut self, e: u32, v:u32) -> bool {
+    pub fn insert(&mut self, e: Interned, v:Interned) -> bool {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
                 o.get_mut().insert(v);
@@ -152,7 +152,7 @@ impl HashIndexLevel {
         added
     }
 
-    pub fn check(&self, e: u32, v:u32) -> bool {
+    pub fn check(&self, e: Interned, v:Interned) -> bool {
         if e > 0 && v > 0 {
             match self.e.get(&e) {
                 Some(leaf) => leaf.check(v),
@@ -167,21 +167,21 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn find_values(&self, e:u32) -> Option<HashIndexIter>  {
+    pub fn find_values(&self, e:Interned) -> Option<HashIndexIter>  {
         match self.e.get(&e) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn find_entities(&self, v:u32) -> Option<HashIndexIter> {
+    pub fn find_entities(&self, v:Interned) -> Option<HashIndexIter> {
         match self.v.get(&v) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn get(&self, e:u32, v:u32) -> Option<HashIndexIter> {
+    pub fn get(&self, e:Interned, v:Interned) -> Option<HashIndexIter> {
         if e > 0 {
             // println!("here looking for v {:?}", e);
             self.find_values(e)
@@ -206,7 +206,7 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn propose(&self, iter:&mut EstimateIter, e:u32, v:u32) {
+    pub fn propose(&self, iter:&mut EstimateIter, e:Interned, v:Interned) {
         match *iter {
             EstimateIter::Scan { ref mut estimate, ref mut output, ref mut iter, .. } => {
                 if e > 0 {
@@ -258,8 +258,8 @@ pub struct RoundEntry {
 }
 
 pub struct HashIndex {
-    a: HashMap<u32, HashIndexLevel, MyHasher>,
-    eavs: HashMap<(u32, u32, u32), RoundEntry, MyHasher>,
+    a: HashMap<Interned, HashIndexLevel, MyHasher>,
+    eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
     empty: Vec<i32>,
     pub size: u32,
 }
@@ -269,7 +269,7 @@ impl HashIndex {
         HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, empty: vec![] }
     }
 
-    pub fn insert(&mut self, e: u32, a:u32, v:u32) -> bool {
+    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
         let added = match self.eavs.entry((e,a,v)) {
             Entry::Occupied(mut entry) => {
                 let info = entry.get_mut();
@@ -302,7 +302,7 @@ impl HashIndex {
     }
 
     #[inline(never)]
-    pub fn check(&self, e: u32, a:u32, v:u32) -> bool {
+    pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
         if e > 0 && a > 0 && v > 0 {
             self.eavs.contains_key(&(e,a,v))
         } else if a > 0 {
@@ -315,7 +315,7 @@ impl HashIndex {
         }
     }
 
-    pub fn get(&self, e:u32, a:u32, v:u32) -> Option<HashIndexIter> {
+    pub fn get(&self, e:Interned, a:Interned, v:Interned) -> Option<HashIndexIter> {
         if a == 0 {
             if self.a.len() > 0 {
                 Some(HashIndexIter::Root(self.a.get_dangerous_keys()))
@@ -331,7 +331,7 @@ impl HashIndex {
         }
     }
 
-    pub fn propose(&self, iter: &mut EstimateIter, e:u32, a:u32, v:u32) {
+    pub fn propose(&self, iter: &mut EstimateIter, e:Interned, a:Interned, v:Interned) {
         if a == 0 {
             // @FIXME: this isn't always safe. In the case where we have an arbitrary lookup, if we
             // then propose, we might propose values that we then never actually check are correct.
@@ -357,7 +357,7 @@ impl HashIndex {
     // Distinct methods
     //---------------------------------------------------------------------
 
-    pub fn insert_distinct(&mut self, e:u32, a:u32, v:u32, round:u32, count:i32) {
+    pub fn insert_distinct(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
         let key = (e, a, v);
         let needs_insert = {
             let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] });
@@ -371,7 +371,7 @@ impl HashIndex {
         }
     }
 
-    pub fn distinct_iter(&self, e:u32, a:u32, v:u32) -> DistinctIter {
+    pub fn distinct_iter(&self, e:Interned, a:Interned, v:Interned) -> DistinctIter {
         let key = (e, a, v);
         match self.eavs.get(&key) {
             Some(&RoundEntry { ref rounds, .. }) => DistinctIter::new(rounds),
@@ -452,9 +452,9 @@ impl<'a> DistinctIter<'a> {
 }
 
 impl<'a> Iterator for DistinctIter<'a> {
-    type Item = (u32, i32);
+    type Item = (Round, Count);
 
-    fn next(&mut self) -> Option<(u32, i32)> {
+    fn next(&mut self) -> Option<(Round, Count)> {
         let mut ix = self.ix;
         let mut total = self.total;
         let ref mut rounds = self.rounds;
@@ -470,7 +470,7 @@ impl<'a> Iterator for DistinctIter<'a> {
         if delta == 0 {
             None
         } else {
-            Some(((ix - 1) as u32, delta))
+            Some(((ix - 1) as Round, delta))
         }
     }
 }
