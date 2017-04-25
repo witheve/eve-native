@@ -32,14 +32,14 @@ fn bench_simple_gj(b:&mut Bencher) {
     let constraints = vec![
         make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
         make_scan(register(0), program.interner.string("name"), register(1)),
-        make_function("concat", vec![program.interner.string("name: "), register(1)], vec![register(2)]),
-        make_function("gen_id", vec![register(0), register(2)], vec![register(3)]),
-        // Constraint::Insert {e: register(3), a: int.string("tag"), v: int.string("html/div")},
-        // Constraint::Insert {e: register(3), a: int.string("person"), v: register(0)},
-        // Constraint::Insert {e: register(3), a: int.string("text"), v: register(2)},
-        Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("tag"), v: program.interner.string("html/div")},
-        Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("person"), v: register(0)},
-        Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
+        make_function("concat", vec![program.interner.string("name: "), register(1)], register(2)),
+        make_function("gen_id", vec![register(0), register(2)], register(3)),
+        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("tag"), v: program.interner.string("html/div")},
+        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("person"), v: register(0)},
+        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
+        Constraint::Insert {e: register(3), a: program.interner.string("tag"), v: program.interner.string("html/div")},
+        Constraint::Insert {e: register(3), a: program.interner.string("person"), v: register(0)},
+        Constraint::Insert {e: register(3), a: program.interner.string("text"), v: register(2)},
     ];
     program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
 

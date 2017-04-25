@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
 use std::cmp;
-use std::slice;
 use std::iter::Iterator;
 use std::fmt;
 
@@ -100,25 +99,41 @@ impl Row {
 
 pub struct EstimateIterPool {
     available: Vec<EstimateIter>,
-    empty_values: Vec<Interned>,
+    available_funcs: Vec<EstimateIter>,
 }
 
 impl EstimateIterPool {
     pub fn new() -> EstimateIterPool {
-        EstimateIterPool { available: vec![], empty_values: vec![] }
+        EstimateIterPool { available: vec![], available_funcs: vec![] }
     }
 
-    pub fn release(&mut self, mut iter:EstimateIter) {
-        match iter {
+    pub fn release(&mut self, mut estimate_iter:EstimateIter) {
+        match estimate_iter {
             EstimateIter::Scan {ref mut estimate, ref mut iter, ref mut output, ref mut constraint} => {
                 *estimate = 0;
                 *iter = HashIndexIter::Empty;
                 *output = 0;
                 *constraint = 0;
             },
-            _ => panic!("Implement me"),
+            EstimateIter::Function { ref mut estimate, ref mut result, ref mut output, ref mut returned, ref mut constraint } => {
+                *estimate = 0;
+                *result = 0;
+                *output = 0;
+                *constraint = 0;
+                *returned = false;
+            },
+            _ => panic!("Releasing non-scan"),
         }
-        self.available.push(iter);
+        match estimate_iter {
+            EstimateIter::Scan {..} => {
+                self.available.push(estimate_iter);
+            },
+            EstimateIter::Function {..} => {
+                self.available_funcs.push(estimate_iter);
+            },
+            _ => panic!("Releasing non-scan"),
+        }
+
     }
 
     pub fn get(&mut self) -> EstimateIter {
@@ -127,14 +142,21 @@ impl EstimateIterPool {
             None => EstimateIter::Scan { estimate:0, iter:HashIndexIter::Empty, output:0, constraint: 0 },
         }
     }
+
+    pub fn get_func(&mut self) -> EstimateIter {
+        match self.available_funcs.pop() {
+            Some(iter) => iter,
+            None => EstimateIter::Function { estimate:0, result:0, output:0, returned: false, constraint:0 },
+        }
+    }
 }
 
 
 #[derive(Clone, Debug)]
 pub enum EstimateIter {
     Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
-    Function {estimate: u32, args:Vec<Field>, func: fn(args:Vec<Internable>), output: u32, result: Interned, returned: bool},
-    MultiRowFunction {estimate: u32, args:Vec<Field>, func: fn(args:Vec<Internable>), output: u32, results: Vec<Interned>, returned: bool},
+    Function {estimate: u32, output: u32, result: Interned, returned: bool, constraint: u32},
+    MultiRowFunction {estimate: u32, output: u32, results: Vec<Interned>, returned: bool, constraint: u32},
 }
 
 impl EstimateIter {
@@ -162,13 +184,25 @@ impl EstimateIter {
                     false
                 }
             },
+            &mut EstimateIter::Function { result, ref output, ref mut returned, .. } => {
+                if !*returned && result > 0 {
+                    *returned = true;
+                    row.set(*output, result);
+                    true
+                } else {
+                    false
+                }
+            },
             _ => panic!("Implement me"),
         }
     }
 
-    pub fn clear(&mut self, row:&mut Row) {
+    pub fn clear(&self, row:&mut Row) {
         match self {
-            &mut EstimateIter::Scan {ref output, .. } => {
+            &EstimateIter::Scan {ref output, .. } => {
+                row.clear(*output);
+            },
+            &EstimateIter::Function { ref output, .. } => {
                 row.clear(*output);
             },
             _ => panic!("Implement me"),
@@ -287,14 +321,14 @@ pub enum Instruction {
 }
 
 #[inline(never)]
-pub fn start_block(program: &mut Program, frame: &mut Frame, block:usize) -> i32 {
+pub fn start_block(_: &mut Program, frame: &mut Frame, block:usize) -> i32 {
     // println!("STARTING! {:?}", block);
     frame.block_ix = block;
     1
 }
 
 #[inline(never)]
-pub fn move_input_field(program: &mut Program, frame: &mut Frame, from:u32, to:u32) -> i32 {
+pub fn move_input_field(_: &mut Program, frame: &mut Frame, from:u32, to:u32) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(change) = frame.input {
         match from {
@@ -338,24 +372,48 @@ pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_c
             }
             // println!("get iter: {:?}", cur_constraint);
             frame.check_iter(&mut program.iter_pool, iter_ix, iter);
+            1
         },
-        // &Constraint::Function {ref op, ref outputs, ref params, param_mask, output_mask} => {
-        //     let solved = frame.row.solved_fields;
-        //     if check_bits(solved, param_mask) && check_bits(solved, output_mask) {
-        //         let resolved = params.iter().map(|v| frame.resolve(v));
-        //         let iter = program.iter_pool.get_func();
-
-        //         frame.check_iter(&mut program.iter_pool, iter_ix, iter);
-        //     }
-        //     // println!("get function iterator {:?}", cur);
-        // },
-        _ => {}
-    };
-    1
+        &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, ..} => {
+            let solved = frame.row.solved_fields;
+            if check_bits(solved, param_mask) && !check_bits(solved, output_mask) {
+                let result = {
+                    let mut resolved = vec![];
+                    for param in params {
+                        resolved.push(program.interner.get_value(frame.resolve(param)));
+                    }
+                    func(resolved)
+                };
+                let mut iter = program.iter_pool.get_func();
+                match result {
+                    Some(v) => {
+                        let id = program.interner.internable_to_id(v);
+                        let reg = if let &Field::Register(reg) = output {
+                            reg as u32
+                        } else {
+                            panic!("Function output is not a register");
+                        };
+                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ..} = iter {
+                            *estimate = 1;
+                            *result = id;
+                            *output = reg;
+                        }
+                        frame.check_iter(&mut program.iter_pool, iter_ix, iter);
+                        1
+                    }
+                    _ => bail,
+                }
+            } else {
+                1
+            }
+            // println!("get function iterator {:?}", cur);
+        },
+        _ => { 1 }
+    }
 }
 
 #[inline(never)]
-pub fn iterator_next(program: &mut Program, frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
+pub fn iterator_next(_: &mut Program, frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
     let go = {
         let mut iter = frame.iters[iterator as usize].as_mut();
         // println!("Iter Next: {:?}", iter);
@@ -419,6 +477,19 @@ pub fn accept(program: &mut Program, frame: &mut Frame, cur_constraint:u32, cur_
             }
             1
         },
+        &Constraint::Filter {ref left, ref right, ref func, ref param_mask, .. } => {
+            if check_bits(frame.row.solved_fields, *param_mask) {
+                let resolved_left = program.interner.get_value(frame.resolve(left));
+                let resolved_right = program.interner.get_value(frame.resolve(right));
+                if func(resolved_left, resolved_right) {
+                    1
+                } else {
+                    bail
+                }
+            } else {
+                1
+            }
+        },
         _ => { 1 }
     }
 }
@@ -472,7 +543,7 @@ pub fn output(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32
 }
 
 #[inline(never)]
-pub fn project(program: &mut Program, frame: &mut Frame, from:u32, next:i32) -> i32 {
+pub fn project(_: &mut Program, frame: &mut Frame, from:u32, next:i32) -> i32 {
     let value = frame.get_register(from);
     frame.results.push(value);
     next
@@ -496,11 +567,25 @@ pub fn register(ix: usize) -> Field {
 // Interner
 //-------------------------------------------------------------------------
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum Internable {
     String(String),
     Number(u32),
     Null,
+}
+
+impl Internable {
+    fn to_number(intern: &Internable) -> f32 {
+        match intern {
+            &Internable::Number(num) => unsafe { transmute::<u32, f32>(num) },
+            _ => { panic!("to_number on non-number") }
+        }
+    }
+
+    fn from_number(num: f32) -> Internable {
+        let value = unsafe { transmute::<f32, u32>(num) };
+        Internable::Number(value)
+    }
 }
 
 pub struct Interner {
@@ -564,12 +649,15 @@ impl Interner {
 // Constraint
 //-------------------------------------------------------------------------
 
-#[derive(Debug)]
+type FilterFunction = fn(&Internable, &Internable) -> bool;
+type Function = fn(Vec<&Internable>) -> Option<Internable>;
+
+// #[derive(Debug)]
 #[allow(dead_code)]
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
-    Function {op: String, outputs: Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64},
-    Filter {op: String, left: Field, right: Field, param_mask: u64},
+    Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
+    Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field},
     Project {registers: Vec<u32>},
 }
@@ -590,23 +678,123 @@ pub fn make_scan(e:Field, a:Field, v:Field) -> Constraint {
     Constraint::Scan{e, a, v, register_mask }
 }
 
-pub fn make_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) -> Constraint {
+pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint {
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
-    let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
-    Constraint::Function {op: op.to_string(), params, outputs, param_mask, output_mask }
+    let output_mask = make_register_mask(vec![&output]);
+    let func = match op {
+        "+" => add,
+        "-" => subtract,
+        "*" => multiply,
+        "/" => divide,
+        "concat" => concat,
+        "gen_id" => gen_id,
+        _ => panic!("Unknown function: {:?}", op)
+    };
+    Constraint::Function {op: op.to_string(), func, params, output, param_mask, output_mask }
 }
 
 pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
     let param_mask = make_register_mask(vec![&left,&right]);
-    Constraint::Filter {op:op.to_string(), left, right, param_mask }
+    let func = match op {
+        "=" => eq,
+        "!=" => not_eq,
+        ">" => gt,
+        ">=" => gt,
+        "<" => gt,
+        "<=" => gt,
+        _ => panic!("Unknown filter {:?}", op)
+    };
+    Constraint::Filter {op:op.to_string(), func, left, right, param_mask }
 }
+
+//-------------------------------------------------------------------------
+// Filters
+//-------------------------------------------------------------------------
+
+pub fn eq(left:&Internable, right:&Internable) -> bool {
+    left == right
+}
+
+pub fn not_eq(left:&Internable, right:&Internable) -> bool {
+    left != right
+}
+
+macro_rules! numeric_filter {
+    ($name:ident, $op:tt) => {
+        pub fn $name(left:&Internable, right:&Internable) -> bool {
+            match (left, right) {
+                (&Internable::Number(_), &Internable::Number(_)) => {
+                    let a = Internable::to_number(left);
+                    let b = Internable::to_number(right);
+                    a $op b
+                },
+                _ => { false }
+            }
+        }
+    };
+}
+
+numeric_filter!(gt, >);
+numeric_filter!(gte, >=);
+numeric_filter!(lt, <);
+numeric_filter!(lte, <=);
 
 //-------------------------------------------------------------------------
 // Functions
 //-------------------------------------------------------------------------
 
-pub fn add(params: Vec<Internable>) -> Interned {
-    0
+macro_rules! binary_math {
+    ($name:ident, $op:tt) => {
+        pub fn $name(params: Vec<&Internable>) -> Option<Internable> {
+            match params.as_slice() {
+                &[&Internable::Number(_), &Internable::Number(_)] => {
+                    let a = Internable::to_number(params[0]);
+                    let b = Internable::to_number(params[1]);
+                    Some(Internable::from_number(a $op b))
+                },
+                _ => { None }
+            }
+        }
+    };
+}
+
+binary_math!(add, +);
+binary_math!(subtract, -);
+binary_math!(multiply, *);
+binary_math!(divide, /);
+
+pub fn concat(params: Vec<&Internable>) -> Option<Internable> {
+    let mut result = String::new();
+    for param in params {
+        match param {
+            &Internable::String(ref string) => {
+                result.push_str(string);
+            },
+            &Internable::Number(_) => {
+                result.push_str(&Internable::to_number(param).to_string());
+            },
+            _ => {}
+        }
+    }
+    Some(Internable::String(result))
+}
+
+pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
+    let mut result = String::new();
+    for param in params {
+        match param {
+            &Internable::String(ref string) => {
+                result.push_str(string);
+                result.push_str("|");
+            },
+            &Internable::Number(_) => {
+                result.push_str(&Internable::to_number(param).to_string());
+                result.push_str("|");
+            },
+            _ => {}
+        }
+    }
+    Some(Internable::String(result))
 }
 
 //-------------------------------------------------------------------------
@@ -880,7 +1068,6 @@ impl Program {
 
     #[allow(dead_code)]
     pub fn exec_query(&mut self) -> Vec<Interned> {
-        let mut rounds = RoundHolder::new();
         let mut frame = Frame::new();
         // let start_ns = time::precise_time_ns();
         let pipe = self.blocks[0].pipes[0].clone();
@@ -952,13 +1139,17 @@ impl Program {
                     }
                     moves.insert(ix, scan_moves);
                 },
-                &Constraint::Function {..} => {
-                    // @TODO: count the registers in the functions
-                    // get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
-                    // accepts.push(Instruction::Accept { bail: 0, constraint: ix });
+                &Constraint::Function {ref output, ..} => {
+                    // @TODO: ensure that all inputs are accounted for
+                    // count the registers in the functions
+                    if let &Field::Register(offset) = output {
+                        registers = cmp::max(registers, offset + 1);
+                    }
+                    get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
+                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0 });
                 },
                 &Constraint::Filter {..} => {
-                    // @TODO
+                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0, });
                 },
                 &Constraint::Insert {..} => {
                     outputs.push(Instruction::Output { next: 1, constraint: ix });
@@ -1281,14 +1472,14 @@ pub fn doit() {
     let constraints = vec![
         make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
         make_scan(register(0), program.interner.string("name"), register(1)),
-        make_function("concat", vec![program.interner.string("name: "), register(1)], vec![register(2)]),
-        make_function("gen_id", vec![register(0), register(2)], vec![register(3)]),
-        // Constraint::Insert {e: register(3), a: int.string("tag"), v: int.string("html/div")},
-        // Constraint::Insert {e: register(3), a: int.string("person"), v: register(0)},
-        // Constraint::Insert {e: register(3), a: int.string("text"), v: register(2)},
-        Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("tag"), v: program.interner.string("html/div")},
-        Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("person"), v: register(0)},
-        Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
+        make_function("concat", vec![program.interner.string("name: "), register(1)], register(2)),
+        make_function("gen_id", vec![register(0), register(2)], register(3)),
+        Constraint::Insert {e: register(3), a: program.interner.string("tag"), v: program.interner.string("html/div")},
+        Constraint::Insert {e: register(3), a: program.interner.string("person"), v: register(0)},
+        Constraint::Insert {e: register(3), a: program.interner.string("text"), v: register(2)},
+        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("tag"), v: program.interner.string("html/div")},
+        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("person"), v: register(0)},
+        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
     ];
     program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
     let start = time::precise_time_ns();
@@ -1297,6 +1488,29 @@ pub fn doit() {
         txn.clear();
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);
+        txn.exec(&mut program);
+    }
+    let end = time::precise_time_ns();
+    println!("TOOK {:?}", (end - start) as f64 / 1_000_000.0);
+}
+
+
+pub fn doit_blah() {
+    let mut program = Program::new();
+    let constraints = vec![
+        make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
+        make_scan(register(0), program.interner.string("age"), register(1)),
+        make_filter(">", register(1), program.interner.number(60.0)),
+        make_function("+", vec![register(1), program.interner.number(10.0)], register(2)),
+        Constraint::Insert {e: register(0), a: program.interner.string("adjsted-age"), v: register(2)},
+    ];
+    program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
+    let start = time::precise_time_ns();
+    let mut txn = Transaction::new();
+    for ix in 0..1 {
+        txn.clear();
+        txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
+        txn.input(program.interner.number_id(ix as f32), program.interner.string_id("age"), program.interner.number_id((ix % 100) as f32), 1);
         txn.exec(&mut program);
     }
     let end = time::precise_time_ns();

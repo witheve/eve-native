@@ -1495,7 +1495,6 @@ impl<'a, K, V> InternalEntry<K, V, &'a mut RawTable<K, V>> {
         match self {
             InternalEntry::Occupied { elem } => {
                 Some(Occupied(OccupiedEntry {
-                    key: Some(key),
                     elem: elem,
                 }))
             }
@@ -1554,7 +1553,6 @@ impl<'a, K: 'a + Debug, V: 'a + Debug> Debug for Entry<'a, K, V> {
 /// [`Entry`]: enum.Entry.html
 
 pub struct OccupiedEntry<'a, K: 'a, V: 'a> {
-    key: Option<K>,
     elem: FullBucket<K, V, &'a mut RawTable<K, V>>,
 }
 
@@ -2128,13 +2126,6 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
 
     pub fn remove(self) -> V {
         pop_internal(self.elem).1
-    }
-
-    /// Returns a key that was used for search.
-    ///
-    /// The key was retained for further use.
-    fn take_key(&mut self) -> Option<K> {
-        self.key.take()
     }
 }
 

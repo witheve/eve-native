@@ -7,10 +7,10 @@
 #![feature(unique)]
 #![feature(placement_new_protocol)]
 #![feature(fused)]
-#![feature(rand)]
 #![feature(alloc)]
 #![feature(heap_api)]
 #![feature(oom)]
+#![feature(slice_patterns)]
 
 // #[link_args = "-s TOTAL_MEMORY=500000000 EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 // #[link_args = "-s TOTAL_MEMORY=503316480"]
