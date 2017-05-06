@@ -1484,7 +1484,7 @@ pub fn doit() {
     program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
     let start = time::precise_time_ns();
     let mut txn = Transaction::new();
-    for ix in 0..100000 {
+    for ix in 0..22000 {
         txn.clear();
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);

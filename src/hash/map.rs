@@ -2504,7 +2504,7 @@ impl<K:Copy, V> ExactSizeIterator for DangerousKeys<K, V> {
 // Tests
 //------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(test_hash)]
 mod test_map {
     use super::HashMap;
     use super::Entry::{Occupied, Vacant};

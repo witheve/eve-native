@@ -23,7 +23,7 @@ fn check_output_rounds(existing: Vec<(u32, i32)>, neue_rounds: Vec<i32>, expecte
     let iter = DistinctIter::new(&neue_rounds);
     holder.output_rounds = existing;
     holder.compute_output_rounds(iter);
-    assert_eq!(holder.output_rounds, expected);
+    assert_eq!(holder.get_output_rounds(), &expected);
 
 }
 

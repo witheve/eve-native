@@ -33,7 +33,7 @@ fn find_entities() {
     index.insert(1,1);
     index.insert(2,1);
     index.insert(300,1);
-    let entities = index.get(0, 1).unwrap();
+    let entities:Vec<u32> = index.get(0, 1).unwrap().collect();
     assert!(entities.contains(&1));
     assert!(entities.contains(&2));
     assert!(entities.contains(&300));
@@ -47,7 +47,7 @@ fn find_values() {
     index.insert(1,2);
     index.insert(1,300);
     {
-        let values = index.get(1, 0).unwrap();
+        let values:Vec<u32> = index.get(1, 0).unwrap().collect();
         assert!(values.contains(&1));
         assert!(values.contains(&2));
         assert!(values.contains(&300));
@@ -56,7 +56,7 @@ fn find_values() {
 
     index.insert(5,8);
     index.insert(9,8);
-    let values2 = index.get(9, 0).unwrap();
+    let values2:Vec<u32> = index.get(9, 0).unwrap().collect();
     assert!(values2.contains(&8));
 }
 

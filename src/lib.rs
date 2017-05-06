@@ -15,6 +15,10 @@
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 extern {}
 
+#[macro_use]
+extern crate nom;
+
 pub mod ops;
 pub mod indexes;
 pub mod hash;
+pub mod parser;
