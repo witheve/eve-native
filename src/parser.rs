@@ -1,11 +1,13 @@
 
-use nom::{digit};
+use nom::{digit, alphanumeric, anychar};
 use std::str::{self, FromStr};
 
 #[derive(Debug)]
 pub enum Node<'a> {
     Integer(i32),
     Float(f32),
+    RawString(&'a str),
+    EmbeddedString(Vec<Node<'a>>),
     Tag(&'a str),
     Variable(&'a str),
     Attribute(&'a str),
@@ -31,16 +33,58 @@ named!(number<Node<'a>>,
                Node::Integer(i32::from_str(s).unwrap())
            }}));
 
+named!(raw_string<&str>,
+       delimited!(
+           tag!("\""),
+           map_res!(escaped!(is_not_s!("\"\\"), '\\', one_of!("\"\\")), str::from_utf8),
+           tag!("\"")
+       ));
+
+named!(string_embed<Node<'a>>,
+       delimited!(
+           tag!("{{"),
+           expr,
+           tag!("}}")
+       ));
+
+// @FIXME: seems like there should be a better way to handle this
+named!(not_embed_start<&[u8]>, is_not_s!("{"));
+named!(string_parts<Vec<Node<'a>>>,
+       fold_many1!(
+           alt_complete!(
+               string_embed |
+               map_res!(not_embed_start, str::from_utf8) => { |v:&'a str| Node::RawString(v) } |
+               map_res!(recognize!(pair!(tag!("{"), not_embed_start)), str::from_utf8) => { |v:&'a str| Node::RawString(v) }),
+           Vec::new(),
+           |mut acc: Vec<Node<'a>>, cur: Node<'a>| {
+               acc.push(cur);
+               acc
+           }));
+
+named!(string<Node<'a>>,
+       do_parse!(
+           raw: raw_string >>
+           ({
+               let mut info = string_parts(raw.as_bytes());
+               let mut parts = info.unwrap().1;
+               if parts.len() == 1 {
+                   parts.pop().unwrap()
+               } else {
+                   Node::EmbeddedString(parts)
+               }
+           })));
+
 named!(expr<Node<'a>>,
        ws!(alt_complete!(
                number |
+               string |
                identifier => { |v:&'a str| Node::Variable(v) }
                         )));
 
-named!(equality<Node<'a>>,
-       ws!(alt_complete!(
+// named!(equality<Node<'a>>,
+//        ws!(alt_complete!(
 
-                        ))));
+//                         )));
 
 named!(hashtag<Node>,
        do_parse!(
@@ -72,7 +116,6 @@ named!(attribute<Node<'a>>,
 
 named!(record<Node<'a>>,
        do_parse!(
-           // attrs: hashtag >>
            tag!("[") >>
            attrs: many0!(attribute) >>
            tag!("]") >>
@@ -107,6 +150,7 @@ named!(block<Node<'a>>,
 
 #[test]
 fn parser_coolness() {
-    println!("{:?}", hashtag(b"#fo|o"));
+    println!("{:?}", string_parts(b"\"h {} ey\""));
     println!("{:?}", block(b"search [#foo woah:zomg x > 3.2] bind [#bar]"));
+    println!("{:?}", block(b"bind [#bar x:\"dude this {{yo}} is cool\"]"));
 }
