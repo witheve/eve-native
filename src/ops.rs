@@ -496,7 +496,7 @@ pub fn accept(program: &mut Program, frame: &mut Frame, cur_constraint:u32, cur_
 
 #[inline(never)]
 pub fn clear_rounds(program: &mut Program, frame: &mut Frame) -> i32 {
-    program.rounds.clear();
+    program.rounds.clear_output_rounds();
     if let Some(change) = frame.input {
         program.rounds.output_rounds.push((change.round, change.count));
     }
@@ -652,7 +652,7 @@ impl Interner {
 type FilterFunction = fn(&Internable, &Internable) -> bool;
 type Function = fn(Vec<&Internable>) -> Option<Internable>;
 
-// #[derive(Debug)]
+// #[derive(Clone)]
 #[allow(dead_code)]
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
@@ -661,6 +661,18 @@ pub enum Constraint {
     Insert {e: Field, a: Field, v:Field},
     Project {registers: Vec<u32>},
 }
+
+impl fmt::Debug for Constraint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
+            _ => { write!(f, "Constraint ...") }
+        }
+    }
+}
+
 
 pub fn make_register_mask(fields: Vec<&Field>) -> u64 {
     let mut mask = 0;
@@ -996,9 +1008,13 @@ impl RoundHolder {
         for ix in 0..self.max_round {
             self.rounds[ix].clear();
         }
+        self.clear_output_rounds();
+        self.max_round = 0;
+    }
+
+    pub fn clear_output_rounds(&mut self) {
         self.output_rounds.clear();
         self.prev_output_rounds.clear();
-        self.max_round = 0;
     }
 
     pub fn iter(&self) -> RoundHolderIter {
@@ -1410,16 +1426,14 @@ impl Program {
 //-------------------------------------------------------------------------
 
 pub struct Transaction {
-    rounds: RoundHolder,
     changes: Vec<Change>,
     frame: Frame,
 }
 
 impl Transaction {
     pub fn new() -> Transaction {
-        let rounds = RoundHolder::new();
         let frame = Frame::new();
-        Transaction { changes: vec![], rounds, frame}
+        Transaction { changes: vec![], frame}
     }
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
@@ -1428,16 +1442,19 @@ impl Transaction {
     }
 
     pub fn exec(&mut self, program: &mut Program) {
-        let ref mut rounds = self.rounds;
+        {
+            let ref mut rounds = program.rounds;
 
-        for change in self.changes.iter() {
-            program.index.distinct(&change, rounds);
+            for change in self.changes.iter() {
+                program.index.distinct(&change, rounds);
+            }
         }
 
         let ref mut frame = self.frame;
         let mut pipes = vec![];
-        let mut items = rounds.iter();
-        while let Some(change) = items.next(rounds) {
+        let mut items = program.rounds.iter();
+        while let Some(change) = items.next(&mut program.rounds) {
+            // println!("Change {:?}", change);
             pipes.clear();
             program.get_pipes(change, &mut pipes);
             frame.reset();
@@ -1450,7 +1467,6 @@ impl Transaction {
     }
 
     pub fn clear(&mut self) {
-        self.rounds.clear();
         self.changes.clear();
     }
 }
@@ -1484,7 +1500,7 @@ pub fn doit() {
     program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
     let start = time::precise_time_ns();
     let mut txn = Transaction::new();
-    for ix in 0..22000 {
+    for ix in 0..100000 {
         txn.clear();
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
         txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);

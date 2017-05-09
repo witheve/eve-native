@@ -1,6 +1,8 @@
 
-use nom::{digit, alphanumeric, anychar};
+use nom::{digit, alphanumeric, anychar, IResult};
 use std::str::{self, FromStr};
+use std::collections::HashMap;
+use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block};
 
 #[derive(Debug)]
 pub enum Node<'a> {
@@ -14,10 +16,131 @@ pub enum Node<'a> {
     AttributeEquality(&'a str, Box<Node<'a>>),
     AttributeInequality {attribute:&'a str, right:Box<Node<'a>>, op:&'a str},
     Record(Vec<Node<'a>>),
+    OutputRecord(Vec<Node<'a>>),
     Search(Vec<Node<'a>>),
     Bind(Vec<Node<'a>>),
     Commit(Vec<Node<'a>>),
     Block{search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
+}
+
+// match self {
+//     &Node::Integer(v) => {}
+//     &Node::Float(v) => {},
+//     &Node::RawString(v) => {},
+//     &Node::EmbeddedString(ref vs) => {},
+//     &Node::Tag(v) => {},
+//     &Node::Variable(v) => {},
+//     &Node::Attribute(v) => {},
+//     &Node::AttributeEquality(a, ref v) => {},
+//     &Node::AttributeInequality {ref attribute, ref right, ref op} => {},
+//     &Node::Record(ref attrs) => {},
+//     &Node::Search(ref statements) => {},
+//     &Node::Bind(ref statements) => {},
+//     &Node::Commit(ref statements) => {},
+//     &Node::Block{ref search, ref update} => {},
+// }
+//
+//let constraints = vec![
+//   make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
+//   make_scan(register(0), program.interner.string("age"), register(1)),
+//   make_filter(">", register(1), program.interner.number(60.0)),
+//   make_function("+", vec![register(1), program.interner.number(10.0)], register(2)),
+//   Constraint::Insert {e: register(0), a: program.interner.string("adjsted-age"), v: register(2)},
+// ];
+// program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
+
+impl<'a> Node<'a> {
+
+    pub fn compile(&self, comp:&mut Compilation) -> Option<Field> {
+        match self {
+            &Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
+            &Node::Float(v) => { Some(comp.interner.number(v)) },
+            &Node::RawString(v) => { Some(comp.interner.string(v)) },
+            &Node::EmbeddedString(ref vs) => { panic!("TODO") },
+            &Node::Variable(v) => { Some(comp.get_register(v)) },
+            &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
+            &Node::AttributeInequality {ref attribute, ref right, ref op} => { right.compile(comp) },
+            &Node::EmbeddedString(ref vs) => { panic!("TODO") },
+            &Node::Record(ref attrs) => {
+                comp.id += 1;
+                let id = format!("record{:?}", comp.id);
+                let reg = comp.get_register(&id);
+                for attr in attrs {
+                    let (a, v) = match attr {
+                        &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
+                        &Node::Attribute(a) => { (comp.interner.string(a), comp.get_register(a)) },
+                        &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
+                        _ => { panic!("TODO") }
+                    };
+                    comp.constraints.push(make_scan(reg, a, v));
+                };
+                Some(reg)
+            },
+            &Node::OutputRecord(ref attrs) => {
+                comp.id += 1;
+                let id = format!("record{:?}", comp.id);
+                let reg = comp.get_register(&id);
+                let mut identity_attrs = vec![];
+                for attr in attrs {
+                    let (a, v) = match attr {
+                        &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
+                        &Node::Attribute(a) => { (comp.interner.string(a), comp.get_register(a)) },
+                        &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
+                        _ => { panic!("TODO") }
+                    };
+                    identity_attrs.push(v);
+                    comp.constraints.push(Constraint::Insert{e:reg, a, v});
+                };
+                comp.constraints.push(make_function("gen_id", identity_attrs, reg));
+                Some(reg)
+            },
+            &Node::Search(ref statements) => {
+                for s in statements {
+                    s.compile(comp);
+                };
+                None
+            },
+            &Node::Bind(ref statements) => {
+                for s in statements {
+                    s.compile(comp);
+                };
+                None
+            },
+            &Node::Commit(ref statements) => {
+                for s in statements {
+                    s.compile(comp);
+                };
+                None
+            },
+            &Node::Block{ref search, ref update} => {
+                if let Some(ref s) = **search {
+                    s.compile(comp);
+                };
+                update.compile(comp);
+                None
+            },
+            _ => panic!("Trying to compile something we don't know how to compile")
+        }
+    }
+}
+
+pub struct Compilation<'a> {
+    vars: HashMap<String, usize>,
+    interner: &'a mut Interner,
+    constraints: Vec<Constraint>,
+    id: usize,
+}
+
+impl<'a> Compilation<'a> {
+    pub fn new(interner: &'a mut Interner) -> Compilation<'a> {
+        Compilation { vars:HashMap::new(), interner, constraints:vec![], id:0 }
+    }
+
+    pub fn get_register(&mut self, name: &str) -> Field {
+        let len = self.vars.len();
+        let ix = self.vars.entry(name.to_string()).or_insert(len);
+        register(*ix)
+    }
 }
 
 named!(identifier<&str>, map_res!(is_not_s!("#\\.,()[]{}:\"|; \r\n\t"), str::from_utf8));
@@ -121,6 +244,19 @@ named!(record<Node<'a>>,
            tag!("]") >>
            (Node::Record(attrs))));
 
+named!(output_attribute<Node<'a>>,
+       ws!(alt_complete!(
+               hashtag |
+               attribute_equality |
+               identifier => { |v:&'a str| Node::Attribute(v) })));
+
+named!(output_record<Node<'a>>,
+       do_parse!(
+           tag!("[") >>
+           attrs: many0!(output_attribute) >>
+           tag!("]") >>
+           (Node::OutputRecord(attrs))));
+
 named!(search_section<Node<'a>>,
        do_parse!(
            ws!(tag!("search")) >>
@@ -130,13 +266,13 @@ named!(search_section<Node<'a>>,
 named!(bind_section<Node<'a>>,
        do_parse!(
            ws!(tag!("bind")) >>
-           items: many0!(ws!(record)) >>
+           items: many0!(ws!(output_record)) >>
            (Node::Bind(items))));
 
 named!(commit_section<Node<'a>>,
        do_parse!(
            ws!(tag!("commit")) >>
-           items: many0!(ws!(record)) >>
+           items: many0!(ws!(output_record)) >>
            (Node::Commit(items))));
 
 named!(block<Node<'a>>,
@@ -150,7 +286,25 @@ named!(block<Node<'a>>,
 
 #[test]
 fn parser_coolness() {
-    println!("{:?}", string_parts(b"\"h {} ey\""));
-    println!("{:?}", block(b"search [#foo woah:zomg x > 3.2] bind [#bar]"));
-    println!("{:?}", block(b"bind [#bar x:\"dude this {{yo}} is cool\"]"));
+    let b = block(b"search [#foo woah:dude] bind [#bar dude]");
+    println!("{:?}", b);
+    let mut program = Program::new();
+    let block = {
+        let mut comp = Compilation::new(&mut program.interner);
+        match b {
+            IResult::Done(_, block) => { block.compile(&mut comp); }
+            _ => { println!("Failed: {:?}", b); }
+        }
+
+        for c in comp.constraints.iter() {
+            println!("{:?}", c);
+        }
+
+        Block { name: "simple block".to_string(), constraints:comp.constraints, pipes: vec![] }
+    };
+    program.register_block(block);
+    let mut txn = Transaction::new();
+    txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
+    txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
+    txn.exec(&mut program);
 }
