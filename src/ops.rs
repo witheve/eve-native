@@ -1454,7 +1454,7 @@ impl Transaction {
         let mut pipes = vec![];
         let mut items = program.rounds.iter();
         while let Some(change) = items.next(&mut program.rounds) {
-            // println!("Change {:?}", change);
+            println!("Change {:?}", change);
             pipes.clear();
             program.get_pipes(change, &mut pipes);
             frame.reset();

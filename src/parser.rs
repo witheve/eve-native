@@ -9,14 +9,17 @@ pub enum Node<'a> {
     Integer(i32),
     Float(f32),
     RawString(&'a str),
-    EmbeddedString(Vec<Node<'a>>),
+    EmbeddedString(Option<String>, Vec<Node<'a>>),
     Tag(&'a str),
     Variable(&'a str),
     Attribute(&'a str),
     AttributeEquality(&'a str, Box<Node<'a>>),
     AttributeInequality {attribute:&'a str, right:Box<Node<'a>>, op:&'a str},
-    Record(Vec<Node<'a>>),
-    OutputRecord(Vec<Node<'a>>),
+    Inequality {left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
+    Equality {left:Box<Node<'a>>, right:Box<Node<'a>>},
+    Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
+    Record(Option<String>, Vec<Node<'a>>),
+    OutputRecord(Option<String>, Vec<Node<'a>>),
     Search(Vec<Node<'a>>),
     Bind(Vec<Node<'a>>),
     Commit(Vec<Node<'a>>),
@@ -51,17 +54,78 @@ pub enum Node<'a> {
 
 impl<'a> Node<'a> {
 
+    pub fn gather_equalities(&self, comp:&mut Compilation) -> Option<Field> {
+        match self {
+            &Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
+            &Node::Float(v) => { Some(comp.interner.number(v)) },
+            &Node::RawString(v) => { Some(comp.interner.string(v)) },
+            &Node::Variable(v) => { Some(comp.get_register(v)) },
+            &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
+            &Node::Inequality {ref left, ref right, ref op} => {
+                None
+            },
+            &Node::EmbeddedString(ref var, ref vs) => { panic!("TODO") },
+            &Node::Equality {ref left, ref right} => {
+                None
+            },
+            &Node::Infix {ref result, ref left, ref right, ..} => {
+                None
+            },
+            &Node::Record(ref var, ref attrs) => {
+                None
+            },
+            &Node::OutputRecord(ref var, ref attrs) => {
+                None
+            },
+            &Node::Search(ref statements) => {
+                for s in statements {
+                    s.compile(comp);
+                };
+                None
+            },
+            &Node::Bind(ref statements) => {
+                for s in statements {
+                    s.compile(comp);
+                };
+                None
+            },
+            &Node::Commit(ref statements) => {
+                for s in statements {
+                    s.compile(comp);
+                };
+                None
+            },
+            &Node::Block{ref search, ref update} => {
+                if let Some(ref s) = **search {
+                    s.compile(comp);
+                };
+                update.compile(comp);
+                None
+            },
+            _ => panic!("Trying to compile something we don't know how to compile")
+        }
+    }
+
     pub fn compile(&self, comp:&mut Compilation) -> Option<Field> {
         match self {
             &Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
             &Node::Float(v) => { Some(comp.interner.number(v)) },
             &Node::RawString(v) => { Some(comp.interner.string(v)) },
-            &Node::EmbeddedString(ref vs) => { panic!("TODO") },
             &Node::Variable(v) => { Some(comp.get_register(v)) },
             &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
-            &Node::AttributeInequality {ref attribute, ref right, ref op} => { right.compile(comp) },
-            &Node::EmbeddedString(ref vs) => { panic!("TODO") },
-            &Node::Record(ref attrs) => {
+            &Node::Inequality {ref left, ref right, ref op} => {
+                let left_value = left.compile(comp);
+                let right_value = right.compile(comp);
+                match (left_value, right_value) {
+                    (Some(l), Some(r)) => {
+                        comp.constraints.push(make_filter(op, l, r));
+                    },
+                    _ => panic!("inequality without both a left and right: {:?} {} {:?}", left, op, right)
+                }
+                right_value
+            },
+            &Node::EmbeddedString(ref var, ref vs) => { panic!("TODO") },
+            &Node::Record(ref var, ref attrs) => {
                 comp.id += 1;
                 let id = format!("record{:?}", comp.id);
                 let reg = comp.get_register(&id);
@@ -70,13 +134,24 @@ impl<'a> Node<'a> {
                         &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
                         &Node::Attribute(a) => { (comp.interner.string(a), comp.get_register(a)) },
                         &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
+                        &Node::AttributeInequality {ref attribute, ref op, ref right } => {
+                            let reg = comp.get_register(attribute);
+                            let right_value = right.compile(comp);
+                            match right_value {
+                                Some(r) => {
+                                    comp.constraints.push(make_filter(op, reg, r));
+                                },
+                                _ => panic!("inequality without both a left and right: {} {} {:?}", attribute, op, right)
+                            }
+                            (comp.interner.string(attribute), reg)
+                        },
                         _ => { panic!("TODO") }
                     };
                     comp.constraints.push(make_scan(reg, a, v));
                 };
                 Some(reg)
             },
-            &Node::OutputRecord(ref attrs) => {
+            &Node::OutputRecord(ref var, ref attrs) => {
                 comp.id += 1;
                 let id = format!("record{:?}", comp.id);
                 let reg = comp.get_register(&id);
@@ -193,16 +268,23 @@ named!(string<Node<'a>>,
                if parts.len() == 1 {
                    parts.pop().unwrap()
                } else {
-                   Node::EmbeddedString(parts)
+                   Node::EmbeddedString(None, parts)
                }
            })));
 
-named!(expr<Node<'a>>,
+named!(value<Node<'a>>,
        ws!(alt_complete!(
                number |
                string |
                identifier => { |v:&'a str| Node::Variable(v) }
-                        )));
+               )));
+
+named!(expr<Node<'a>>,
+       ws!(alt_complete!(
+               infix_addition |
+               infix_multiplication |
+               value
+               )));
 
 // named!(equality<Node<'a>>,
 //        ws!(alt_complete!(
@@ -242,7 +324,35 @@ named!(record<Node<'a>>,
            tag!("[") >>
            attrs: many0!(attribute) >>
            tag!("]") >>
-           (Node::Record(attrs))));
+           (Node::Record(None, attrs))));
+
+named!(inequality<Node<'a>>,
+       do_parse!(
+           left: expr >>
+           op: ws!(alt!(tag!(">") | tag!(">=") | tag!("<") | tag!("<=") | tag!("!="))) >>
+           right: expr >>
+           (Node::Inequality{left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
+
+named!(infix_addition<Node<'a>>,
+       do_parse!(
+           left: alt_complete!(infix_multiplication | value) >>
+           op: ws!(alt!(tag!("+") | tag!("-"))) >>
+           right: expr >>
+           (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
+
+named!(infix_multiplication<Node<'a>>,
+       do_parse!(
+           left: value >>
+           op: ws!(alt!(tag!("*") | tag!("/"))) >>
+           right: alt!(infix_multiplication | value) >>
+           (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
+
+named!(equality<Node<'a>>,
+       do_parse!(
+           left: expr >>
+           op: ws!(tag!("=")) >>
+           right: expr >>
+           (Node::Equality {left:Box::new(left), right:Box::new(right)})));
 
 named!(output_attribute<Node<'a>>,
        ws!(alt_complete!(
@@ -255,12 +365,16 @@ named!(output_record<Node<'a>>,
            tag!("[") >>
            attrs: many0!(output_attribute) >>
            tag!("]") >>
-           (Node::OutputRecord(attrs))));
+           (Node::OutputRecord(None, attrs))));
 
 named!(search_section<Node<'a>>,
        do_parse!(
            ws!(tag!("search")) >>
-           items: many0!(ws!(record)) >>
+           items: many0!(ws!(alt_complete!(
+                            record |
+                            inequality |
+                            equality
+                        ))) >>
            (Node::Search(items))));
 
 named!(bind_section<Node<'a>>,
@@ -286,7 +400,8 @@ named!(block<Node<'a>>,
 
 #[test]
 fn parser_coolness() {
-    let b = block(b"search [#foo woah:dude] bind [#bar dude]");
+    println!("{:?}", expr(b"3 * 4 + 5 * 6"));
+    let b = block(b"search [#foo woah] a = woah + 10 bind [#bar woah]");
     println!("{:?}", b);
     let mut program = Program::new();
     let block = {
