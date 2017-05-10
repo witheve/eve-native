@@ -286,11 +286,6 @@ named!(expr<Node<'a>>,
                value
                )));
 
-// named!(equality<Node<'a>>,
-//        ws!(alt_complete!(
-
-//                         )));
-
 named!(hashtag<Node>,
        do_parse!(
            tag!("#") >>
