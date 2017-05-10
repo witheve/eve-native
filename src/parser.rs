@@ -344,7 +344,7 @@ named!(infix_multiplication<Node<'a>>,
        do_parse!(
            left: value >>
            op: ws!(alt!(tag!("*") | tag!("/"))) >>
-           right: alt!(infix_multiplication | value) >>
+           right: alt_complete!(infix_multiplication | value) >>
            (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
 named!(equality<Node<'a>>,
@@ -401,6 +401,7 @@ named!(block<Node<'a>>,
 #[test]
 fn parser_coolness() {
     println!("{:?}", expr(b"3 * 4 + 5 * 6"));
+    println!("{:?}", expr(b"3 * 4 * 5 * 6"));
     let b = block(b"search [#foo woah] a = woah + 10 bind [#bar woah]");
     println!("{:?}", b);
     let mut program = Program::new();
