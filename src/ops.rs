@@ -384,6 +384,7 @@ pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_c
                     }
                     func(resolved)
                 };
+                println!("DOING FUNC {:?}", result);
                 let mut iter = program.iter_pool.get_func();
                 match result {
                     Some(v) => {
@@ -714,6 +715,7 @@ pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
         ">=" => gt,
         "<" => gt,
         "<=" => gt,
+        "contains" => string_contains,
         _ => panic!("Unknown filter {:?}", op)
     };
     Constraint::Filter {op:op.to_string(), func, left, right, param_mask }
@@ -750,6 +752,15 @@ numeric_filter!(gt, >);
 numeric_filter!(gte, >=);
 numeric_filter!(lt, <);
 numeric_filter!(lte, <=);
+
+pub fn string_contains(haystack:&Internable, needle:&Internable) -> bool {
+    match (haystack, needle) {
+        (&Internable::String(ref a), &Internable::String(ref b)) => {
+            a.contains(b)
+        },
+        _ => { false }
+    }
+}
 
 //-------------------------------------------------------------------------
 // Functions

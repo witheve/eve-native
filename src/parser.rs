@@ -4,7 +4,7 @@ use std::str::{self, FromStr};
 use std::collections::HashMap;
 use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Node<'a> {
     Integer(i32),
     Float(f32),
@@ -54,55 +54,142 @@ pub enum Node<'a> {
 
 impl<'a> Node<'a> {
 
-    pub fn gather_equalities(&self, comp:&mut Compilation) -> Option<Field> {
+    pub fn unify(&mut self, comp:&mut Compilation) {
+        self.gather_equalities(comp);
+        let mut values:HashMap<Field, Field> = HashMap::new();
+        for v in comp.vars.values() {
+            values.insert(Field::Register(*v), Field::Register(*v));
+        }
+        let mut changed = true;
+        // go in rounds and try to unify everything
+        while changed {
+            changed = false;
+            for &(l, r) in comp.equalities.iter() {
+                let left_value:Field = if let Field::Register(_) = l { values.entry(l).or_insert(l).clone() } else { l };
+                let right_value:Field = if let Field::Register(_) = l { values.entry(r).or_insert(r).clone() } else { r };
+                match (left_value, right_value) {
+                    (Field::Register(l_reg), Field::Register(r_reg)) => {
+                        if l_reg < r_reg {
+                            values.insert(r, left_value.clone());
+                            changed = true;
+                        } else if r_reg < r_reg {
+                            values.insert(l, right_value.clone());
+                            changed = true;
+                        }
+                    },
+                    (Field::Register(_), other) => {
+                        values.insert(l, other.clone());
+                        changed = true;
+                    },
+                    (other, Field::Register(_)) => {
+                        values.insert(r, other.clone());
+                        changed = true;
+                    },
+                    (a, b) => { if a != b { panic!("Invalid equality {:?} != {:?}", a, b); } },
+                }
+            }
+        }
+        let mut final_map = HashMap::new();
+        let mut real_registers = HashMap::new();
+        for value in values.values() {
+            if let &Field::Register(_) = value {
+                let size = real_registers.len();
+                real_registers.entry(value).or_insert_with(|| Field::Register(size));
+            }
+        }
+        for (k, v) in values.iter() {
+            let neue = if let Some(neue_reg) = real_registers.get(&v) {
+                neue_reg
+            } else {
+                v
+            };
+            final_map.insert(k.clone(), neue.clone());
+        }
+        println!("Unified: {:?}", final_map);
+        comp.reg_count = real_registers.len();
+        comp.var_values = final_map;
+    }
+
+    pub fn gather_equalities(&mut self, comp:&mut Compilation) -> Option<Field> {
         match self {
-            &Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
-            &Node::Float(v) => { Some(comp.interner.number(v)) },
-            &Node::RawString(v) => { Some(comp.interner.string(v)) },
-            &Node::Variable(v) => { Some(comp.get_register(v)) },
-            &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
-            &Node::Inequality {ref left, ref right, ref op} => {
+            &mut Node::Tag(_) => { None },
+            &mut Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
+            &mut Node::Float(v) => { Some(comp.interner.number(v)) },
+            &mut Node::RawString(v) => { Some(comp.interner.string(v)) },
+            &mut Node::Variable(v) => { Some(comp.get_register(v)) },
+            &mut Node::Attribute(_) => { None },
+            &mut Node::AttributeEquality(a, ref mut v) => { v.gather_equalities(comp) },
+            &mut Node::Inequality {ref left, ref right, ref op} => {
                 None
             },
-            &Node::EmbeddedString(ref var, ref vs) => { panic!("TODO") },
-            &Node::Equality {ref left, ref right} => {
+            &mut Node::EmbeddedString(ref mut var, ref vs) => {
+                println!("HERE!!");
+                let var_name = format!("__eve_concat{}", comp.id);
+                comp.id += 1;
+                let reg = comp.get_register(&var_name);
+                *var = Some(var_name);
+                Some(reg)
+
+            },
+            &mut Node::Equality {ref mut left, ref mut right} => {
+                let l = left.gather_equalities(comp).unwrap();
+                let r = right.gather_equalities(comp).unwrap();
+                comp.equalities.push((l,r));
                 None
             },
-            &Node::Infix {ref result, ref left, ref right, ..} => {
-                None
+            &mut Node::Infix {ref mut result, ref left, ref right, ..} => {
+                let result_name = format!("__eve_infix{}", comp.id);
+                comp.id += 1;
+                let reg = comp.get_register(&result_name);
+                *result = Some(result_name);
+                Some(reg)
             },
-            &Node::Record(ref var, ref attrs) => {
-                None
+            &mut Node::Record(ref mut var, ref mut attrs) => {
+                for attr in attrs {
+                    attr.gather_equalities(comp);
+                }
+                let var_name = format!("__eve_record{}", comp.id);
+                comp.id += 1;
+                let reg = comp.get_register(&var_name);
+                *var = Some(var_name);
+                Some(reg)
             },
-            &Node::OutputRecord(ref var, ref attrs) => {
-                None
+            &mut Node::OutputRecord(ref mut var, ref mut attrs) => {
+                for attr in attrs {
+                    attr.gather_equalities(comp);
+                }
+                let var_name = format!("__eve_output_record{}", comp.id);
+                comp.id += 1;
+                let reg = comp.get_register(&var_name);
+                *var = Some(var_name);
+                Some(reg)
             },
-            &Node::Search(ref statements) => {
+            &mut Node::Search(ref mut statements) => {
                 for s in statements {
-                    s.compile(comp);
+                    s.gather_equalities(comp);
                 };
                 None
             },
-            &Node::Bind(ref statements) => {
+            &mut Node::Bind(ref mut statements) => {
                 for s in statements {
-                    s.compile(comp);
+                    s.gather_equalities(comp);
                 };
                 None
             },
-            &Node::Commit(ref statements) => {
+            &mut Node::Commit(ref mut statements) => {
                 for s in statements {
-                    s.compile(comp);
+                    s.gather_equalities(comp);
                 };
                 None
             },
-            &Node::Block{ref search, ref update} => {
-                if let Some(ref s) = **search {
-                    s.compile(comp);
+            &mut Node::Block{ref mut search, ref mut update} => {
+                if let Some(ref mut s) = **search {
+                    s.gather_equalities(comp);
                 };
-                update.compile(comp);
+                update.gather_equalities(comp);
                 None
             },
-            _ => panic!("Trying to compile something we don't know how to compile")
+            _ => panic!("Trying to gather equalities on {:?}", self)
         }
     }
 
@@ -111,7 +198,7 @@ impl<'a> Node<'a> {
             &Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
             &Node::Float(v) => { Some(comp.interner.number(v)) },
             &Node::RawString(v) => { Some(comp.interner.string(v)) },
-            &Node::Variable(v) => { Some(comp.get_register(v)) },
+            &Node::Variable(v) => { Some(comp.get_value(v)) },
             &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
             &Node::Inequality {ref left, ref right, ref op} => {
                 let left_value = left.compile(comp);
@@ -124,15 +211,55 @@ impl<'a> Node<'a> {
                 }
                 right_value
             },
-            &Node::EmbeddedString(ref var, ref vs) => { panic!("TODO") },
+            &Node::EmbeddedString(ref var, ref vs) => {
+                let resolved = vs.iter().map(|v| v.compile(comp).unwrap()).collect();
+                if let &Some(ref name) = var {
+                    let mut out_reg = comp.get_register(name);
+                    let out_value = comp.get_value(name);
+                    if let Field::Register(_) = out_value {
+                        out_reg = out_value;
+                    } else {
+                        comp.constraints.push(make_filter("=", out_reg, out_value));
+                    }
+                    comp.constraints.push(make_function("concat", resolved, out_reg));
+                    Some(out_reg)
+                } else {
+                    panic!("Embedded string without a result assigned {:?}", self);
+                }
+
+            },
+            &Node::Infix { ref op, ref result, ref left, ref right } => {
+                let left_value = left.compile(comp).unwrap();
+                let right_value = right.compile(comp).unwrap();
+                if let &Some(ref name) = result {
+                    let mut out_reg = comp.get_register(name);
+                    let out_value = comp.get_value(name);
+                    if let Field::Register(_) = out_value {
+                        out_reg = out_value;
+                    } else {
+                        comp.constraints.push(make_filter("=", out_reg, out_value));
+                    }
+                    comp.constraints.push(make_function(op, vec![left_value, right_value], out_reg));
+                    Some(out_reg)
+                } else {
+                    panic!("Infix without a result assigned {:?}", self);
+                }
+            },
+            &Node::Equality {ref left, ref right} => {
+                left.compile(comp);
+                right.compile(comp);
+                None
+            },
             &Node::Record(ref var, ref attrs) => {
-                comp.id += 1;
-                let id = format!("record{:?}", comp.id);
-                let reg = comp.get_register(&id);
+                let reg = if let &Some(ref name) = var {
+                    comp.get_value(name)
+                } else {
+                    panic!("Record missing a var {:?}", var)
+                };
                 for attr in attrs {
                     let (a, v) = match attr {
                         &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
-                        &Node::Attribute(a) => { (comp.interner.string(a), comp.get_register(a)) },
+                        &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
                         &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
                         &Node::AttributeInequality {ref attribute, ref op, ref right } => {
                             let reg = comp.get_register(attribute);
@@ -152,14 +279,16 @@ impl<'a> Node<'a> {
                 Some(reg)
             },
             &Node::OutputRecord(ref var, ref attrs) => {
-                comp.id += 1;
-                let id = format!("record{:?}", comp.id);
-                let reg = comp.get_register(&id);
+                let reg = if let &Some(ref name) = var {
+                    comp.get_value(name)
+                } else {
+                    panic!("Record missing a var {:?}", var)
+                };
                 let mut identity_attrs = vec![];
                 for attr in attrs {
                     let (a, v) = match attr {
                         &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
-                        &Node::Attribute(a) => { (comp.interner.string(a), comp.get_register(a)) },
+                        &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
                         &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
                         _ => { panic!("TODO") }
                     };
@@ -194,27 +323,44 @@ impl<'a> Node<'a> {
                 update.compile(comp);
                 None
             },
-            _ => panic!("Trying to compile something we don't know how to compile")
+            _ => panic!("Trying to compile something we don't know how to compile {:?}", self)
         }
     }
 }
 
 pub struct Compilation<'a> {
     vars: HashMap<String, usize>,
+    var_values: HashMap<Field, Field>,
     interner: &'a mut Interner,
     constraints: Vec<Constraint>,
+    equalities: Vec<(Field, Field)>,
     id: usize,
+    reg_count: usize,
 }
 
 impl<'a> Compilation<'a> {
     pub fn new(interner: &'a mut Interner) -> Compilation<'a> {
-        Compilation { vars:HashMap::new(), interner, constraints:vec![], id:0 }
+        Compilation { vars:HashMap::new(), var_values:HashMap::new(), interner, constraints:vec![], equalities:vec![], id:0, reg_count:0 }
     }
 
     pub fn get_register(&mut self, name: &str) -> Field {
         let len = self.vars.len();
-        let ix = self.vars.entry(name.to_string()).or_insert(len);
-        register(*ix)
+        let ix = *self.vars.entry(name.to_string()).or_insert(len);
+        register(ix)
+    }
+
+    pub fn get_value(&mut self, name: &str) -> Field {
+        let reg = self.get_register(name);
+        let reg_count = self.reg_count;
+        let mut needs_update = false;
+        let val = self.var_values.entry(reg).or_insert_with(|| {
+            needs_update = true;
+            Field::Register(reg_count)
+        }).clone();
+        if needs_update {
+            self.reg_count += 1;
+        }
+        val
     }
 }
 
@@ -395,15 +541,18 @@ named!(block<Node<'a>>,
 
 #[test]
 fn parser_coolness() {
-    println!("{:?}", expr(b"3 * 4 + 5 * 6"));
-    println!("{:?}", expr(b"3 * 4 * 5 * 6"));
-    let b = block(b"search [#foo woah] a = woah + 10 bind [#bar woah]");
+    // println!("{:?}", expr(b"3 * 4 + 5 * 6"));
+    // println!("{:?}", expr(b"3 * 4 * 5 * 6"));
+    let b = block(b"search [#foo woah] a = woah + 10 bind [#bar text:\"{{woah}} - {{a}}\"]");
     println!("{:?}", b);
     let mut program = Program::new();
     let block = {
         let mut comp = Compilation::new(&mut program.interner);
         match b {
-            IResult::Done(_, block) => { block.compile(&mut comp); }
+            IResult::Done(_, mut block) => {
+                block.unify(&mut comp);
+                block.compile(&mut comp);
+            }
             _ => { println!("Failed: {:?}", b); }
         }
 
