@@ -15,42 +15,18 @@ pub enum Node<'a> {
     Attribute(&'a str),
     AttributeEquality(&'a str, Box<Node<'a>>),
     AttributeInequality {attribute:&'a str, right:Box<Node<'a>>, op:&'a str},
+    AttributeAccess(Vec<&'a str>),
     Inequality {left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Equality {left:Box<Node<'a>>, right:Box<Node<'a>>},
     Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Record(Option<String>, Vec<Node<'a>>),
     OutputRecord(Option<String>, Vec<Node<'a>>),
+    RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str},
     Search(Vec<Node<'a>>),
     Bind(Vec<Node<'a>>),
     Commit(Vec<Node<'a>>),
     Block{search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
 }
-
-// match self {
-//     &Node::Integer(v) => {}
-//     &Node::Float(v) => {},
-//     &Node::RawString(v) => {},
-//     &Node::EmbeddedString(ref vs) => {},
-//     &Node::Tag(v) => {},
-//     &Node::Variable(v) => {},
-//     &Node::Attribute(v) => {},
-//     &Node::AttributeEquality(a, ref v) => {},
-//     &Node::AttributeInequality {ref attribute, ref right, ref op} => {},
-//     &Node::Record(ref attrs) => {},
-//     &Node::Search(ref statements) => {},
-//     &Node::Bind(ref statements) => {},
-//     &Node::Commit(ref statements) => {},
-//     &Node::Block{ref search, ref update} => {},
-// }
-//
-//let constraints = vec![
-//   make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
-//   make_scan(register(0), program.interner.string("age"), register(1)),
-//   make_filter(">", register(1), program.interner.number(60.0)),
-//   make_function("+", vec![register(1), program.interner.number(10.0)], register(2)),
-//   Constraint::Insert {e: register(0), a: program.interner.string("adjsted-age"), v: register(2)},
-// ];
-// program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
 
 impl<'a> Node<'a> {
 
@@ -123,7 +99,6 @@ impl<'a> Node<'a> {
                 None
             },
             &mut Node::EmbeddedString(ref mut var, ref vs) => {
-                println!("HERE!!");
                 let var_name = format!("__eve_concat{}", comp.id);
                 comp.id += 1;
                 let reg = comp.get_register(&var_name);
@@ -163,6 +138,20 @@ impl<'a> Node<'a> {
                 let reg = comp.get_register(&var_name);
                 *var = Some(var_name);
                 Some(reg)
+            },
+            &mut Node::AttributeAccess(ref items) => {
+                let mut final_var = "attr_access".to_string();
+                for item in items {
+                    final_var.push_str("|");
+                    final_var.push_str(item);
+                }
+                let reg = comp.get_register(&final_var);
+                Some(reg)
+            },
+            &mut Node::RecordUpdate {ref mut record, ref op, ref mut value} => {
+                record.gather_equalities(comp);
+                value.gather_equalities(comp);
+                None
             },
             &mut Node::Search(ref mut statements) => {
                 for s in statements {
@@ -298,6 +287,38 @@ impl<'a> Node<'a> {
                 comp.constraints.push(make_function("gen_id", identity_attrs, reg));
                 Some(reg)
             },
+            &Node::RecordUpdate {ref record, ref op, ref value} => {
+                // @TODO: compile attribute access correctly
+                let (reg, attr) = match **record {
+                    Node::AttributeAccess(ref items) => {
+                        let mut final_var = "attr_access".to_string();
+                        let max = items.len() - 2;
+                        let mut ix = 0;
+                        for item in items {
+                            if ix < max {
+                                final_var.push_str("|");
+                                final_var.push_str(item);
+                            }
+                            ix += 1;
+                        }
+                        (comp.get_value(&final_var), Some(items[items.len() - 1]))
+                    },
+                    Node::Variable(v) => {
+                        (comp.get_value(v), None)
+                    },
+                    _ => panic!("Invalid record on {:?}", self)
+                };
+                let ref val = **value;
+                let (a, v) = match (attr, val) {
+                    (None, &Node::Tag(t)) => { (comp.interner.string("tag"), comp.interner.string(t)) },
+                    (Some(attr), v) => {
+                        (comp.interner.string(attr), v.compile(comp).unwrap())
+                    },
+                    _ => { panic!("Invalid {:?}", self) }
+                };
+                comp.constraints.push(Constraint::Insert{e:reg, a, v});
+                Some(reg)
+            },
             &Node::Search(ref statements) => {
                 for s in statements {
                     s.compile(comp);
@@ -422,7 +443,7 @@ named!(value<Node<'a>>,
        ws!(alt_complete!(
                number |
                string |
-               identifier => { |v:&'a str| Node::Variable(v) }
+               record_reference
                )));
 
 named!(expr<Node<'a>>,
@@ -492,7 +513,7 @@ named!(equality<Node<'a>>,
        do_parse!(
            left: expr >>
            op: ws!(tag!("=")) >>
-           right: expr >>
+           right: alt_complete!(expr | record) >>
            (Node::Equality {left:Box::new(left), right:Box::new(right)})));
 
 named!(output_attribute<Node<'a>>,
@@ -508,6 +529,29 @@ named!(output_record<Node<'a>>,
            tag!("]") >>
            (Node::OutputRecord(None, attrs))));
 
+named!(attribute_access<Node<'a>>,
+       do_parse!(start: identifier >>
+                 rest: many1!(pair!(tag!("."), identifier)) >>
+                 ({
+                     let mut items = vec![start];
+                     for (_, v) in rest {
+                         items.push(v);
+                     }
+                     Node::AttributeAccess(items)
+                 })));
+
+named!(record_reference<Node<'a>>,
+       ws!(alt_complete!(
+               attribute_access |
+               identifier => { |v:&'a str| Node::Variable(v) })));
+
+named!(record_update<Node<'a>>,
+       do_parse!(
+           record: record_reference >>
+           op: alt_complete!(tag!(":=") | tag!("+=") | tag!("-=")) >>
+           value: alt_complete!(expr | output_record | hashtag) >>
+           (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value) })));
+
 named!(search_section<Node<'a>>,
        do_parse!(
            ws!(tag!("search")) >>
@@ -521,13 +565,19 @@ named!(search_section<Node<'a>>,
 named!(bind_section<Node<'a>>,
        do_parse!(
            ws!(tag!("bind")) >>
-           items: many0!(ws!(output_record)) >>
+           items: many0!(ws!(alt_complete!(
+                       output_record |
+                       record_update
+                       ))) >>
            (Node::Bind(items))));
 
 named!(commit_section<Node<'a>>,
        do_parse!(
            ws!(tag!("commit")) >>
-           items: many0!(ws!(output_record)) >>
+           items: many0!(ws!(alt_complete!(
+                       output_record |
+                       record_update
+                       ))) >>
            (Node::Commit(items))));
 
 named!(block<Node<'a>>,
@@ -543,7 +593,7 @@ named!(block<Node<'a>>,
 fn parser_coolness() {
     // println!("{:?}", expr(b"3 * 4 + 5 * 6"));
     // println!("{:?}", expr(b"3 * 4 * 5 * 6"));
-    let b = block(b"search [#foo woah] a = woah + 10 bind [#bar text:\"{{woah}} - {{a}}\"]");
+    let b = block(b"search f = [#foo woah] bind f.cool += 3");
     println!("{:?}", b);
     let mut program = Program::new();
     let block = {
