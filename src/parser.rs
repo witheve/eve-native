@@ -6,6 +6,7 @@ use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter
 
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
+    Pipe,
     Integer(i32),
     Float(f32),
     RawString(&'a str),
@@ -89,6 +90,7 @@ impl<'a> Node<'a> {
 
     pub fn gather_equalities(&mut self, comp:&mut Compilation) -> Option<Field> {
         match self {
+            &mut Node::Pipe => { None },
             &mut Node::Tag(_) => { None },
             &mut Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
             &mut Node::Float(v) => { Some(comp.interner.number(v)) },
@@ -280,15 +282,22 @@ impl<'a> Node<'a> {
                 } else {
                     panic!("Record missing a var {:?}", var)
                 };
+                let mut identity_contributing = true;
                 let mut identity_attrs = vec![];
                 for attr in attrs {
+                    if let &Node::Pipe = attr {
+                        identity_contributing = false;
+                        continue;
+                    }
                     let (a, v) = match attr {
                         &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
                         &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
                         &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
                         _ => { panic!("TODO") }
                     };
-                    identity_attrs.push(v);
+                    if identity_contributing {
+                        identity_attrs.push(v);
+                    }
                     comp.constraints.push(Constraint::Insert{e:reg, a, v});
                 };
                 comp.constraints.push(make_function("gen_id", identity_attrs, reg));
@@ -536,6 +545,7 @@ named!(output_attribute<Node<'a>>,
        ws!(alt_complete!(
                hashtag |
                attribute_equality |
+               tag!("|") => { |v:&[u8]| Node::Pipe } |
                identifier => { |v:&'a str| Node::Attribute(v) })));
 
 named!(output_record<Node<'a>>,
@@ -636,7 +646,7 @@ fn parser_coolness() {
     // println!("{:?}", expr(b"3 * 4 * 5 * 6"));
     // let b = block(b"search f = [#foo woah] bind f.cool += 3");
     let mut program = Program::new();
-    program.block("simple block", "search f = [#foo woah] project (f woah)");
+    program.block("simple block", "search f = [#foo woah] bind [#bar | woah]");
     let mut txn = Transaction::new();
     txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
     txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
