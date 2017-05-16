@@ -9,6 +9,7 @@
 extern crate time;
 
 use indexes::{HashIndex, DistinctIter, HashIndexIter};
+use parser::{make_block};
 use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
@@ -660,7 +661,7 @@ pub enum Constraint {
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field},
-    Project {registers: Vec<u32>},
+    Project {registers: Vec<usize>},
 }
 
 impl fmt::Debug for Constraint {
@@ -669,6 +670,7 @@ impl fmt::Debug for Constraint {
             &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
+            &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
             _ => { write!(f, "Constraint ...") }
         }
     }
@@ -1115,6 +1117,11 @@ impl Program {
         self.blocks.push(block);
     }
 
+    pub fn block(&mut self, name:&str, code:&str) {
+        let mut b = make_block(&mut self.interner, name, code);
+        self.register_block(b);
+    }
+
     pub fn gen_pipes(&mut self, block: &mut Block, block_ix: usize) {
 
         // for each scan we need a new pipe
@@ -1255,15 +1262,17 @@ impl Program {
             pipe.push(Instruction::ClearRounds);
             last_iter_next -= 1;
 
-            for inst in get_rounds.iter() {
-                if let &Instruction::GetRounds { constraint, .. } = inst {
-                    if constraint != *scan_ix {
-                        last_iter_next -= 1;
-                        let mut neue = inst.clone();
-                        if let Instruction::GetRounds { ref mut bail, .. } = neue {
-                            *bail = last_iter_next;
+            if outputs.len() > 0 {
+                for inst in get_rounds.iter() {
+                    if let &Instruction::GetRounds { constraint, .. } = inst {
+                        if constraint != *scan_ix {
+                            last_iter_next -= 1;
+                            let mut neue = inst.clone();
+                            if let Instruction::GetRounds { ref mut bail, .. } = neue {
+                                *bail = last_iter_next;
+                            }
+                            pipe.push(neue);
                         }
-                        pipe.push(neue);
                     }
                 }
             }
@@ -1291,9 +1300,9 @@ impl Program {
                     for (ix, reg) in registers.iter().enumerate() {
                         last_iter_next -= 1;
                         if ix < registers_len - 1 {
-                            pipe.push(Instruction::Project { next:1, from: *reg });
+                            pipe.push(Instruction::Project { next:1, from: *reg as u32 });
                         } else {
-                            let mut neue = Instruction::Project {next: 1, from: *reg };
+                            let mut neue = Instruction::Project {next: 1, from: *reg as u32 };
                             if let Instruction::Project {ref mut next, ..} = neue {
                                 *next = if to_solve > 0 {
                                     last_iter_next

@@ -58,25 +58,25 @@ fn eav(program:&mut Program, eavs:&mut Vec<(u32,u32,u32)>, e:&str, a:&str, v:&st
 fn make_faculty(program:&mut Program, eavs:&mut Vec<(u32,u32,u32)>, university_count:usize, department:&str, cur_type:&str, ix:u32, publications:u32, course_ix: &mut u32, grad_course_ix: &mut u32, mut seed: &mut u32, prof_to_pubs: &mut HashMap<String, u32>) {
     let prof = format!("{}|{}{}", department, cur_type, ix);
     eav(program, eavs, &prof, "tag", cur_type);
-    eav(program, eavs, &prof, "works for", department);
+    eav(program, eavs, &prof, "works-for", department);
     eav(program, eavs, &prof, "name", &format!("{}|name", prof));
     eav(program, eavs, &prof, "email", &format!("{}@foo.edu", prof));
     eav(program, eavs, &prof, "telephone", "123-123-1234");
-    eav(program, eavs, &prof, "research interest", "blah");
+    eav(program, eavs, &prof, "research-interest", "blah");
     // every Faculty is teacherOf 1~2 Courses
     for _ in 0..rand_between(&mut seed, 1, 2) {
         let course = format!("{}|course{}", department, *course_ix);
         eav(program, eavs, &course, "tag", "course");
         eav(program, eavs, &course, "name", "foo");
-        eav(program, eavs, &prof, "teacher of", &course);
+        eav(program, eavs, &prof, "teacher-of", &course);
         *course_ix += 1;
     }
     // every Faculty is teacherOf 1~2 GraduateCourses
     for _ in 0..rand_between(&mut seed, 1, 2) {
         let course = format!("{}|graduate_course{}", department, *grad_course_ix);
-        eav(program, eavs, &course, "tag", "graduate course");
+        eav(program, eavs, &course, "tag", "graduate-course");
         eav(program, eavs, &course, "name", "foo");
-        eav(program, eavs, &prof, "teacher of", &course);
+        eav(program, eavs, &prof, "teacher-of", &course);
         *grad_course_ix += 1;
     }
     prof_to_pubs.insert(prof.to_string(), publications);
@@ -88,13 +88,13 @@ fn make_faculty(program:&mut Program, eavs:&mut Vec<(u32,u32,u32)>, university_c
     }
     // every Faculty has an undergraduateDegreeFrom a University, a mastersDegreeFrom a University, and a doctoralDegreeFrom a University
     let ugrad = rand_between(&mut seed, 0, university_count as u32);
-    eav(program, eavs, &prof, "undergraduate degree from", &format!("university{:?}", ugrad));
+    eav(program, eavs, &prof, "undergraduate-degree-from", &format!("university{:?}", ugrad));
 
     let masters = rand_between(&mut seed, 0, university_count as u32);
-    eav(program, eavs, &prof, "masters degree from", &format!("university{:?}", masters));
+    eav(program, eavs, &prof, "masters-degree-from", &format!("university{:?}", masters));
 
     let phd = rand_between(&mut seed, 0, university_count as u32);
-    eav(program, eavs, &prof, "doctoral degree from", &format!("university{:?}", phd));
+    eav(program, eavs, &prof, "doctoral-degree-from", &format!("university{:?}", phd));
 }
 
 fn random_professor(seed:&mut u32, department:&str, fulls:u32, associates:u32, assistants:u32) -> String {
@@ -102,15 +102,15 @@ fn random_professor(seed:&mut u32, department:&str, fulls:u32, associates:u32, a
     let (prof_type, id) = match random_type {
         1 => {
             let id = rand_between(seed, 0, fulls - 1);
-            ("full_professor", id)
+            ("full-professor", id)
         },
         2 => {
             let id = rand_between(seed, 0, associates - 1);
-            ("associate_professor", id)
+            ("associate-professor", id)
         },
         3 => {
             let id = rand_between(seed, 0, assistants - 1);
-            ("assistant_professor", id)
+            ("assistant-professor", id)
         },
         _ => panic!("bad professor type"),
     };
@@ -131,7 +131,7 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
         for department_ix in 0..department_count {
             let department = format!("{}|department{}", university, department_ix);
             eav(program, &mut eavs, &department, "tag", "department");
-            eav(program, &mut eavs, &department, "suborganization of", &university);
+            eav(program, &mut eavs, &department, "suborganization-of", &university);
 
             let mut course_ix = 0;
             let mut grad_course_ix = 0;
@@ -141,7 +141,7 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
             for fp_ix in 0..full_professors_count {
                 // every FullProfessor is publicationAuthor of 15~20 Publications
                 let publications = rand_between(&mut seed, 15, 20);
-                make_faculty(program, &mut eavs, university_count, &department, "full_professor", fp_ix, publications, &mut course_ix, &mut grad_course_ix, &mut seed, &mut prof_to_pubs);
+                make_faculty(program, &mut eavs, university_count, &department, "full-professor", fp_ix, publications, &mut course_ix, &mut grad_course_ix, &mut seed, &mut prof_to_pubs);
                 total_faculty += 1;
             }
 
@@ -155,7 +155,7 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
             for ap_ix in 0..associate_professors_count {
                 // every AssociateProfessor is publicationAuthor of 10~18 Publications
                 let publications = rand_between(&mut seed, 10, 18);
-                make_faculty(program, &mut eavs, university_count, &department, "associate_professor", ap_ix, publications, &mut course_ix, &mut grad_course_ix, &mut seed, &mut prof_to_pubs);
+                make_faculty(program, &mut eavs, university_count, &department, "associate-professor", ap_ix, publications, &mut course_ix, &mut grad_course_ix, &mut seed, &mut prof_to_pubs);
                 total_faculty += 1;
             }
 
@@ -164,7 +164,7 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
             for asp_ix in 0..assistant_professors_count {
                 // every AssistantProfessor is publicationAuthor of 5~10 Publications
                 let publications = rand_between(&mut seed, 5, 10);
-                make_faculty(program, &mut eavs, university_count, &department, "assistant_professor", asp_ix, publications, &mut course_ix, &mut grad_course_ix, &mut seed, &mut prof_to_pubs);
+                make_faculty(program, &mut eavs, university_count, &department, "assistant-professor", asp_ix, publications, &mut course_ix, &mut grad_course_ix, &mut seed, &mut prof_to_pubs);
                 total_faculty += 1;
             }
 
@@ -181,8 +181,8 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
             let research_group_count = rand_between(&mut seed, 10, 20);
             for rg_ix in 0..research_group_count {
                 let group = format!("{}|research_group{}", department, rg_ix);
-                eav(program, &mut eavs, &group, "tag", "research group");
-                eav(program, &mut eavs, &group, "suborganization of", &department);
+                eav(program, &mut eavs, &group, "tag", "research-group");
+                eav(program, &mut eavs, &group, "suborganization-of", &department);
                 // eav(program, &mut eavs, &group, "suborganization of", &university);
             }
 
@@ -193,17 +193,17 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
             }
             for ug_ix in 0..undergrads_count {
                 let undergrad = format!("{}|undergrad{}", department, ug_ix);
-                eav(program, &mut eavs, &undergrad, "tag", "undergraduate student");
+                eav(program, &mut eavs, &undergrad, "tag", "undergraduate-student");
                 eav(program, &mut eavs, &undergrad, "name", &format!("{}|name", undergrad));
                 eav(program, &mut eavs, &undergrad, "email", &format!("{}@foo.edu", undergrad));
                 eav(program, &mut eavs, &undergrad, "telephone", "123-123-1234");
                 // every Student is memberOf the Department
-                eav(program, &mut eavs, &undergrad, "member of", &department);
+                eav(program, &mut eavs, &undergrad, "member-of", &department);
                 // every UndergraduateStudent takesCourse 2~4 Courses
                 let course_count = rand_between(&mut seed, 2, 4);
                 for _ in 0..course_count {
                     let undergrad_course_ix = rand_between(&mut seed, 0, course_ix);
-                    eav(program, &mut eavs, &undergrad, "takes course", &format!("{}|course{}", department, undergrad_course_ix));
+                    eav(program, &mut eavs, &undergrad, "takes-course", &format!("{}|course{}", department, undergrad_course_ix));
                 }
                 // 1/5 of the UndergraduateStudents have a Professor as their advisor
                 if ug_ix % 5 == 0 {
@@ -218,7 +218,7 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
             // @TODO this should be grads_count
             for g_ix in 0..grads_count {
                 let grad = format!("{}|graduate{}", department, g_ix);
-                eav(program, &mut eavs, &grad, "tag", "graduate student");
+                eav(program, &mut eavs, &grad, "tag", "graduate-student");
                 eav(program, &mut eavs, &grad, "name", &format!("{}|name", grad));
                 eav(program, &mut eavs, &grad, "email", &format!("{}@foo.edu", grad));
                 eav(program, &mut eavs, &grad, "telephone", "123-123-1234");
@@ -226,19 +226,19 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
                 //     println!("grad student: {:?}, {:?} == {:?}", &grad, program.interner.string_id(&grad), program.interner.string_id(&grad));
                 // }
                 // every Student is memberOf the Department
-                eav(program, &mut eavs, &grad, "member of", &department);
+                eav(program, &mut eavs, &grad, "member-of", &department);
                 // every GraduateStudent takesCourse 1~3 GraduateCourses
                 let course_count = rand_between(&mut seed, 1, 3);
                 for _ in 0..course_count {
                     let course_ix = rand_between(&mut seed, 0, grad_course_ix);
-                    eav(program, &mut eavs, &grad, "takes course", &format!("{}|graduate_course{}", department, course_ix));
+                    eav(program, &mut eavs, &grad, "takes-course", &format!("{}|graduate_course{}", department, course_ix));
                 }
                 // every GraduateStudent has a Professor as his advisor
                 let prof = random_professor(&mut seed, &department, full_professors_count, associate_professors_count, assistant_professors_count);
                 eav(program, &mut eavs, &grad, "advisor", &prof);
                 // every GraudateStudent has an undergraduateDegreeFrom a University
                 let degree = rand_between(&mut seed, 0, university_count as u32);
-                eav(program, &mut eavs, &grad, "undergraduate degree from", &format!("university{:?}", degree));
+                eav(program, &mut eavs, &grad, "undergraduate-degree-from", &format!("university{:?}", degree));
                 // @TODO
                 // every GraduateStudent co-authors 0~5 Publications with some Professors
                 let paper_count = rand_between(&mut seed, 0, 5);
@@ -251,11 +251,11 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
                 // 1/5~1/4 of the GraduateStudents are chosen as TeachingAssistant for one Course
                 if g_ix % ta_ratio == 0 {
                     let course = rand_between(&mut seed, 0, course_ix);
-                    eav(program, &mut eavs, &grad, "teaching assistant for", &format!("{}|course{}", department, course));
+                    eav(program, &mut eavs, &grad, "teaching-assistant-for", &format!("{}|course{}", department, course));
                 }
                 // 1/4~1/3 of the GraduateStudents are chosen as ResearchAssistant
                 if g_ix % ra_ratio == 0 {
-                    eav(program, &mut eavs, &grad, "tag", "research assistant");
+                    eav(program, &mut eavs, &grad, "tag", "research-assistant");
                 }
             }
         }
@@ -295,19 +295,18 @@ pub fn exec_query(program:&mut Program, constraints: Vec<Constraint>) {
     println!("Results: {:?}", all_results[0].len());
 }
 
-pub fn do_bench(b: &mut Bencher, func: fn(&mut Program) -> Vec<Constraint>) {
+pub fn do_bench(b: &mut Bencher, func: fn(&mut Program)) {
     let mut program = Program::new();
     setup(&mut program, 10);
 
-    let constraints = func(&mut program);
+    func(&mut program);
 
-    program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
     let mut all_results = vec![];
     b.iter(|| {
         let results = program.exec_query();
         all_results.push(results);
     });
-    // println!("results: {:?}", all_results[0].len());
+    println!("results: {:?}", all_results[0].len());
 }
 
 #[bench] pub fn do_lubm_1(b: &mut Bencher) { do_bench(b, lubm_1); }
@@ -328,166 +327,167 @@ pub fn test_lubm(_: &mut Bencher) {
     let mut program = Program::new();
     setup(&mut program, 10);
 
-    println!("\nQuery 1");
-    let query_1 = lubm_1(&mut program);
-    exec_query(&mut program, query_1);
+//     println!("\nQuery 1");
+//     let query_1 = lubm_1(&mut program);
+//     exec_query(&mut program, query_1);
 
-    println!("\nQuery 2");
-    let query_2 = lubm_2(&mut program);
-    exec_query(&mut program, query_2);
+//     println!("\nQuery 2");
+//     let query_2 = lubm_2(&mut program);
+//     exec_query(&mut program, query_2);
 
-    println!("\nQuery 3");
-    let query_3 = lubm_3(&mut program);
-    exec_query(&mut program, query_3);
+//     println!("\nQuery 3");
+//     let query_3 = lubm_3(&mut program);
+//     exec_query(&mut program, query_3);
 
-    println!("\nQuery 4");
-    let query_4 = lubm_4(&mut program);
-    exec_query(&mut program, query_4);
+//     println!("\nQuery 4");
+//     let query_4 = lubm_4(&mut program);
+//     exec_query(&mut program, query_4);
 
-    println!("\nQuery 5");
-    let query_5 = lubm_5(&mut program);
-    exec_query(&mut program, query_5);
+//     println!("\nQuery 5");
+//     let query_5 = lubm_5(&mut program);
+//     exec_query(&mut program, query_5);
 
-    println!("\nQuery 7");
-    let query_7 = lubm_7(&mut program);
-    exec_query(&mut program, query_7);
+//     println!("\nQuery 7");
+//     let query_7 = lubm_7(&mut program);
+//     exec_query(&mut program, query_7);
 
-    println!("\nQuery 8");
-    let query_8 = lubm_8(&mut program);
-    exec_query(&mut program, query_8);
+//     println!("\nQuery 8");
+//     let query_8 = lubm_8(&mut program);
+//     exec_query(&mut program, query_8);
 
-    println!("\nQuery 9");
-    let query_9 = lubm_9(&mut program);
-    exec_query(&mut program, query_9);
+//     println!("\nQuery 9");
+//     let query_9 = lubm_9(&mut program);
+//     exec_query(&mut program, query_9);
 
-    println!("\nQuery 11");
-    let query_11 = lubm_11(&mut program);
-    exec_query(&mut program, query_11);
+//     println!("\nQuery 11");
+//     let query_11 = lubm_11(&mut program);
+//     exec_query(&mut program, query_11);
 
-    println!("\nQuery 12");
-    let query_12 = lubm_12(&mut program);
-    exec_query(&mut program, query_12);
+//     println!("\nQuery 12");
+//     let query_12 = lubm_12(&mut program);
+//     exec_query(&mut program, query_12);
 
-    println!("\nQuery 13");
-    let query_13 = lubm_13(&mut program);
-    exec_query(&mut program, query_13);
+//     println!("\nQuery 13");
+//     let query_13 = lubm_13(&mut program);
+//     exec_query(&mut program, query_13);
 
-    println!("\nQuery 14");
-    let query_14 = lubm_14(&mut program);
-    exec_query(&mut program, query_14);
+//     println!("\nQuery 14");
+//     let query_14 = lubm_14(&mut program);
+//     exec_query(&mut program, query_14);
 
 }
 
-pub fn lubm_1(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("graduate student")),
-        make_scan(register(0), program.interner.string("takes course"), program.interner.string("university0|department0|graduate_course0")),
-        Constraint::Project { registers: vec![0] },
-    ]
+pub fn lubm_1(program:&mut Program) {
+    program.block("lubm1", r#"
+        search
+            person = [#graduate-student takes-course:"university0|department0|graduate_course0"]
+        project
+            (person)
+    "#);
 }
 
-pub fn lubm_2(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("graduate student")),
-        make_scan(register(1), program.interner.string("tag"), program.interner.string("university")),
-        make_scan(register(2), program.interner.string("tag"), program.interner.string("department")),
-        make_scan(register(0), program.interner.string("member of"), register(2)),
-        make_scan(register(2), program.interner.string("suborganization of"), register(1)),
-        make_scan(register(0), program.interner.string("undergraduate degree from"), register(1)),
-        Constraint::Project { registers: vec![0, 1, 2] },
-    ]
+pub fn lubm_2(program:&mut Program) {
+    program.block("lubm2", r#"
+        search
+            person = [#graduate-student member-of:department undergraduate-degree-from:university]
+            department = [#department suborganization-of:university]
+        project
+            (university department person)
+    "#);
 }
 
-pub fn lubm_3(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("publication")),
-        make_scan(register(0), program.interner.string("author"), program.interner.string("university0|department0|assistant_professor0")),
-        Constraint::Project { registers: vec![0] },
-    ]
+pub fn lubm_3(program:&mut Program) {
+    program.block("lubm3", r#"
+        search
+            pub = [#publication author:"university0|department0|assistant-professor0"]
+        project
+            (pub)
+    "#);
 }
 
-pub fn lubm_4(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("associate_professor")),
-        make_scan(register(0), program.interner.string("works for"), program.interner.string("university0|department0")),
-        make_scan(register(0), program.interner.string("name"), register(1)),
-        make_scan(register(0), program.interner.string("email"), register(2)),
-        make_scan(register(0), program.interner.string("telephone"), register(3)),
-        Constraint::Project { registers: vec![0, 1, 2, 3] },
-    ]
+pub fn lubm_4(program:&mut Program) {
+    program.block("lubm4", r#"
+        search
+            prof = [#associate-professor works-for:"university0|department0" name email telephone]
+        project
+            (prof name email telephone)
+    "#);
 }
 
-pub fn lubm_5(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("undergraduate student")),
-        make_scan(register(0), program.interner.string("member of"), program.interner.string("university0|department0")),
-        Constraint::Project { registers: vec![0] },
-    ]
+pub fn lubm_5(program:&mut Program) {
+    program.block("lubm5", r#"
+        search
+            student = [#undergraduate-student member-of:"university0|department0"]
+        project
+            (student)
+    "#);
 }
 
-pub fn lubm_7(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("undergraduate student")),
-        make_scan(register(1), program.interner.string("tag"), program.interner.string("course")),
-        make_scan(register(0), program.interner.string("takes course"), register(1)),
-        make_scan(program.interner.string("university0|department0|associate_professor0"), program.interner.string("teacher of"), register(1)),
-        make_scan(register(0), program.interner.string("telephone"), register(2)),
-        Constraint::Project { registers: vec![0, 1, 2] },
-    ]
+pub fn lubm_7(program:&mut Program) {
+    program.block("lubm7", r#"
+        search
+            student = [#undergraduate-student takes-course:course telephone]
+            course = [#course]
+            "university0|department0|associate-professor0" = [teacher-of:course]
+        project
+            (student course telephone)
+    "#);
 }
 
-pub fn lubm_8(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("undergraduate student")),
-        make_scan(register(1), program.interner.string("tag"), program.interner.string("department")),
-        make_scan(register(0), program.interner.string("member of"), register(1)),
-        make_scan(register(1), program.interner.string("suborganization of"), program.interner.string("university0")),
-        make_scan(register(0), program.interner.string("email"), register(2)),
-        Constraint::Project { registers: vec![0, 1, 2] },
-    ]
+pub fn lubm_8(program:&mut Program) {
+    program.block("lubm8", r#"
+        search
+            student = [#undergraduate-student member-of:department email]
+            department = [#department suborganization-of:"university0"]
+        project
+            (student department email)
+    "#);
 }
 
-pub fn lubm_9(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("undergraduate student")),
-        make_scan(register(1), program.interner.string("tag"), program.interner.string("course")),
-        make_scan(register(2), program.interner.string("tag"), program.interner.string("assistant_professor")),
-        make_scan(register(0), program.interner.string("advisor"), register(2)),
-        make_scan(register(2), program.interner.string("teacher of"), register(1)),
-        make_scan(register(0), program.interner.string("takes course"), register(1)),
-        Constraint::Project { registers: vec![0, 1, 2] },
-    ]
+pub fn lubm_9(program:&mut Program) {
+    program.block("lubm9", r#"
+        search
+            student = [#undergraduate-student advisor takes-course:course]
+            advisor = [#assistant-professor teacher-of:course]
+            course = [#course]
+        project
+            (student course advisor)
+    "#);
 }
 
-pub fn lubm_11(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("research group")),
-        make_scan(register(0), program.interner.string("suborganization of"), program.interner.string("university0")),
-        Constraint::Project { registers: vec![0] },
-    ]
+pub fn lubm_11(program:&mut Program) {
+    program.block("lubm11", r#"
+        search
+            group = [#research-group suborganization-of:"university0"]
+        project
+            (group)
+    "#);
 }
 
-pub fn lubm_12(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("full_professor")),
-        make_scan(register(1), program.interner.string("tag"), program.interner.string("department")),
-        make_scan(register(0), program.interner.string("works for"), register(1)),
-        make_scan(register(1), program.interner.string("suborganization of"), program.interner.string("university0")),
-        Constraint::Project { registers: vec![0, 1] },
-    ]
+pub fn lubm_12(program:&mut Program) {
+    program.block("lubm12", r#"
+        search
+            prof = [#full-professor works-for:department]
+            department = [#department suborganization-of:"university0"]
+        project
+            (prof department)
+    "#);
 }
 
-pub fn lubm_13(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("graduate student")),
-        make_scan(register(0), program.interner.string("undergraduate degree from"), program.interner.string("university5")),
-        Constraint::Project { registers: vec![0] },
-    ]
+pub fn lubm_13(program:&mut Program) {
+    program.block("lubm13", r#"
+        search
+            student = [#graduate-student undergraduate-degree-from:"university5"]
+        project
+            (student)
+    "#);
 }
 
-pub fn lubm_14(program:&mut Program) -> Vec<Constraint> {
-    vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("undergraduate student")),
-        Constraint::Project { registers: vec![0] },
-    ]
+pub fn lubm_14(program:&mut Program) {
+    program.block("lubm14", r#"
+        search
+            student = [#undergraduate-student]
+        project
+            (student)
+    "#);
 }

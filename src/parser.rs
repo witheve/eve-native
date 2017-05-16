@@ -25,6 +25,7 @@ pub enum Node<'a> {
     Search(Vec<Node<'a>>),
     Bind(Vec<Node<'a>>),
     Commit(Vec<Node<'a>>),
+    Project(Vec<Node<'a>>),
     Block{search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
 }
 
@@ -42,13 +43,13 @@ impl<'a> Node<'a> {
             changed = false;
             for &(l, r) in comp.equalities.iter() {
                 let left_value:Field = if let Field::Register(_) = l { values.entry(l).or_insert(l).clone() } else { l };
-                let right_value:Field = if let Field::Register(_) = l { values.entry(r).or_insert(r).clone() } else { r };
+                let right_value:Field = if let Field::Register(_) = r { values.entry(r).or_insert(r).clone() } else { r };
                 match (left_value, right_value) {
                     (Field::Register(l_reg), Field::Register(r_reg)) => {
                         if l_reg < r_reg {
                             values.insert(r, left_value.clone());
                             changed = true;
-                        } else if r_reg < r_reg {
+                        } else if r_reg < l_reg {
                             values.insert(l, right_value.clone());
                             changed = true;
                         }
@@ -168,6 +169,12 @@ impl<'a> Node<'a> {
             &mut Node::Commit(ref mut statements) => {
                 for s in statements {
                     s.gather_equalities(comp);
+                };
+                None
+            },
+            &mut Node::Project(ref mut values) => {
+                for v in values {
+                    v.gather_equalities(comp);
                 };
                 None
             },
@@ -335,6 +342,15 @@ impl<'a> Node<'a> {
                 for s in statements {
                     s.compile(comp);
                 };
+                None
+            },
+            &Node::Project(ref values) => {
+                let registers = values.iter()
+                                      .map(|v| v.compile(comp))
+                                      .filter(|v| if let &Some(Field::Register(_)) = v { true } else { false })
+                                      .map(|v| if let Some(Field::Register(reg)) = v { reg } else { panic!() })
+                                      .collect();
+                comp.constraints.push(Constraint::Project {registers});
                 None
             },
             &Node::Block{ref search, ref update} => {
@@ -580,39 +596,47 @@ named!(commit_section<Node<'a>>,
                        ))) >>
            (Node::Commit(items))));
 
+named!(project_section<Node<'a>>,
+       do_parse!(
+           ws!(tag!("project")) >>
+           items: ws!(delimited!(tag!("("), many1!(ws!(expr)) ,tag!(")"))) >>
+           (Node::Project(items))));
+
 named!(block<Node<'a>>,
        ws!(do_parse!(
                search: opt!(search_section) >>
                update: alt_complete!(
                    bind_section |
-                   commit_section
+                   commit_section |
+                   project_section
                    ) >>
                (Node::Block {search:Box::new(search), update:Box::new(update)}))));
+
+pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
+    let parsed = block(content.as_bytes());
+    let mut comp = Compilation::new(interner);
+    match parsed {
+        IResult::Done(_, mut block) => {
+            block.unify(&mut comp);
+            block.compile(&mut comp);
+        }
+        _ => { println!("Failed: {:?}", parsed); }
+    }
+
+    for c in comp.constraints.iter() {
+        println!("{:?}", c);
+    }
+
+    Block { name: name.to_string(), constraints:comp.constraints, pipes: vec![] }
+}
 
 #[test]
 fn parser_coolness() {
     // println!("{:?}", expr(b"3 * 4 + 5 * 6"));
     // println!("{:?}", expr(b"3 * 4 * 5 * 6"));
-    let b = block(b"search f = [#foo woah] bind f.cool += 3");
-    println!("{:?}", b);
+    // let b = block(b"search f = [#foo woah] bind f.cool += 3");
     let mut program = Program::new();
-    let block = {
-        let mut comp = Compilation::new(&mut program.interner);
-        match b {
-            IResult::Done(_, mut block) => {
-                block.unify(&mut comp);
-                block.compile(&mut comp);
-            }
-            _ => { println!("Failed: {:?}", b); }
-        }
-
-        for c in comp.constraints.iter() {
-            println!("{:?}", c);
-        }
-
-        Block { name: "simple block".to_string(), constraints:comp.constraints, pipes: vec![] }
-    };
-    program.register_block(block);
+    program.block("simple block", "search f = [#foo woah] project (f woah)");
     let mut txn = Transaction::new();
     txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
     txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);

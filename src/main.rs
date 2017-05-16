@@ -16,7 +16,11 @@
 // #[link_args = "-s TOTAL_MEMORY=503316480"]
 extern {}
 
+#[macro_use]
+extern crate nom;
+
 mod ops;
+mod parser;
 use ops::doit;
 mod indexes;
 pub mod hash;
