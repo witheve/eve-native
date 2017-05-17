@@ -98,6 +98,7 @@ impl<'a> Node<'a> {
             &mut Node::RawString(v) => { Some(comp.interner.string(v)) },
             &mut Node::Variable(v) => { Some(comp.get_register(v)) },
             &mut Node::Attribute(_) => { None },
+            &mut Node::AttributeInequality {ref mut right, ..} => { right.gather_equalities(comp) },
             &mut Node::AttributeEquality(a, ref mut v) => { v.gather_equalities(comp) },
             &mut Node::Inequality {ref left, ref right, ref op} => {
                 None

@@ -391,6 +391,7 @@ pub fn lubm_2(program:&mut Program) {
         search
             person = [#graduate-student member-of:department undergraduate-degree-from:university]
             department = [#department suborganization-of:university]
+            university = [#university]
         project
             (university department person)
     "#);
