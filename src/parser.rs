@@ -443,7 +443,7 @@ macro_rules! sp (
   )
 );
 
-named!(identifier<&str>, map_res!(is_not_s!("#\\.,()[]{}:\"|; \r\n\t"), str::from_utf8));
+named!(identifier<&str>, map_res!(is_not_s!("#\\.,()[]{}:=\"|; \r\n\t"), str::from_utf8));
 
 named!(number<Node<'a>>,
        alt_complete!(
@@ -520,7 +520,7 @@ named!(hashtag<Node>,
 named!(attribute_inequality<Node<'a>>,
        do_parse!(
            attribute: identifier >>
-           op: sp!(alt!(tag!(">") | tag!(">=") | tag!("<") | tag!("<=") | tag!("!="))) >>
+           op: sp!(alt!(tag!(">=") | tag!("<=") | tag!("!=") | tag!("<") | tag!(">") | tag!("contains") | tag!("!contains"))) >>
            right: expr >>
            (Node::AttributeInequality{attribute, right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
@@ -549,7 +549,7 @@ named!(record<Node<'a>>,
 named!(inequality<Node<'a>>,
        do_parse!(
            left: expr >>
-           op: sp!(alt!(tag!(">") | tag!(">=") | tag!("<") | tag!("<=") | tag!("!="))) >>
+           op: sp!(alt!(tag!(">=") | tag!("<=") | tag!("!=") | tag!("<") | tag!(">") | tag!("contains") | tag!("!contains"))) >>
            right: expr >>
            (Node::Inequality{left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
@@ -631,8 +631,8 @@ named!(search_section<Node<'a>>,
        do_parse!(
            sp!(tag!("search")) >>
            items: many0!(sp!(alt_complete!(
-                            record |
                             inequality |
+                            record |
                             equality
                         ))) >>
            (Node::Search(items))));
@@ -693,12 +693,11 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
 #[test]
 fn parser_coolness() {
     // println!("{:?}", expr(b"3 * 4 + 5 * 6"));
-    // println!("{:?}", expr(b"3 * 4 * 5 * 6"));
-    // let b = block(b"search f = [#foo woah] bind f.cool += 3");
-    let mut program = Program::new();
-    program.block("simple block", "search f = [#foo woah] bind f.cool += f.foo.woah");
-    let mut txn = Transaction::new();
-    txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
-    txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
-    txn.exec(&mut program);
+    println!("{:?}", inequality(b"woah <= 10"));
+    // let mut program = Program::new();
+    // program.block("simple block", "search f = [#foo woah] woah <= 10 bind [#bar]");
+    // let mut txn = Transaction::new();
+    // txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
+    // txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
+    // txn.exec(&mut program);
 }

@@ -222,6 +222,7 @@ pub struct Counters {
     accept: u64,
     accept_bail: u64,
     accept_ns: u64,
+    considered: u64,
 }
 
 #[allow(unused_must_use)]
@@ -233,10 +234,11 @@ impl fmt::Debug for Counters {
         write!(f, "     accept: {} ({})\n", self.accept_ns, (self.accept_ns as f64) / (self.total_ns as f64));
         write!(f, "\n");
         write!(f, "  counts:\n");
-        write!(f, "     instructions:  {}\n", self.instructions);
-        write!(f, "     iter_next:     {}\n", self.iter_next);
-        write!(f, "     accept:        {}\n", self.accept);
-        write!(f, "     accept_bail:   {}\n", self.accept_bail);
+        write!(f, "     instructions:        {}\n", self.instructions);
+        write!(f, "     iter_next:           {}\n", self.iter_next);
+        write!(f, "     values_considered:   {}\n", self.considered);
+        write!(f, "     accept:              {}\n", self.accept);
+        write!(f, "     accept_bail:         {}\n", self.accept_bail);
         write!(f, "]")
     }
 }
@@ -253,7 +255,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new() -> Frame {
-        Frame {row: Row::new(64), block_ix:0, input: None, iters: vec![None; 64], results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0}}
+        Frame {row: Row::new(64), block_ix:0, input: None, iters: vec![None; 64], results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> Interned {
@@ -439,12 +441,10 @@ pub fn iterator_next(_: &mut Program, frame: &mut Frame, iterator:u32, bail:i32)
     };
     if go == bail {
 
-        // if let Some(ref cur) = frame.iters[iterator as usize] {
-        //     let est = cur.estimate();
-        //     if est > 1 {
-        //         println!("DONE: {:?}", est);
-        //     }
-        // }
+        if let Some(ref cur) = frame.iters[iterator as usize] {
+            let est = cur.estimate();
+            frame.counters.considered += est as u64;
+        }
         frame.iters[iterator as usize] = None;
     }
     // println!("Row: {:?}", &frame.row.fields[0..3]);
@@ -453,7 +453,7 @@ pub fn iterator_next(_: &mut Program, frame: &mut Frame, iterator:u32, bail:i32)
 
 #[inline(never)]
 pub fn accept(program: &mut Program, frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32) -> i32 {
-    // frame.counters.accept += 1;
+    frame.counters.accept += 1;
     let cur = &program.blocks[frame.block_ix].constraints[cur_constraint as usize];
     if cur_iterator > 0 {
         if let Some(EstimateIter::Scan { constraint, .. }) = frame.iters[(cur_iterator - 1) as usize] {
@@ -866,7 +866,7 @@ pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     while pointer < len {
-        // frame.counters.instructions += 1;
+        frame.counters.instructions += 1;
         let inst = &pipe[pointer as usize];
         pointer += match *inst {
             Instruction::StartBlock {block} => {
@@ -1120,7 +1120,7 @@ impl Program {
         let pipe = self.blocks[0].pipes[0].clone();
         interpret(self, &mut frame, &pipe);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
-        // println!("counters: {:?}", frame.counters);
+        println!("counters: {:?}", frame.counters);
         return frame.results;
     }
 

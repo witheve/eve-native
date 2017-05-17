@@ -5,7 +5,7 @@ extern crate time;
 extern crate eve;
 extern crate csv;
 
-use eve::ops::{Program};
+use eve::ops::{Program, Internable};
 use test::Bencher;
 
 
@@ -14,16 +14,18 @@ pub fn load(program:&mut Program) {
     macro_rules! n (($i:expr) => ({ program.interner.number_id($i as f32) }));
     macro_rules! s (($i:expr) => ({ program.interner.string_id(&$i) }));
     macro_rules! eav (($e:expr,$a:expr,$v:expr) => ({ eavs.push(($e,$a,$v)) }));
-    macro_rules! csv_eav (($rec:ident, $attr:expr, $idx:tt, String) => { if let Some(v) = $rec.$idx { eav!(n!($rec.0), s!($attr), s!(v)); } };
-                          ($rec:ident, $attr:expr, $idx:tt, f32) => { if let Some(v) = $rec.$idx { eav!(n!($rec.0), s!($attr), n!(v)); } };
-                          ($rec:ident, $attr:expr, $idx:tt, i32) => { if let Some(v) = $rec.$idx { eav!(n!($rec.0), s!($attr), n!(v)); } };
+    macro_rules! csv_eav (($rec:ident, $e:ident, $attr:expr, $idx:tt, String) => { if let Some(v) = $rec.$idx { eav!(s!($e), s!($attr), s!(v)); } };
+                          ($rec:ident, $e:ident, $attr:expr, $idx:tt, f32) => { if let Some(v) = $rec.$idx { eav!(s!($e), s!($attr), n!(v)); } };
+                          ($rec:ident, $e:ident, $attr:expr, $idx:tt, i32) => { if let Some(v) = $rec.$idx { eav!(s!($e), s!($attr), n!(v)); } };
+                          ($rec:ident, $e:ident, $attr:expr, $idx:tt, usize) => { if let Some(v) = $rec.$idx { eav!(s!($e), s!($attr), s!($attr.to_string()+&v.to_string())); } };
                           );
-    macro_rules! csv (($file:expr, $tag:expr, ($(($idx:tt, $attr:expr,$type:tt)),*)) => ({
+    macro_rules! csv (($file:expr, $tag:expr, $prefix:expr, ($(($idx:tt, $attr:expr,$type:tt)),*)) => ({
         let mut rdr = csv::Reader::from_file("./data/imdb/".to_string()+$file).unwrap();
         for record in rdr.decode() {
             let record:(u32 $(,Option<$type>)*) = record.unwrap();
-            eav!(n!(record.0), s!("tag"), s!($tag));
-            $( csv_eav!(record, $attr, $idx, $type); )*
+            let e = $prefix.to_string() + &record.0.to_string();
+            eav!(s!(e), s!("tag"), s!($tag));
+            $( csv_eav!(record, e, $attr, $idx, $type); )*
         }
     }));
 
@@ -121,21 +123,6 @@ pub fn load(program:&mut Program) {
 //     link character varying(32) NOT NULL
 // );
 
-// CREATE TABLE movie_companies (
-//     id integer NOT NULL PRIMARY KEY,
-//     movie_id integer NOT NULL,
-//     company_id integer NOT NULL,
-//     company_type_id integer NOT NULL,
-//     note character varying
-// );
-
-
-// CREATE TABLE movie_keyword (
-//     id integer NOT NULL PRIMARY KEY,
-//     movie_id integer NOT NULL,
-//     keyword_id integer NOT NULL
-// );
-
 // CREATE TABLE movie_link (
 //     id integer NOT NULL PRIMARY KEY,
 //     movie_id integer NOT NULL,
@@ -160,21 +147,6 @@ pub fn load(program:&mut Program) {
 //     role character varying(32) NOT NULL
 // );
 
-// CREATE TABLE title (
-//     id integer NOT NULL PRIMARY KEY,
-//     title character varying NOT NULL,
-//     imdb_index character varying(5),
-//     kind_id integer NOT NULL,
-//     production_year integer,
-//     imdb_id integer,
-//     phonetic_code character varying(5),
-//     episode_of_id integer,
-//     season_nr integer,
-//     episode_nr integer,
-//     series_years character varying(49),
-//     md5sum character varying(32)
-// );
-
 // CREATE TABLE movie_info (
 //     id integer NOT NULL PRIMARY KEY,
 //     movie_id integer NOT NULL,
@@ -190,48 +162,30 @@ pub fn load(program:&mut Program) {
 //     info character varying NOT NULL,
 //     note character varying
 // );
+//
+// CREATE TABLE company_type (
+//     id integer NOT NULL PRIMARY KEY,
+//     kind character varying(32)
+// );
 
-// CREATE TABLE movie_info_idx (
-//     id integer NOT NULL PRIMARY KEY,
-//     movie_id integer NOT NULL,
-//     info_type_id integer NOT NULL,
-//     info character varying NOT NULL,
-//     note character varying(1)
-// );
-// CREATE TABLE info_type (
-//     id integer NOT NULL PRIMARY KEY,
-//     info character varying(32) NOT NULL
-// );
-// CREATE TABLE title (
-//     id integer NOT NULL PRIMARY KEY,
-//     title character varying NOT NULL,
-//     imdb_index character varying(5),
-//     kind_id integer NOT NULL,
-//     production_year integer,
-//     imdb_id integer,
-//     phonetic_code character varying(5),
-//     episode_of_id integer,
-//     season_nr integer,
-//     episode_nr integer,
-//     series_years character varying(49),
-//     md5sum character varying(32)
-// );
-    csv!("keyword.csv", "keyword", ((1, "keyword", String), (2, "phonetic-code", String)));
-    csv!("movie_info_idx.csv", "movie-info-idx", ((1, "movie-id", i32), (2, "info-type-id", i32), (3, "info", String), (4, "note", String)));
-    csv!("movie_keyword.csv", "movie-keyword", ((1, "movie-id", i32), (2, "keyword-id", i32)));
-    csv!("info_type.csv", "info-type", ((1, "info", String)));
-    csv!("title_subset.csv", "title", ((1, "title", String),
-                                (2, "imdb-index", String),
-                                (3, "kind-id", i32),
-                                (4, "production-year", i32),
-                                (5, "imdb-id", i32),
-                                (6, "phonetic-code", String),
-                                (7, "episode-of-id", i32),
-                                (8, "season-nr", i32),
-                                (9, "episode-nr", i32),
-                                (10, "series-years", String),
-                                (11, "md5sum", String)
-                                ));
+    csv!("movie_companies.csv", "movie-companies", "movie-companies-id", ((1, "movie-id", usize), (2, "company-id", usize), (3, "company-type-id", usize), (4, "note", String)));
+    csv!("company_type.csv", "company-type", "company-type-id", ((1, "kind", String)));
+    csv!("keyword.csv", "keyword", "keyword-id", ((1, "keyword", String), (2, "phonetic-code", String)));
+    csv!("movie_info_idx.csv", "movie-info-idx", "movie-info-idx-id", ((1, "movie-id", usize), (2, "info-type-id", usize), (3, "info", String), (4, "note", String)));
+    csv!("movie_keyword.csv", "movie-keyword", "movie-keyword-id", ((1, "movie-id", usize), (2, "keyword-id", usize)));
+    csv!("info_type.csv", "info-type", "info-type-id", ((1, "info", String)));
+    csv!("title.csv", "title", "movie-id", ((1, "title", String),
+                                                    (2, "imdb-index", String),
+                                                    (3, "kind-id", usize),
+                                                    (4, "production-year", i32),
+                                                    (5, "imdb-id", usize),
+                                                    (6, "phonetic-code", String),
+                                                    (7, "episode-of-id", usize),
+                                                    (8, "season-nr", i32),
+                                                    (9, "episode-nr", i32),
+                                                    (10, "series-years", String),
+                                                    (11, "md5sum", String)
+                                                    ));
     println!("num: {:?}", eavs.len());
     let start_ns = time::precise_time_ns();
     for (e,a,v) in eavs {
@@ -262,29 +216,88 @@ pub fn job_4b(b: &mut Bencher) {
 
     let mut program = Program::new();
     load(&mut program);
+    program.block("job_4b", r#"
+        search
+            info-type-id = [info:"rating"]
+            movie-id = [title production-year > 2010]
+            keyword-id = [keyword contains "sequel"]
+            [#movie-info-idx movie-id info-type-id info > "9.0"]
+            [#movie-keyword movie-id keyword-id]
+        project
+            (movie-id)
+    "#);
     // program.block("job_4b", r#"
     //     search
     //         info-type-id = [#info-type info:"rating"]
     //         movie-id = [#title title production-year > 2010]
-    //         keyword-id = [#keyword keyword]
     //         [#movie-info-idx movie-id info-type-id info > "9.0"]
-    //         [#movie-keyword movie-id keyword-id]
     //     project
-    //         (info, title)
+    //         (movie-id)
     // "#);
-    program.block("job_4b", r#"
-        search
-            movie-id = [title production-year > 2010]
-            info-type-id = [info: "rating"]
-            [#movie-info-idx movie-id info-type-id info > "9.0"]
-        project
-            (movie-id)
-    "#);
     let mut all_results = vec![];
+    let start_ns = time::precise_time_ns();
     b.iter(|| {
         let results = program.exec_query();
         all_results.push(results);
     });
+    let end_ns = time::precise_time_ns();
+    println!("Run took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
     println!("results: {:?}", all_results[0].len());
+    // println!("results: {:?}", all_results[0].iter().map(|v| program.interner.get_value(*v)).collect::<Vec<&Internable>>());
 }
 
+// function q1b()
+//   @query begin
+//     info_type.info(it, "bottom 10 rank")
+//     movie_info_idx.info_type(mi, it)
+//     movie_info_idx.movie(mi, t)
+//     title.title(t, title)
+//     title.production_year(t, production_year)
+//     @when 2005 <= production_year <= 2010
+//     movie_companies.movie(mc, t)
+//     movie_companies.company_type(mc, ct)
+//     company_type.kind(ct, "production companies")
+//     movie_companies.note(mc, note)
+//     @when !contains(note, "(as Metro-Goldwyn-Mayer Pictures)")
+//     return (note::String, title::String, production_year::Int64)
+//   end
+// end
+#[bench]
+pub fn job_1b(b: &mut Bencher) {
+    let mut program = Program::new();
+    load(&mut program);
+    // program.block("job_1b", r#"
+    //     search
+    //         info-type-id = [#info-type info:"bottom 10 rank"]
+    //         [#movie-info-idx movie-id info-type-id]
+    //         movie-id = [#title title production-year]
+    //         production-year >= 2005
+    //         production-year <= 2010
+    //         [#movie-companies movie-id company-type-id note]
+    //         company-type-id = [kind: "production companies"]
+    //     project
+    //         (movie-id)
+    // "#);
+    program.block("job_1b", r#"
+        search
+            info-type-id = [#info-type info:"bottom 10 rank"]
+            [#movie-info-idx movie-id info-type-id]
+            movie-id = [#title title production-year]
+            production-year >= 2005
+            production-year <= 2010
+            [#movie-companies movie-id company-type-id note]
+            company-type-id = [kind: "production companies"]
+        project
+            (movie-id)
+    "#);
+    let mut all_results = vec![];
+    let start_ns = time::precise_time_ns();
+    b.iter(|| {
+        let results = program.exec_query();
+        all_results.push(results);
+    });
+    let end_ns = time::precise_time_ns();
+    println!("Run took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+    println!("results: {:?}", all_results[0].len());
+    // println!("results: {:?}", all_results[0].iter().map(|v| program.interner.get_value(*v)).collect::<Vec<&Internable>>());
+}
