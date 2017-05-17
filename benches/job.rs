@@ -262,16 +262,23 @@ pub fn job_4b(b: &mut Bencher) {
 
     let mut program = Program::new();
     load(&mut program);
+    // program.block("job_4b", r#"
+    //     search
+    //         info-type-id = [#info-type info:"rating"]
+    //         movie-id = [#title title production-year > 2010]
+    //         keyword-id = [#keyword keyword]
+    //         [#movie-info-idx movie-id info-type-id info > "9.0"]
+    //         [#movie-keyword movie-id keyword-id]
+    //     project
+    //         (info, title)
+    // "#);
     program.block("job_4b", r#"
         search
-            info-type-id = [#info-type info:"rating"]
-            movie-id = [#title title production-year > 2010]
-            info-type-id = [#info-type]
-            keyword-id = [#keyword keyword]
-            [#movie-info-idx movie-id info-type-id info]
-            [#movie-keyword movie-id keyword-id]
+            movie-id = [title production-year > 2010]
+            info-type-id = [info: "rating"]
+            [#movie-info-idx movie-id info-type-id info > "9.0"]
         project
-            (info, title)
+            (movie-id)
     "#);
     let mut all_results = vec![];
     b.iter(|| {

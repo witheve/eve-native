@@ -291,7 +291,7 @@ impl<'a> Node<'a> {
                         &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
                         &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
                         &Node::AttributeInequality {ref attribute, ref op, ref right } => {
-                            let reg = comp.get_register(attribute);
+                            let reg = comp.get_value(attribute);
                             let right_value = right.compile(comp);
                             match right_value {
                                 Some(r) => {

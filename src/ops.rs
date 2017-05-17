@@ -352,6 +352,7 @@ pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_c
                 return 1;
             }
 
+
             let resolved_e = frame.resolve(e);
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
@@ -371,6 +372,7 @@ pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_c
                 }
                 _ => panic!("Implement me"),
             }
+
             // println!("get iter: {:?}", cur_constraint);
             frame.check_iter(&mut program.iter_pool, iter_ix, iter);
             1
@@ -436,6 +438,13 @@ pub fn iterator_next(_: &mut Program, frame: &mut Frame, iterator:u32, bail:i32)
         }
     };
     if go == bail {
+
+        // if let Some(ref cur) = frame.iters[iterator as usize] {
+        //     let est = cur.estimate();
+        //     if est > 1 {
+        //         println!("DONE: {:?}", est);
+        //     }
+        // }
         frame.iters[iterator as usize] = None;
     }
     // println!("Row: {:?}", &frame.row.fields[0..3]);
@@ -480,6 +489,9 @@ pub fn accept(program: &mut Program, frame: &mut Frame, cur_constraint:u32, cur_
             1
         },
         &Constraint::Filter {ref left, ref right, ref func, ref param_mask, .. } => {
+            if !check_bits(*param_mask, frame.row.solving_for) {
+               return 1;
+            }
             if check_bits(frame.row.solved_fields, *param_mask) {
                 let resolved_left = program.interner.get_value(frame.resolve(left));
                 let resolved_right = program.interner.get_value(frame.resolve(right));
@@ -717,9 +729,9 @@ pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
         "=" => eq,
         "!=" => not_eq,
         ">" => gt,
-        ">=" => gt,
-        "<" => gt,
-        "<=" => gt,
+        ">=" => gte,
+        "<" => lt,
+        "<=" => lte,
         "contains" => string_contains,
         _ => panic!("Unknown filter {:?}", op)
     };
@@ -745,6 +757,9 @@ macro_rules! numeric_filter {
                 (&Internable::Number(_), &Internable::Number(_)) => {
                     let a = Internable::to_number(left);
                     let b = Internable::to_number(right);
+                    a $op b
+                },
+                (&Internable::String(ref a), &Internable::String(ref b)) => {
                     a $op b
                 },
                 _ => { false }
