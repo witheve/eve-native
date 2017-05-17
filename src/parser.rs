@@ -17,6 +17,7 @@ pub enum Node<'a> {
     AttributeEquality(&'a str, Box<Node<'a>>),
     AttributeInequality {attribute:&'a str, right:Box<Node<'a>>, op:&'a str},
     AttributeAccess(Vec<&'a str>),
+    MutatingAttributeAccess(Vec<&'a str>),
     Inequality {left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Equality {left:Box<Node<'a>>, right:Box<Node<'a>>},
     Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
@@ -151,6 +152,9 @@ impl<'a> Node<'a> {
                 let reg = comp.get_register(&final_var);
                 Some(reg)
             },
+            &mut Node::MutatingAttributeAccess(ref items) => {
+                None
+            },
             &mut Node::RecordUpdate {ref mut record, ref op, ref mut value} => {
                 record.gather_equalities(comp);
                 value.gather_equalities(comp);
@@ -198,6 +202,32 @@ impl<'a> Node<'a> {
             &Node::RawString(v) => { Some(comp.interner.string(v)) },
             &Node::Variable(v) => { Some(comp.get_value(v)) },
             &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
+            &Node::AttributeAccess(ref items) => {
+                let mut final_var = "attr_access".to_string();
+                let mut parent = comp.get_value(items[0]);
+                for item in items[1..].iter() {
+                    final_var.push_str("|");
+                    final_var.push_str(item);
+                    let next = comp.get_value(&final_var.to_string());
+                    comp.constraints.push(make_scan(parent, comp.interner.string(item), next));
+                    parent = next;
+                }
+                Some(parent)
+            },
+            &Node::MutatingAttributeAccess(ref items) => {
+                let mut final_var = "attr_access".to_string();
+                let mut parent = comp.get_value(items[0]);
+                if items.len() > 2 {
+                    for item in items[1..items.len()-2].iter() {
+                        final_var.push_str("|");
+                        final_var.push_str(item);
+                        let next = comp.get_value(&final_var.to_string());
+                        comp.constraints.push(make_scan(parent, comp.interner.string(item), next));
+                        parent = next;
+                    }
+                }
+                Some(parent)
+            },
             &Node::Inequality {ref left, ref right, ref op} => {
                 let left_value = left.compile(comp);
                 let right_value = right.compile(comp);
@@ -306,18 +336,9 @@ impl<'a> Node<'a> {
             &Node::RecordUpdate {ref record, ref op, ref value} => {
                 // @TODO: compile attribute access correctly
                 let (reg, attr) = match **record {
-                    Node::AttributeAccess(ref items) => {
-                        let mut final_var = "attr_access".to_string();
-                        let max = items.len() - 2;
-                        let mut ix = 0;
-                        for item in items {
-                            if ix < max {
-                                final_var.push_str("|");
-                                final_var.push_str(item);
-                            }
-                            ix += 1;
-                        }
-                        (comp.get_value(&final_var), Some(items[items.len() - 1]))
+                    Node::MutatingAttributeAccess(ref items) => {
+                        let parent = record.compile(comp);
+                        (parent.unwrap(), Some(items[items.len() - 1]))
                     },
                     Node::Variable(v) => {
                         (comp.get_value(v), None)
@@ -410,6 +431,17 @@ impl<'a> Compilation<'a> {
     }
 }
 
+named!(pub space, eat_separator!(&b" \t\n\r,"[..]));
+
+#[macro_export]
+macro_rules! sp (
+  ($i:expr, $($args:tt)*) => (
+    {
+      sep!($i, space, $($args)*)
+    }
+  )
+);
+
 named!(identifier<&str>, map_res!(is_not_s!("#\\.,()[]{}:\"|; \r\n\t"), str::from_utf8));
 
 named!(number<Node<'a>>,
@@ -465,14 +497,14 @@ named!(string<Node<'a>>,
            })));
 
 named!(value<Node<'a>>,
-       ws!(alt_complete!(
+       sp!(alt_complete!(
                number |
                string |
                record_reference
                )));
 
 named!(expr<Node<'a>>,
-       ws!(alt_complete!(
+       sp!(alt_complete!(
                infix_addition |
                infix_multiplication |
                value
@@ -487,7 +519,7 @@ named!(hashtag<Node>,
 named!(attribute_inequality<Node<'a>>,
        do_parse!(
            attribute: identifier >>
-           op: ws!(alt!(tag!(">") | tag!(">=") | tag!("<") | tag!("<=") | tag!("!="))) >>
+           op: sp!(alt!(tag!(">") | tag!(">=") | tag!("<") | tag!("<=") | tag!("!="))) >>
            right: expr >>
            (Node::AttributeInequality{attribute, right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
@@ -495,12 +527,12 @@ named!(attribute_inequality<Node<'a>>,
 named!(attribute_equality<Node<'a>>,
        do_parse!(
            attr: identifier >>
-           ws!(alt!(tag!(":") | tag!("="))) >>
+           sp!(alt!(tag!(":") | tag!("="))) >>
            value: expr >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
 named!(attribute<Node<'a>>,
-       ws!(alt_complete!(
+       sp!(alt_complete!(
                hashtag |
                attribute_equality |
                attribute_inequality |
@@ -516,33 +548,33 @@ named!(record<Node<'a>>,
 named!(inequality<Node<'a>>,
        do_parse!(
            left: expr >>
-           op: ws!(alt!(tag!(">") | tag!(">=") | tag!("<") | tag!("<=") | tag!("!="))) >>
+           op: sp!(alt!(tag!(">") | tag!(">=") | tag!("<") | tag!("<=") | tag!("!="))) >>
            right: expr >>
            (Node::Inequality{left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
 named!(infix_addition<Node<'a>>,
        do_parse!(
            left: alt_complete!(infix_multiplication | value) >>
-           op: ws!(alt!(tag!("+") | tag!("-"))) >>
+           op: sp!(alt!(tag!("+") | tag!("-"))) >>
            right: expr >>
            (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
 named!(infix_multiplication<Node<'a>>,
        do_parse!(
            left: value >>
-           op: ws!(alt!(tag!("*") | tag!("/"))) >>
+           op: sp!(alt!(tag!("*") | tag!("/"))) >>
            right: alt_complete!(infix_multiplication | value) >>
            (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
 named!(equality<Node<'a>>,
        do_parse!(
            left: expr >>
-           op: ws!(tag!("=")) >>
+           op: sp!(tag!("=")) >>
            right: alt_complete!(expr | record) >>
            (Node::Equality {left:Box::new(left), right:Box::new(right)})));
 
 named!(output_attribute<Node<'a>>,
-       ws!(alt_complete!(
+       sp!(alt_complete!(
                hashtag |
                attribute_equality |
                tag!("|") => { |v:&[u8]| Node::Pipe } |
@@ -567,21 +599,37 @@ named!(attribute_access<Node<'a>>,
                  })));
 
 named!(record_reference<Node<'a>>,
-       ws!(alt_complete!(
+       sp!(alt_complete!(
                attribute_access |
+               identifier => { |v:&'a str| Node::Variable(v) })));
+
+named!(mutating_attribute_access<Node<'a>>,
+       do_parse!(start: identifier >>
+                 rest: many1!(pair!(tag!("."), identifier)) >>
+                 ({
+                     let mut items = vec![start];
+                     for (_, v) in rest {
+                         items.push(v);
+                     }
+                     Node::MutatingAttributeAccess(items)
+                 })));
+
+named!(mutating_record_reference<Node<'a>>,
+       sp!(alt_complete!(
+               mutating_attribute_access |
                identifier => { |v:&'a str| Node::Variable(v) })));
 
 named!(record_update<Node<'a>>,
        do_parse!(
-           record: record_reference >>
+           record: mutating_record_reference >>
            op: alt_complete!(tag!(":=") | tag!("+=") | tag!("-=")) >>
            value: alt_complete!(expr | output_record | hashtag) >>
            (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value) })));
 
 named!(search_section<Node<'a>>,
        do_parse!(
-           ws!(tag!("search")) >>
-           items: many0!(ws!(alt_complete!(
+           sp!(tag!("search")) >>
+           items: many0!(sp!(alt_complete!(
                             record |
                             inequality |
                             equality
@@ -590,8 +638,8 @@ named!(search_section<Node<'a>>,
 
 named!(bind_section<Node<'a>>,
        do_parse!(
-           ws!(tag!("bind")) >>
-           items: many0!(ws!(alt_complete!(
+           sp!(tag!("bind")) >>
+           items: many1!(sp!(alt_complete!(
                        output_record |
                        record_update
                        ))) >>
@@ -599,8 +647,8 @@ named!(bind_section<Node<'a>>,
 
 named!(commit_section<Node<'a>>,
        do_parse!(
-           ws!(tag!("commit")) >>
-           items: many0!(ws!(alt_complete!(
+           sp!(tag!("commit")) >>
+           items: many1!(sp!(alt_complete!(
                        output_record |
                        record_update
                        ))) >>
@@ -608,12 +656,12 @@ named!(commit_section<Node<'a>>,
 
 named!(project_section<Node<'a>>,
        do_parse!(
-           ws!(tag!("project")) >>
-           items: ws!(delimited!(tag!("("), many1!(ws!(expr)) ,tag!(")"))) >>
+           sp!(tag!("project")) >>
+           items: sp!(delimited!(tag!("("), many1!(sp!(expr)) ,tag!(")"))) >>
            (Node::Project(items))));
 
 named!(block<Node<'a>>,
-       ws!(do_parse!(
+       sp!(do_parse!(
                search: opt!(search_section) >>
                update: alt_complete!(
                    bind_section |
@@ -625,6 +673,7 @@ named!(block<Node<'a>>,
 pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
     let parsed = block(content.as_bytes());
     let mut comp = Compilation::new(interner);
+    println!("Parsed {:?}", parsed);
     match parsed {
         IResult::Done(_, mut block) => {
             block.unify(&mut comp);
@@ -646,7 +695,7 @@ fn parser_coolness() {
     // println!("{:?}", expr(b"3 * 4 * 5 * 6"));
     // let b = block(b"search f = [#foo woah] bind f.cool += 3");
     let mut program = Program::new();
-    program.block("simple block", "search f = [#foo woah] bind [#bar | woah]");
+    program.block("simple block", "search f = [#foo woah] bind f.cool += f.foo.woah");
     let mut txn = Transaction::new();
     txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
     txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);

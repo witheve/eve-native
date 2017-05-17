@@ -661,6 +661,9 @@ pub enum Constraint {
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field},
+    Remove {e: Field, a: Field, v:Field},
+    RemoveAttribute {e: Field, a: Field},
+    RemoveEntity {e: Field, a: Field},
     Project {registers: Vec<usize>},
 }
 
@@ -1187,7 +1190,16 @@ impl Program {
                 },
                 &Constraint::Insert {..} => {
                     outputs.push(Instruction::Output { next: 1, constraint: ix });
-                }
+                },
+                &Constraint::Remove {..} => {
+                    outputs.push(Instruction::Output { next: 1, constraint: ix });
+                },
+                &Constraint::RemoveAttribute {..} => {
+                    outputs.push(Instruction::Output { next: 1, constraint: ix });
+                },
+                &Constraint::RemoveEntity {..} => {
+                    outputs.push(Instruction::Output { next: 1, constraint: ix });
+                },
                 &Constraint::Project {..} => {
                     project_constraints.push(constraint);
                 }

@@ -6,6 +6,9 @@ authors = ["Chris Granger <ibdknox@gmail.com>"]
 [profile.release]
 debug = true
 
+[dev-dependencies]
+csv = "0.14"
+
 [dependencies]
 rand = "0.3.15"
 fnv = "1.0.5"
