@@ -1,8 +1,9 @@
 
-use nom::{digit, alphanumeric, anychar, IResult};
+use nom::{digit, alphanumeric, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::HashMap;
 use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block};
+use std::error::Error;
 
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
@@ -529,7 +530,7 @@ named!(attribute_equality<Node<'a>>,
        do_parse!(
            attr: identifier >>
            sp!(alt!(tag!(":") | tag!("="))) >>
-           value: expr >>
+           value: alt_complete!(record | expr) >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
 named!(attribute<Node<'a>>,
@@ -574,10 +575,17 @@ named!(equality<Node<'a>>,
            right: alt_complete!(expr | record) >>
            (Node::Equality {left:Box::new(left), right:Box::new(right)})));
 
+named!(output_attribute_equality<Node<'a>>,
+       do_parse!(
+           attr: identifier >>
+           sp!(alt!(tag!(":") | tag!("="))) >>
+           value: alt_complete!(output_record | expr) >>
+           (Node::AttributeEquality(attr, Box::new(value)))));
+
 named!(output_attribute<Node<'a>>,
        sp!(alt_complete!(
                hashtag |
-               attribute_equality |
+               output_attribute_equality |
                tag!("|") => { |v:&[u8]| Node::Pipe } |
                identifier => { |v:&'a str| Node::Attribute(v) })));
 
@@ -693,11 +701,16 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
 #[test]
 fn parser_coolness() {
     // println!("{:?}", expr(b"3 * 4 + 5 * 6"));
-    println!("{:?}", inequality(b"woah <= 10"));
-    // let mut program = Program::new();
-    // program.block("simple block", "search f = [#foo woah] woah <= 10 bind [#bar]");
-    // let mut txn = Transaction::new();
-    // txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
-    // txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
-    // txn.exec(&mut program);
+    // let res = inequality(b"woah += 10");
+    // if let IResult::Error(Err::Position(err, pos)) = res {
+    //     println!("{:?}", err);
+    //     println!("{:?}", err.description());
+    //     println!("{:?}", str::from_utf8(pos));
+    // };
+    let mut program = Program::new();
+    program.block("simple block", "search f = [#foo woah] bind [#bar baz: [#zomg]]");
+    let mut txn = Transaction::new();
+    txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
+    txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
+    txn.exec(&mut program);
 }
