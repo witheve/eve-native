@@ -30,6 +30,11 @@ pub type Count = i32;
 // Change
 //-------------------------------------------------------------------------
 
+pub enum ChangeType {
+    Insert,
+    Remove,
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct Change {
     pub e: Interned,
@@ -319,7 +324,8 @@ pub enum Instruction {
     MoveInputField { from:u32, to:u32, },
     ClearRounds,
     GetRounds {bail: i32, constraint: u32},
-    Output {next: i32, constraint:u32},
+    Bind {next: i32, constraint:u32},
+    Commit {next: i32, constraint:u32},
     Project {next: i32, from:u32},
 }
 
@@ -389,7 +395,6 @@ pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_c
                     }
                     func(resolved)
                 };
-                println!("DOING FUNC {:?}", result);
                 let mut iter = program.iter_pool.get_func();
                 match result {
                     Some(v) => {
@@ -536,10 +541,10 @@ pub fn get_rounds(program: &mut Program, frame: &mut Frame, constraint:u32, bail
 }
 
 #[inline(never)]
-pub fn output(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+pub fn bind(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
     let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
-        &Constraint::Insert {ref e, ref a, ref v} => {
+        &Constraint::Insert {ref e, ref a, ref v, ..} => {
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n: 0, round:0, transaction: 0, count:0, };
             // println!("want to output {:?}", c);
             let ref mut rounds = program.rounds;
@@ -548,6 +553,28 @@ pub fn output(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
                 program.index.distinct(output, rounds);
+                // println!("insert {:?}", output);
+            }
+        },
+        _ => {}
+    };
+    next
+}
+
+#[inline(never)]
+pub fn commit(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+    let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
+    match cur {
+        &Constraint::Insert {ref e, ref a, ref v, ref commit} => {
+            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
+            // println!("want to output {:?}", c);
+            let ref mut rounds = program.rounds;
+            // println!("rounds {:?}", rounds.output_rounds);
+            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
+            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+                let output = c.with_round_count(0, count);
+                rounds.commit(output, ChangeType::Insert)
                 // println!("insert {:?}", output);
             }
         },
@@ -672,7 +699,7 @@ pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
-    Insert {e: Field, a: Field, v:Field},
+    Insert {e: Field, a: Field, v:Field, commit:bool},
     Remove {e: Field, a: Field, v:Field},
     RemoveAttribute {e: Field, a: Field},
     RemoveEntity {e: Field, a: Field},
@@ -893,8 +920,11 @@ pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>
             Instruction::GetRounds { constraint, bail } => {
                 get_rounds(program, frame, constraint, bail)
             },
-            Instruction::Output { constraint, next } => {
-                output(program, frame, constraint, next)
+            Instruction::Bind { constraint, next } => {
+                bind(program, frame, constraint, next)
+            },
+            Instruction::Commit { constraint, next } => {
+                commit(program, frame, constraint, next)
             },
             Instruction::Project { from, next } => {
                 project(program, frame, from, next)
@@ -911,6 +941,7 @@ pub struct RoundHolder {
     pub output_rounds: Vec<(Round, Count)>,
     prev_output_rounds: Vec<(Round, Count)>,
     rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
+    commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
     pub max_round: usize,
 }
 
@@ -927,7 +958,7 @@ impl RoundHolder {
         for _ in 0..100 {
             rounds.push(HashMap::new());
         }
-        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], max_round: 0 }
+        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), max_round: 0 }
     }
 
     pub fn get_output_rounds(&self) -> &Vec<(Round, Count)> {
@@ -1035,6 +1066,18 @@ impl RoundHolder {
         };
     }
 
+    pub fn commit(&mut self, change:Change, change_type:ChangeType) {
+        let key = (change.n, change.e, change.a, change.v);
+        match self.commits.entry(key) {
+            Entry::Occupied(mut o) => {
+                o.get_mut().1.count += change.count;
+            }
+            Entry::Vacant(o) => {
+                o.insert((change_type, change));
+            }
+        };
+    }
+
     pub fn clear(&mut self) {
         for ix in 0..self.max_round {
             self.rounds[ix].clear();
@@ -1095,7 +1138,8 @@ impl<'a> RoundHolderIter {
 pub struct Program {
     rounds: RoundHolder,
     pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
-    pub blocks: Vec<Block>,
+    block_names: HashMap<String, usize>,
+    blocks: Vec<Block>,
     pub index: HashIndex,
     pub interner: Interner,
     iter_pool: EstimateIterPool,
@@ -1109,19 +1153,25 @@ impl Program {
         let mut interner = Interner::new();
         let tag_id = interner.string_id("tag");
         let rounds = RoundHolder::new();
+        let block_names = HashMap::new();
         let blocks = vec![];
-        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, index, tag_id, iter_pool }
+        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, index, tag_id, iter_pool }
     }
 
     #[allow(dead_code)]
-    pub fn exec_query(&mut self) -> Vec<Interned> {
+    pub fn exec_query(&mut self, name:&str) -> Vec<Interned> {
         let mut frame = Frame::new();
         // let start_ns = time::precise_time_ns();
-        let pipe = self.blocks[0].pipes[0].clone();
+        let pipe = self.get_block(name).pipes[0].clone();
         interpret(self, &mut frame, &pipe);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
-        println!("counters: {:?}", frame.counters);
+        // println!("counters: {:?}", frame.counters);
         return frame.results;
+    }
+
+    pub fn get_block(&self, name:&str) -> &Block {
+        let ix = self.block_names.get(name).unwrap();
+        &self.blocks[*ix]
     }
 
     #[allow(dead_code)]
@@ -1129,15 +1179,23 @@ impl Program {
         self.index.insert_distinct(e,a,v,round,count);
     }
 
-    pub fn register_block(&mut self, mut block:Block) {
+    pub fn register_block(&mut self, name:&str, mut block:Block) {
         let ix = self.blocks.len();
         self.gen_pipes(&mut block, ix);
         self.blocks.push(block);
+        self.block_names.insert(name.to_string(), ix);
     }
 
-    pub fn block(&mut self, name:&str, code:&str) {
+    pub fn insert_block(&mut self, name:&str, code:&str) {
         let mut b = make_block(&mut self.interner, name, code);
-        self.register_block(b);
+        self.register_block(name, b)
+    }
+
+    pub fn block(&mut self, name:&str, code:&str) -> CodeTransaction {
+        self.insert_block(name, code);
+        let mut txn = CodeTransaction::new();
+        txn.exec(self, name, true);
+        txn
     }
 
     pub fn gen_pipes(&mut self, block: &mut Block, block_ix: usize) {
@@ -1203,17 +1261,21 @@ impl Program {
                 &Constraint::Filter {..} => {
                     accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0, });
                 },
-                &Constraint::Insert {..} => {
-                    outputs.push(Instruction::Output { next: 1, constraint: ix });
+                &Constraint::Insert {ref commit, ..} => {
+                    if *commit {
+                        outputs.push(Instruction::Commit { next: 1, constraint: ix });
+                    } else {
+                        outputs.push(Instruction::Bind { next: 1, constraint: ix });
+                    }
                 },
                 &Constraint::Remove {..} => {
-                    outputs.push(Instruction::Output { next: 1, constraint: ix });
+                    outputs.push(Instruction::Commit { next: 1, constraint: ix });
                 },
                 &Constraint::RemoveAttribute {..} => {
-                    outputs.push(Instruction::Output { next: 1, constraint: ix });
+                    outputs.push(Instruction::Commit { next: 1, constraint: ix });
                 },
                 &Constraint::RemoveEntity {..} => {
-                    outputs.push(Instruction::Output { next: 1, constraint: ix });
+                    outputs.push(Instruction::Commit { next: 1, constraint: ix });
                 },
                 &Constraint::Project {..} => {
                     project_constraints.push(constraint);
@@ -1310,7 +1372,13 @@ impl Program {
                     pipe.push(output.clone());
                 } else {
                     let mut neue = output.clone();
-                    if let Instruction::Output {ref mut next, ..} = neue {
+                    if let Instruction::Bind {ref mut next, ..} = neue {
+                        *next = if to_solve > 0 {
+                            last_iter_next
+                        } else {
+                            PIPE_FINISHED
+                        }
+                    } else if let Instruction::Commit { ref mut next, ..} = neue {
                         *next = if to_solve > 0 {
                             last_iter_next
                         } else {
@@ -1501,7 +1569,7 @@ impl Transaction {
         let mut pipes = vec![];
         let mut items = program.rounds.iter();
         while let Some(change) = items.next(&mut program.rounds) {
-            println!("Change {:?}", change);
+            // println!("Change {:?}", change);
             pipes.clear();
             program.get_pipes(change, &mut pipes);
             frame.reset();
@@ -1519,65 +1587,50 @@ impl Transaction {
 }
 
 //-------------------------------------------------------------------------
-// Tests
+// Code Transaction
 //-------------------------------------------------------------------------
 
-pub fn doit() {
-    // prog.block("simple block", ({find, record, lib}) => {
-    //  let person = find("person");
-    //  let text = `name: ${person.name}`;
-    //  return [
-    //    record("html/div", {person, text})
-    //  ]
-    // });
-    //
-    let mut program = Program::new();
-    let constraints = vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
-        make_scan(register(0), program.interner.string("name"), register(1)),
-        make_function("concat", vec![program.interner.string("name: "), register(1)], register(2)),
-        make_function("gen_id", vec![register(0), register(2)], register(3)),
-        Constraint::Insert {e: register(3), a: program.interner.string("tag"), v: program.interner.string("html/div")},
-        Constraint::Insert {e: register(3), a: program.interner.string("person"), v: register(0)},
-        Constraint::Insert {e: register(3), a: program.interner.string("text"), v: register(2)},
-        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("tag"), v: program.interner.string("html/div")},
-        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("person"), v: register(0)},
-        // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
-    ];
-    program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
-    let start = time::precise_time_ns();
-    let mut txn = Transaction::new();
-    for ix in 0..100000 {
-        txn.clear();
-        txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
-        txn.input(program.interner.number_id(ix as f32), program.interner.string_id("name"), program.interner.number_id(ix as f32), 1);
-        txn.exec(&mut program);
-    }
-    let end = time::precise_time_ns();
-    println!("TOOK {:?}", (end - start) as f64 / 1_000_000.0);
+pub struct CodeTransaction {
+    changes: Vec<Change>,
+    frame: Frame,
 }
 
-
-pub fn doit_blah() {
-    let mut program = Program::new();
-    let constraints = vec![
-        make_scan(register(0), program.interner.string("tag"), program.interner.string("person")),
-        make_scan(register(0), program.interner.string("age"), register(1)),
-        make_filter(">", register(1), program.interner.number(60.0)),
-        make_function("+", vec![register(1), program.interner.number(10.0)], register(2)),
-        Constraint::Insert {e: register(0), a: program.interner.string("adjsted-age"), v: register(2)},
-    ];
-    program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
-    let start = time::precise_time_ns();
-    let mut txn = Transaction::new();
-    for ix in 0..1 {
-        txn.clear();
-        txn.input(program.interner.number_id(ix as f32), program.interner.string_id("tag"), program.interner.string_id("person"), 1);
-        txn.input(program.interner.number_id(ix as f32), program.interner.string_id("age"), program.interner.number_id((ix % 100) as f32), 1);
-        txn.exec(&mut program);
+impl CodeTransaction {
+    pub fn new() -> CodeTransaction {
+        let frame = Frame::new();
+        CodeTransaction { changes: vec![], frame}
     }
-    let end = time::precise_time_ns();
-    println!("TOOK {:?}", (end - start) as f64 / 1_000_000.0);
+
+    pub fn exec(&mut self, program: &mut Program, block_name: &str, insert:bool) {
+        {
+            let ref mut rounds = program.rounds;
+
+            for change in self.changes.iter() {
+                program.index.distinct(&change, rounds);
+            }
+        }
+
+        let ref mut frame = self.frame;
+
+        {
+            let pipe = program.get_block(block_name).pipes[0].clone();
+            // run the block
+            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count: if insert { 1 } else { -1 } });
+            interpret(program, frame, &pipe);
+        }
+
+        let mut pipes = vec![];
+        let mut items = program.rounds.iter();
+        while let Some(change) = items.next(&mut program.rounds) {
+            println!("Change {:?}", change);
+            pipes.clear();
+            program.get_pipes(change, &mut pipes);
+            frame.reset();
+            frame.input = Some(change);
+            for pipe in pipes.iter() {
+                interpret(program, frame, pipe);
+            }
+            program.index.insert(change.e, change.a, change.v);
+        }
+    }
 }
-
-

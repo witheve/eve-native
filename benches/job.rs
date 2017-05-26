@@ -237,7 +237,7 @@ pub fn job_4b(b: &mut Bencher) {
     let mut all_results = vec![];
     let start_ns = time::precise_time_ns();
     b.iter(|| {
-        let results = program.exec_query();
+        let results = program.exec_query("job_4b");
         all_results.push(results);
     });
     let end_ns = time::precise_time_ns();
@@ -293,7 +293,7 @@ pub fn job_1b(b: &mut Bencher) {
     let mut all_results = vec![];
     let start_ns = time::precise_time_ns();
     b.iter(|| {
-        let results = program.exec_query();
+        let results = program.exec_query("job_1b");
         all_results.push(results);
     });
     let end_ns = time::precise_time_ns();

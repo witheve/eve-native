@@ -85,7 +85,6 @@ impl<'a> Node<'a> {
             };
             final_map.insert(k.clone(), neue.clone());
         }
-        println!("Unified: {:?}", final_map);
         comp.reg_count = real_registers.len();
         comp.var_values = final_map;
     }
@@ -330,7 +329,7 @@ impl<'a> Node<'a> {
                     if identity_contributing {
                         identity_attrs.push(v);
                     }
-                    comp.constraints.push(Constraint::Insert{e:reg, a, v});
+                    comp.constraints.push(Constraint::Insert{e:reg, a, v, commit: false});
                 };
                 comp.constraints.push(make_function("gen_id", identity_attrs, reg));
                 Some(reg)
@@ -355,7 +354,7 @@ impl<'a> Node<'a> {
                     },
                     _ => { panic!("Invalid {:?}", self) }
                 };
-                comp.constraints.push(Constraint::Insert{e:reg, a, v});
+                comp.constraints.push(Constraint::Insert{e:reg, a, v, commit: false});
                 Some(reg)
             },
             &Node::Search(ref statements) => {
@@ -682,7 +681,7 @@ named!(block<Node<'a>>,
 pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
     let parsed = block(content.as_bytes());
     let mut comp = Compilation::new(interner);
-    println!("Parsed {:?}", parsed);
+    // println!("Parsed {:?}", parsed);
     match parsed {
         IResult::Done(_, mut block) => {
             block.unify(&mut comp);
@@ -691,9 +690,9 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
         _ => { println!("Failed: {:?}", parsed); }
     }
 
-    for c in comp.constraints.iter() {
-        println!("{:?}", c);
-    }
+    // for c in comp.constraints.iter() {
+    //     println!("{:?}", c);
+    // }
 
     Block { name: name.to_string(), constraints:comp.constraints, pipes: vec![] }
 }

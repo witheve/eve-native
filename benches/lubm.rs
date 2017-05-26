@@ -279,106 +279,35 @@ fn setup(program: &mut Program, size:usize) {
     // println!("Insert took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 }
 
-pub fn exec_query(program:&mut Program, constraints: Vec<Constraint>) {
-    program.blocks.pop();
-
-    program.register_block(Block { name: "simple block".to_string(), constraints, pipes: vec![] });
-
-    let start_ns = time::precise_time_ns();
-    let mut all_results = vec![];
-    for _ in 0..20 {
-        let results = program.exec_query();
-        all_results.push(results);
-    }
-    let end_ns = time::precise_time_ns();
-    println!("Run took {:?}", (end_ns - start_ns) as f64 / 20_000_000.0);
-    println!("Results: {:?}", all_results[0].len());
-}
-
-pub fn do_bench(b: &mut Bencher, func: fn(&mut Program)) {
+pub fn do_bench(b: &mut Bencher, name:&str, func: fn(&mut Program)) {
     let mut program = Program::new();
-    setup(&mut program, 10);
+    setup(&mut program, 1);
 
     func(&mut program);
 
     let mut all_results = vec![];
     b.iter(|| {
-        let results = program.exec_query();
+        let results = program.exec_query(name);
         all_results.push(results);
     });
     println!("results: {:?}", all_results[0].len());
 }
 
-#[bench] pub fn do_lubm_1(b: &mut Bencher) { do_bench(b, lubm_1); }
-#[bench] pub fn do_lubm_2(b: &mut Bencher) { do_bench(b, lubm_2); }
-#[bench] pub fn do_lubm_3(b: &mut Bencher) { do_bench(b, lubm_3); }
-#[bench] pub fn do_lubm_4(b: &mut Bencher) { do_bench(b, lubm_4); }
-#[bench] pub fn do_lubm_5(b: &mut Bencher) { do_bench(b, lubm_5); }
-#[bench] pub fn do_lubm_7(b: &mut Bencher) { do_bench(b, lubm_7); }
-#[bench] pub fn do_lubm_8(b: &mut Bencher) { do_bench(b, lubm_8); }
-#[bench] pub fn do_lubm_9(b: &mut Bencher) { do_bench(b, lubm_9); }
-#[bench] pub fn do_lubm_11(b: &mut Bencher) { do_bench(b, lubm_11); }
-#[bench] pub fn do_lubm_12(b: &mut Bencher) { do_bench(b, lubm_12); }
-#[bench] pub fn do_lubm_13(b: &mut Bencher) { do_bench(b, lubm_13); }
-#[bench] pub fn do_lubm_14(b: &mut Bencher) { do_bench(b, lubm_14); }
-
-#[bench]
-pub fn test_lubm(_: &mut Bencher) {
-    let mut program = Program::new();
-    setup(&mut program, 10);
-
-//     println!("\nQuery 1");
-//     let query_1 = lubm_1(&mut program);
-//     exec_query(&mut program, query_1);
-
-//     println!("\nQuery 2");
-//     let query_2 = lubm_2(&mut program);
-//     exec_query(&mut program, query_2);
-
-//     println!("\nQuery 3");
-//     let query_3 = lubm_3(&mut program);
-//     exec_query(&mut program, query_3);
-
-//     println!("\nQuery 4");
-//     let query_4 = lubm_4(&mut program);
-//     exec_query(&mut program, query_4);
-
-//     println!("\nQuery 5");
-//     let query_5 = lubm_5(&mut program);
-//     exec_query(&mut program, query_5);
-
-//     println!("\nQuery 7");
-//     let query_7 = lubm_7(&mut program);
-//     exec_query(&mut program, query_7);
-
-//     println!("\nQuery 8");
-//     let query_8 = lubm_8(&mut program);
-//     exec_query(&mut program, query_8);
-
-//     println!("\nQuery 9");
-//     let query_9 = lubm_9(&mut program);
-//     exec_query(&mut program, query_9);
-
-//     println!("\nQuery 11");
-//     let query_11 = lubm_11(&mut program);
-//     exec_query(&mut program, query_11);
-
-//     println!("\nQuery 12");
-//     let query_12 = lubm_12(&mut program);
-//     exec_query(&mut program, query_12);
-
-//     println!("\nQuery 13");
-//     let query_13 = lubm_13(&mut program);
-//     exec_query(&mut program, query_13);
-
-//     println!("\nQuery 14");
-//     let query_14 = lubm_14(&mut program);
-//     exec_query(&mut program, query_14);
-
-}
+#[bench] pub fn do_lubm_1(b: &mut Bencher) { do_bench(b, "lubm1", lubm_1); }
+#[bench] pub fn do_lubm_2(b: &mut Bencher) { do_bench(b, "lubm2", lubm_2); }
+#[bench] pub fn do_lubm_3(b: &mut Bencher) { do_bench(b, "lubm3", lubm_3); }
+#[bench] pub fn do_lubm_4(b: &mut Bencher) { do_bench(b, "lubm4", lubm_4); }
+#[bench] pub fn do_lubm_5(b: &mut Bencher) { do_bench(b, "lubm5", lubm_5); }
+#[bench] pub fn do_lubm_7(b: &mut Bencher) { do_bench(b, "lubm7", lubm_7); }
+#[bench] pub fn do_lubm_8(b: &mut Bencher) { do_bench(b, "lubm8", lubm_8); }
+#[bench] pub fn do_lubm_9(b: &mut Bencher) { do_bench(b, "lubm9", lubm_9); }
+#[bench] pub fn do_lubm_11(b: &mut Bencher) { do_bench(b, "lubm11", lubm_11); }
+#[bench] pub fn do_lubm_12(b: &mut Bencher) { do_bench(b, "lubm12", lubm_12); }
+#[bench] pub fn do_lubm_13(b: &mut Bencher) { do_bench(b, "lubm13", lubm_13); }
+#[bench] pub fn do_lubm_14(b: &mut Bencher) { do_bench(b, "lubm14", lubm_14); }
 
 pub fn lubm_1(program:&mut Program) {
-    program.block("lubm1", r#"
+    program.insert_block("lubm1", r#"
         search
             person = [#graduate-student takes-course:"university0|department0|graduate_course0"]
         project
@@ -387,7 +316,7 @@ pub fn lubm_1(program:&mut Program) {
 }
 
 pub fn lubm_2(program:&mut Program) {
-    program.block("lubm2", r#"
+    program.insert_block("lubm2", r#"
         search
             person = [#graduate-student member-of:department undergraduate-degree-from:university]
             department = [#department suborganization-of:university]
@@ -398,7 +327,7 @@ pub fn lubm_2(program:&mut Program) {
 }
 
 pub fn lubm_3(program:&mut Program) {
-    program.block("lubm3", r#"
+    program.insert_block("lubm3", r#"
         search
             pub = [#publication author:"university0|department0|assistant-professor0"]
         project
@@ -407,7 +336,7 @@ pub fn lubm_3(program:&mut Program) {
 }
 
 pub fn lubm_4(program:&mut Program) {
-    program.block("lubm4", r#"
+    program.insert_block("lubm4", r#"
         search
             prof = [#associate-professor works-for:"university0|department0" name email telephone]
         project
@@ -416,7 +345,7 @@ pub fn lubm_4(program:&mut Program) {
 }
 
 pub fn lubm_5(program:&mut Program) {
-    program.block("lubm5", r#"
+    program.insert_block("lubm5", r#"
         search
             student = [#undergraduate-student member-of:"university0|department0"]
         project
@@ -425,7 +354,7 @@ pub fn lubm_5(program:&mut Program) {
 }
 
 pub fn lubm_7(program:&mut Program) {
-    program.block("lubm7", r#"
+    program.insert_block("lubm7", r#"
         search
             student = [#undergraduate-student takes-course:course telephone]
             course = [#course]
@@ -436,7 +365,7 @@ pub fn lubm_7(program:&mut Program) {
 }
 
 pub fn lubm_8(program:&mut Program) {
-    program.block("lubm8", r#"
+    program.insert_block("lubm8", r#"
         search
             student = [#undergraduate-student member-of:department email]
             department = [#department suborganization-of:"university0"]
@@ -446,7 +375,7 @@ pub fn lubm_8(program:&mut Program) {
 }
 
 pub fn lubm_9(program:&mut Program) {
-    program.block("lubm9", r#"
+    program.insert_block("lubm9", r#"
         search
             student = [#undergraduate-student advisor takes-course:course]
             advisor = [#assistant-professor teacher-of:course]
@@ -457,7 +386,7 @@ pub fn lubm_9(program:&mut Program) {
 }
 
 pub fn lubm_11(program:&mut Program) {
-    program.block("lubm11", r#"
+    program.insert_block("lubm11", r#"
         search
             group = [#research-group suborganization-of:"university0"]
         project
@@ -466,7 +395,7 @@ pub fn lubm_11(program:&mut Program) {
 }
 
 pub fn lubm_12(program:&mut Program) {
-    program.block("lubm12", r#"
+    program.insert_block("lubm12", r#"
         search
             prof = [#full-professor works-for:department]
             department = [#department suborganization-of:"university0"]
@@ -476,7 +405,7 @@ pub fn lubm_12(program:&mut Program) {
 }
 
 pub fn lubm_13(program:&mut Program) {
-    program.block("lubm13", r#"
+    program.insert_block("lubm13", r#"
         search
             student = [#graduate-student undergraduate-degree-from:"university5"]
         project
@@ -485,7 +414,7 @@ pub fn lubm_13(program:&mut Program) {
 }
 
 pub fn lubm_14(program:&mut Program) {
-    program.block("lubm14", r#"
+    program.insert_block("lubm14", r#"
         search
             student = [#undergraduate-student]
         project

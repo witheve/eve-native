@@ -21,11 +21,9 @@ extern crate nom;
 
 mod ops;
 mod parser;
-use ops::doit;
 mod indexes;
 pub mod hash;
 
 fn main() {
-    doit();
     // test_lubm()
 }
