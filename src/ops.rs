@@ -30,6 +30,7 @@ pub type Count = i32;
 // Change
 //-------------------------------------------------------------------------
 
+#[derive(Debug, Copy, Clone)]
 pub enum ChangeType {
     Insert,
     Remove,
@@ -942,6 +943,7 @@ pub struct RoundHolder {
     prev_output_rounds: Vec<(Round, Count)>,
     rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
     commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
+    collapsed_commits: HashMap<(Interned, Interned, Interned), Change>,
     pub max_round: usize,
 }
 
@@ -952,13 +954,25 @@ pub fn move_output_round(info:&Option<(Round, Count)>, round:&mut Round, count:&
     }
 }
 
+pub fn commit_collapsed(collapsed:&mut HashMap<(Interned, Interned, Interned), Change>, change:Change) {
+    let key = (change.e, change.a, change.v);
+    match collapsed.entry(key) {
+        Entry::Occupied(mut o) => {
+            o.get_mut().count += change.count;
+        }
+        Entry::Vacant(o) => {
+            o.insert(change);
+        }
+    };
+}
+
 impl RoundHolder {
     pub fn new() -> RoundHolder {
         let mut rounds = vec![];
         for _ in 0..100 {
             rounds.push(HashMap::new());
         }
-        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), max_round: 0 }
+        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), collapsed_commits:HashMap::new(), max_round: 0 }
     }
 
     pub fn get_output_rounds(&self) -> &Vec<(Round, Count)> {
@@ -1076,6 +1090,31 @@ impl RoundHolder {
                 o.insert((change_type, change));
             }
         };
+    }
+
+    pub fn prepare_commits(&mut self, index:&mut HashIndex) -> bool {
+        for info in self.commits.values() {
+            match info {
+                &(ChangeType::Insert, Change {count, ..}) => {
+                    if count > 0 { commit_collapsed(&mut self.collapsed_commits, info.1); }
+                }
+                &(ChangeType::Remove, Change {count, ..}) => {
+                    if count < 0 { commit_collapsed(&mut self.collapsed_commits, info.1); }
+                }
+            }
+        }
+        self.commits.clear();
+        let mut has_changes = false;
+        // @FIXME: There should be some way for us to not have to allocate a vec here
+        let drained = { self.collapsed_commits.drain().map(|v| v.1).collect::<Vec<Change>>() };
+        for change in drained {
+            if change.count != 0 {
+                has_changes = true;
+                // apply it
+                index.distinct(&change, self);
+            }
+        }
+        has_changes
     }
 
     pub fn clear(&mut self) {
@@ -1567,17 +1606,23 @@ impl Transaction {
 
         let ref mut frame = self.frame;
         let mut pipes = vec![];
-        let mut items = program.rounds.iter();
-        while let Some(change) = items.next(&mut program.rounds) {
-            // println!("Change {:?}", change);
-            pipes.clear();
-            program.get_pipes(change, &mut pipes);
-            frame.reset();
-            frame.input = Some(change);
-            for pipe in pipes.iter() {
-                interpret(program, frame, pipe);
+        let mut next_frame = true;
+
+        while next_frame {
+            let mut items = program.rounds.iter();
+            while let Some(change) = items.next(&mut program.rounds) {
+                // println!("Change {:?}", change);
+                pipes.clear();
+                program.get_pipes(change, &mut pipes);
+                frame.reset();
+                frame.input = Some(change);
+                for pipe in pipes.iter() {
+                    interpret(program, frame, pipe);
+                }
+                program.index.insert(change.e, change.a, change.v);
             }
-            program.index.insert(change.e, change.a, change.v);
+
+            next_frame = program.rounds.prepare_commits(&mut program.index);
         }
     }
 
@@ -1621,16 +1666,24 @@ impl CodeTransaction {
 
         let mut pipes = vec![];
         let mut items = program.rounds.iter();
-        while let Some(change) = items.next(&mut program.rounds) {
-            println!("Change {:?}", change);
-            pipes.clear();
-            program.get_pipes(change, &mut pipes);
-            frame.reset();
-            frame.input = Some(change);
-            for pipe in pipes.iter() {
-                interpret(program, frame, pipe);
+        let mut next_frame = true;
+
+        while next_frame {
+            let mut items = program.rounds.iter();
+            while let Some(change) = items.next(&mut program.rounds) {
+                println!("Change {:?}", change);
+                pipes.clear();
+                program.get_pipes(change, &mut pipes);
+                frame.reset();
+                frame.input = Some(change);
+                for pipe in pipes.iter() {
+                    interpret(program, frame, pipe);
+                }
+                program.index.insert(change.e, change.a, change.v);
             }
-            program.index.insert(change.e, change.a, change.v);
+
+            next_frame = program.rounds.prepare_commits(&mut program.index);
         }
+
     }
 }

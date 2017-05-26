@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block};
 use std::error::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputType {
+    Bind,
+    Commit,
+}
+
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
     Pipe,
@@ -23,8 +29,8 @@ pub enum Node<'a> {
     Equality {left:Box<Node<'a>>, right:Box<Node<'a>>},
     Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Record(Option<String>, Vec<Node<'a>>),
-    OutputRecord(Option<String>, Vec<Node<'a>>),
-    RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str},
+    OutputRecord(Option<String>, Vec<Node<'a>>, OutputType),
+    RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str, output_type:OutputType},
     Search(Vec<Node<'a>>),
     Bind(Vec<Node<'a>>),
     Commit(Vec<Node<'a>>),
@@ -134,7 +140,7 @@ impl<'a> Node<'a> {
                 *var = Some(var_name);
                 Some(reg)
             },
-            &mut Node::OutputRecord(ref mut var, ref mut attrs) => {
+            &mut Node::OutputRecord(ref mut var, ref mut attrs, ..) => {
                 for attr in attrs {
                     attr.gather_equalities(comp);
                 }
@@ -156,7 +162,7 @@ impl<'a> Node<'a> {
             &mut Node::MutatingAttributeAccess(ref items) => {
                 None
             },
-            &mut Node::RecordUpdate {ref mut record, ref op, ref mut value} => {
+            &mut Node::RecordUpdate {ref mut record, ref op, ref mut value, ..} => {
                 record.gather_equalities(comp);
                 value.gather_equalities(comp);
                 None
@@ -307,12 +313,13 @@ impl<'a> Node<'a> {
                 };
                 Some(reg)
             },
-            &Node::OutputRecord(ref var, ref attrs) => {
+            &Node::OutputRecord(ref var, ref attrs, ref output_type) => {
                 let reg = if let &Some(ref name) = var {
                     comp.get_value(name)
                 } else {
                     panic!("Record missing a var {:?}", var)
                 };
+                let commit = *output_type == OutputType::Commit;
                 let mut identity_contributing = true;
                 let mut identity_attrs = vec![];
                 for attr in attrs {
@@ -329,12 +336,12 @@ impl<'a> Node<'a> {
                     if identity_contributing {
                         identity_attrs.push(v);
                     }
-                    comp.constraints.push(Constraint::Insert{e:reg, a, v, commit: false});
+                    comp.constraints.push(Constraint::Insert{e:reg, a, v, commit});
                 };
                 comp.constraints.push(make_function("gen_id", identity_attrs, reg));
                 Some(reg)
             },
-            &Node::RecordUpdate {ref record, ref op, ref value} => {
+            &Node::RecordUpdate {ref record, ref op, ref value, ref output_type} => {
                 // @TODO: compile attribute access correctly
                 let (reg, attr) = match **record {
                     Node::MutatingAttributeAccess(ref items) => {
@@ -346,6 +353,7 @@ impl<'a> Node<'a> {
                     },
                     _ => panic!("Invalid record on {:?}", self)
                 };
+                let commit = *output_type == OutputType::Commit;
                 let ref val = **value;
                 let (a, v) = match (attr, val) {
                     (None, &Node::Tag(t)) => { (comp.interner.string("tag"), comp.interner.string(t)) },
@@ -354,7 +362,7 @@ impl<'a> Node<'a> {
                     },
                     _ => { panic!("Invalid {:?}", self) }
                 };
-                comp.constraints.push(Constraint::Insert{e:reg, a, v, commit: false});
+                comp.constraints.push(Constraint::Insert{e:reg, a, v, commit});
                 Some(reg)
             },
             &Node::Search(ref statements) => {
@@ -574,26 +582,26 @@ named!(equality<Node<'a>>,
            right: alt_complete!(expr | record) >>
            (Node::Equality {left:Box::new(left), right:Box::new(right)})));
 
-named!(output_attribute_equality<Node<'a>>,
+named_args!(output_attribute_equality<'a>(output_type:OutputType) <Node<'a>>,
        do_parse!(
            attr: identifier >>
            sp!(alt!(tag!(":") | tag!("="))) >>
-           value: alt_complete!(output_record | expr) >>
+           value: alt_complete!(apply!(output_record, output_type) | expr) >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
-named!(output_attribute<Node<'a>>,
+named_args!(output_attribute<'a>(output_type:OutputType) <Node<'a>>,
        sp!(alt_complete!(
                hashtag |
-               output_attribute_equality |
+               apply!(output_attribute_equality, output_type) |
                tag!("|") => { |v:&[u8]| Node::Pipe } |
                identifier => { |v:&'a str| Node::Attribute(v) })));
 
-named!(output_record<Node<'a>>,
+named_args!(output_record<'a>(output_type:OutputType) <Node<'a>>,
        do_parse!(
            tag!("[") >>
-           attrs: many0!(output_attribute) >>
+           attrs: many0!(apply!(output_attribute, output_type)) >>
            tag!("]") >>
-           (Node::OutputRecord(None, attrs))));
+           (Node::OutputRecord(None, attrs, output_type))));
 
 named!(attribute_access<Node<'a>>,
        do_parse!(start: identifier >>
@@ -627,12 +635,20 @@ named!(mutating_record_reference<Node<'a>>,
                mutating_attribute_access |
                identifier => { |v:&'a str| Node::Variable(v) })));
 
-named!(record_update<Node<'a>>,
+named!(bind_update<Node<'a>>,
+       do_parse!(
+           record: mutating_record_reference >>
+           op: tag!("+=") >>
+           value: alt_complete!(expr | apply!(output_record, OutputType::Bind) | hashtag) >>
+           (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Bind })));
+
+named!(commit_update<Node<'a>>,
        do_parse!(
            record: mutating_record_reference >>
            op: alt_complete!(tag!(":=") | tag!("+=") | tag!("-=")) >>
-           value: alt_complete!(expr | output_record | hashtag) >>
-           (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value) })));
+           value: alt_complete!(expr | apply!(output_record, OutputType::Commit) | hashtag) >>
+           (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Commit })));
+
 
 named!(search_section<Node<'a>>,
        do_parse!(
@@ -648,8 +664,8 @@ named!(bind_section<Node<'a>>,
        do_parse!(
            sp!(tag!("bind")) >>
            items: many1!(sp!(alt_complete!(
-                       output_record |
-                       record_update
+                       apply!(output_record, OutputType::Bind) |
+                       bind_update
                        ))) >>
            (Node::Bind(items))));
 
@@ -657,8 +673,8 @@ named!(commit_section<Node<'a>>,
        do_parse!(
            sp!(tag!("commit")) >>
            items: many1!(sp!(alt_complete!(
-                       output_record |
-                       record_update
+                       apply!(output_record, OutputType::Commit) |
+                       commit_update
                        ))) >>
            (Node::Commit(items))));
 
@@ -690,9 +706,9 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
         _ => { println!("Failed: {:?}", parsed); }
     }
 
-    // for c in comp.constraints.iter() {
-    //     println!("{:?}", c);
-    // }
+    for c in comp.constraints.iter() {
+        println!("{:?}", c);
+    }
 
     Block { name: name.to_string(), constraints:comp.constraints, pipes: vec![] }
 }
