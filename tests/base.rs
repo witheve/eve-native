@@ -72,3 +72,18 @@ test!(base_bind_plus, {
     commit
         [#foo woah: 1000]
 });
+
+test!(base_no_scans, {
+    search
+        2 = 1 + 1
+    bind
+        [#success]
+});
+
+test!(base_no_scans_fail, {
+    search
+        x = 1 + 1
+        x != 3
+    bind
+        [#success]
+});
