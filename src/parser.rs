@@ -1,9 +1,11 @@
 
 use nom::{digit, alphanumeric, anychar, IResult, Err};
 use std::str::{self, FromStr};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block};
 use std::error::Error;
+use std::io::prelude::*;
+use std::fs::File;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputType {
@@ -29,6 +31,8 @@ pub enum Node<'a> {
     Equality {left:Box<Node<'a>>, right:Box<Node<'a>>},
     Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Record(Option<String>, Vec<Node<'a>>),
+    RecordSet(Vec<Node<'a>>),
+    RecordFunction {result:Option<String>, op:&'a str, params:Vec<Node<'a>>},
     OutputRecord(Option<String>, Vec<Node<'a>>, OutputType),
     RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str, output_type:OutputType},
     Search(Vec<Node<'a>>),
@@ -36,6 +40,7 @@ pub enum Node<'a> {
     Commit(Vec<Node<'a>>),
     Project(Vec<Node<'a>>),
     Block{search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
+    Doc { file:String, blocks:Vec<Node<'a>> }
 }
 
 impl<'a> Node<'a> {
@@ -43,8 +48,13 @@ impl<'a> Node<'a> {
     pub fn unify(&mut self, comp:&mut Compilation) {
         self.gather_equalities(comp);
         let mut values:HashMap<Field, Field> = HashMap::new();
+        let mut provided = HashSet::new();
         for v in comp.vars.values() {
-            values.insert(Field::Register(*v), Field::Register(*v));
+            let field = Field::Register(*v);
+            values.insert(field, field);
+            if comp.provided_registers.contains(&field) {
+                provided.insert(field);
+            }
         }
         let mut changed = true;
         // go in rounds and try to unify everything
@@ -57,18 +67,26 @@ impl<'a> Node<'a> {
                     (Field::Register(l_reg), Field::Register(r_reg)) => {
                         if l_reg < r_reg {
                             values.insert(r, left_value.clone());
+                            if provided.contains(&left_value) {
+                                provided.insert(r);
+                            }
                             changed = true;
                         } else if r_reg < l_reg {
                             values.insert(l, right_value.clone());
+                            if provided.contains(&right_value) {
+                                provided.insert(l);
+                            }
                             changed = true;
                         }
                     },
                     (Field::Register(_), other) => {
                         values.insert(l, other.clone());
+                        provided.insert(l);
                         changed = true;
                     },
                     (other, Field::Register(_)) => {
                         values.insert(r, other.clone());
+                        provided.insert(r);
                         changed = true;
                     },
                     (a, b) => { if a != b { panic!("Invalid equality {:?} != {:?}", a, b); } },
@@ -93,6 +111,7 @@ impl<'a> Node<'a> {
         }
         comp.reg_count = real_registers.len();
         comp.var_values = final_map;
+        comp.provided_registers = provided;
     }
 
     pub fn gather_equalities(&mut self, comp:&mut Compilation) -> Option<Field> {
@@ -123,12 +142,30 @@ impl<'a> Node<'a> {
                 comp.equalities.push((l,r));
                 None
             },
-            &mut Node::Infix {ref mut result, ref left, ref right, ..} => {
+            &mut Node::Infix {ref mut result, ref mut left, ref mut right, ..} => {
+                left.gather_equalities(comp);
+                right.gather_equalities(comp);
                 let result_name = format!("__eve_infix{}", comp.id);
                 comp.id += 1;
                 let reg = comp.get_register(&result_name);
                 *result = Some(result_name);
                 Some(reg)
+            },
+            &mut Node::RecordFunction {ref mut result, ref op, ref mut params} => {
+                for param in params {
+                    param.gather_equalities(comp);
+                }
+                let result_name = format!("__eve_infix{}", comp.id);
+                comp.id += 1;
+                let reg = comp.get_register(&result_name);
+                *result = Some(result_name);
+                Some(reg)
+            },
+            &mut Node::RecordSet(ref mut records) => {
+                for record in records {
+                    record.gather_equalities(comp);
+                }
+                None
             },
             &mut Node::Record(ref mut var, ref mut attrs) => {
                 for attr in attrs {
@@ -163,8 +200,12 @@ impl<'a> Node<'a> {
                 None
             },
             &mut Node::RecordUpdate {ref mut record, ref op, ref mut value, ..} => {
-                record.gather_equalities(comp);
-                value.gather_equalities(comp);
+                let left = record.gather_equalities(comp);
+                let right = value.gather_equalities(comp);
+                if op == &"<-" {
+                    comp.provide(right.unwrap());
+                    comp.equalities.push((left.unwrap(), right.unwrap()));
+                }
                 None
             },
             &mut Node::Search(ref mut statements) => {
@@ -208,7 +249,7 @@ impl<'a> Node<'a> {
             &Node::Float(v) => { Some(comp.interner.number(v)) },
             &Node::RawString(v) => { Some(comp.interner.string(v)) },
             &Node::Variable(v) => { Some(comp.get_value(v)) },
-            &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
+            // &Node::AttributeEquality(a, ref v) => { v.compile(comp) },
             &Node::AttributeAccess(ref items) => {
                 let mut final_var = "attr_access".to_string();
                 let mut parent = comp.get_value(items[0]);
@@ -280,6 +321,34 @@ impl<'a> Node<'a> {
                     panic!("Infix without a result assigned {:?}", self);
                 }
             },
+            &Node::RecordFunction { ref op, ref result, ref params} => {
+                if let &Some(ref name) = result {
+                    let mut out_reg = comp.get_register(name);
+                    let out_value = comp.get_value(name);
+                    if let Field::Register(_) = out_value {
+                        out_reg = out_value;
+                    } else {
+                        comp.constraints.push(make_filter("=", out_reg, out_value));
+                    }
+                    let mut cur_params = vec![];
+                    for param in params {
+                        let v = match param {
+                            &Node::Attribute(a) => {
+                                comp.get_value(a)
+                            }
+                            &Node::AttributeEquality(a, ref v) => {
+                                v.compile(comp).unwrap()
+                            }
+                            _ => { panic!("invalid function param: {:?}", param) }
+                        };
+                        cur_params.push(v);
+                    }
+                    comp.constraints.push(make_function(op, cur_params, out_reg));
+                    Some(out_reg)
+                } else {
+                    panic!("Function without a result assigned {:?}", self);
+                }
+            },
             &Node::Equality {ref left, ref right} => {
                 left.compile(comp);
                 right.compile(comp);
@@ -295,7 +364,19 @@ impl<'a> Node<'a> {
                     let (a, v) = match attr {
                         &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
                         &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
-                        &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
+                        &Node::AttributeEquality(a, ref v) => {
+                            let result_a = comp.interner.string(a);
+                            let result = if let Node::RecordSet(ref records) = **v {
+                                for record in records[1..].iter() {
+                                    let cur_v = record.compile(comp).unwrap();
+                                    comp.constraints.push(make_scan(reg, result_a, cur_v));
+                                }
+                                records[0].compile(comp).unwrap()
+                            } else {
+                                v.compile(comp).unwrap()
+                            };
+                            (result_a, result)
+                        },
                         &Node::AttributeInequality {ref attribute, ref op, ref right } => {
                             let reg = comp.get_value(attribute);
                             let right_value = right.compile(comp);
@@ -314,8 +395,8 @@ impl<'a> Node<'a> {
                 Some(reg)
             },
             &Node::OutputRecord(ref var, ref attrs, ref output_type) => {
-                let reg = if let &Some(ref name) = var {
-                    comp.get_value(name)
+                let (reg, needs_id) = if let &Some(ref name) = var {
+                    (comp.get_value(name), !comp.is_provided(name))
                 } else {
                     panic!("Record missing a var {:?}", var)
                 };
@@ -330,7 +411,19 @@ impl<'a> Node<'a> {
                     let (a, v) = match attr {
                         &Node::Tag(t) => { (comp.interner.string("tag"), comp.interner.string(t)) },
                         &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
-                        &Node::AttributeEquality(a, ref v) => { (comp.interner.string(a), v.compile(comp).unwrap()) },
+                        &Node::AttributeEquality(a, ref v) => {
+                            let result_a = comp.interner.string(a);
+                            let result = if let Node::RecordSet(ref records) = **v {
+                                for record in records[1..].iter() {
+                                    let cur_v = record.compile(comp).unwrap();
+                                    comp.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
+                                }
+                                records[0].compile(comp).unwrap()
+                            } else {
+                                v.compile(comp).unwrap()
+                            };
+                            (result_a, result)
+                        },
                         _ => { panic!("TODO") }
                     };
                     if identity_contributing {
@@ -338,7 +431,9 @@ impl<'a> Node<'a> {
                     }
                     comp.constraints.push(Constraint::Insert{e:reg, a, v, commit});
                 };
-                comp.constraints.push(make_function("gen_id", identity_attrs, reg));
+                if needs_id {
+                    comp.constraints.push(make_function("gen_id", identity_attrs, reg));
+                }
                 Some(reg)
             },
             &Node::RecordUpdate {ref record, ref op, ref value, ref output_type} => {
@@ -360,9 +455,20 @@ impl<'a> Node<'a> {
                     (Some(attr), v) => {
                         (comp.interner.string(attr), v.compile(comp).unwrap())
                     },
+                    (None, &Node::OutputRecord(..)) => {
+                        match op {
+                            &"<-" => {
+                                val.compile(comp);
+                                (Field::Value(0), Field::Value(0))
+                            }
+                            _ => panic!("Invalid {:?}", self)
+                        }
+                    }
                     _ => { panic!("Invalid {:?}", self) }
                 };
-                comp.constraints.push(Constraint::Insert{e:reg, a, v, commit});
+                if a != Field::Value(0) && v != Field::Value(0) {
+                    comp.constraints.push(Constraint::Insert{e:reg, a, v, commit});
+                }
                 Some(reg)
             },
             &Node::Search(ref statements) => {
@@ -407,6 +513,7 @@ impl<'a> Node<'a> {
 pub struct Compilation<'a> {
     vars: HashMap<String, usize>,
     var_values: HashMap<Field, Field>,
+    provided_registers: HashSet<Field>,
     interner: &'a mut Interner,
     constraints: Vec<Constraint>,
     equalities: Vec<(Field, Field)>,
@@ -416,7 +523,7 @@ pub struct Compilation<'a> {
 
 impl<'a> Compilation<'a> {
     pub fn new(interner: &'a mut Interner) -> Compilation<'a> {
-        Compilation { vars:HashMap::new(), var_values:HashMap::new(), interner, constraints:vec![], equalities:vec![], id:0, reg_count:0 }
+        Compilation { vars:HashMap::new(), var_values:HashMap::new(), provided_registers:HashSet::new(), interner, constraints:vec![], equalities:vec![], id:0, reg_count:0 }
     }
 
     pub fn get_register(&mut self, name: &str) -> Field {
@@ -437,6 +544,15 @@ impl<'a> Compilation<'a> {
             self.reg_count += 1;
         }
         val
+    }
+
+    pub fn provide(&mut self, reg:Field) {
+        self.provided_registers.insert(reg);
+    }
+
+    pub fn is_provided(&mut self, name:&str) -> bool {
+        let reg = self.get_register(name);
+        self.provided_registers.contains(&reg)
     }
 }
 
@@ -509,7 +625,9 @@ named!(value<Node<'a>>,
        sp!(alt_complete!(
                number |
                string |
-               record_reference
+               record_function |
+               record_reference |
+               delimited!(tag!("("), expr, tag!(")"))
                )));
 
 named!(expr<Node<'a>>,
@@ -528,16 +646,20 @@ named!(hashtag<Node>,
 named!(attribute_inequality<Node<'a>>,
        do_parse!(
            attribute: identifier >>
-           op: sp!(alt!(tag!(">=") | tag!("<=") | tag!("!=") | tag!("<") | tag!(">") | tag!("contains") | tag!("!contains"))) >>
+           op: sp!(alt_complete!(tag!(">=") | tag!("<=") | tag!("!=") | tag!("<") | tag!(">") | tag!("contains") | tag!("!contains"))) >>
            right: expr >>
            (Node::AttributeInequality{attribute, right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
+named!(record_set<Node<'a>>,
+       do_parse!(
+           records: many1!(sp!(record)) >>
+           (Node::RecordSet(records))));
 
 named!(attribute_equality<Node<'a>>,
        do_parse!(
            attr: identifier >>
-           sp!(alt!(tag!(":") | tag!("="))) >>
-           value: alt_complete!(record | expr) >>
+           sp!(alt_complete!(tag!(":") | tag!("="))) >>
+           value: alt_complete!(record_set | expr) >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
 named!(attribute<Node<'a>>,
@@ -557,23 +679,33 @@ named!(record<Node<'a>>,
 named!(inequality<Node<'a>>,
        do_parse!(
            left: expr >>
-           op: sp!(alt!(tag!(">=") | tag!("<=") | tag!("!=") | tag!("<") | tag!(">") | tag!("contains") | tag!("!contains"))) >>
+           op: sp!(alt_complete!(tag!(">=") | tag!("<=") | tag!("!=") | tag!("<") | tag!(">") | tag!("contains") | tag!("!contains"))) >>
            right: expr >>
            (Node::Inequality{left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
 named!(infix_addition<Node<'a>>,
        do_parse!(
            left: alt_complete!(infix_multiplication | value) >>
-           op: sp!(alt!(tag!("+") | tag!("-"))) >>
+           op: sp!(alt_complete!(tag!("+") | tag!("-"))) >>
            right: expr >>
            (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
 named!(infix_multiplication<Node<'a>>,
        do_parse!(
            left: value >>
-           op: sp!(alt!(tag!("*") | tag!("/"))) >>
+           op: sp!(alt_complete!(tag!("*") | tag!("/"))) >>
            right: alt_complete!(infix_multiplication | value) >>
            (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
+
+named!(record_function<Node<'a>>,
+       do_parse!(
+          op: identifier >>
+          tag!("[") >>
+          params: many0!(alt_complete!(
+                    attribute_equality |
+                    identifier => { |v:&'a str| Node::Attribute(v) })) >>
+          tag!("]") >>
+          (Node::RecordFunction {result: None, op, params})));
 
 named!(equality<Node<'a>>,
        do_parse!(
@@ -582,11 +714,16 @@ named!(equality<Node<'a>>,
            right: alt_complete!(expr | record) >>
            (Node::Equality {left:Box::new(left), right:Box::new(right)})));
 
+named_args!(output_record_set<'a>(output_type:OutputType) <Node<'a>>,
+       do_parse!(
+           records: many1!(sp!(apply!(output_record, output_type))) >>
+           (Node::RecordSet(records))));
+
 named_args!(output_attribute_equality<'a>(output_type:OutputType) <Node<'a>>,
        do_parse!(
            attr: identifier >>
-           sp!(alt!(tag!(":") | tag!("="))) >>
-           value: alt_complete!(apply!(output_record, output_type) | expr) >>
+           sp!(alt_complete!(tag!(":") | tag!("="))) >>
+           value: alt_complete!(apply!(output_record_set, output_type) | expr) >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
 named_args!(output_attribute<'a>(output_type:OutputType) <Node<'a>>,
@@ -638,15 +775,15 @@ named!(mutating_record_reference<Node<'a>>,
 named!(bind_update<Node<'a>>,
        do_parse!(
            record: mutating_record_reference >>
-           op: tag!("+=") >>
-           value: alt_complete!(expr | apply!(output_record, OutputType::Bind) | hashtag) >>
+           op: sp!(alt_complete!(tag!("+=") | tag!("<-"))) >>
+           value: alt_complete!(apply!(output_record, OutputType::Bind) | expr | hashtag) >>
            (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Bind })));
 
 named!(commit_update<Node<'a>>,
        do_parse!(
            record: mutating_record_reference >>
-           op: alt_complete!(tag!(":=") | tag!("+=") | tag!("-=")) >>
-           value: alt_complete!(expr | apply!(output_record, OutputType::Commit) | hashtag) >>
+           op: sp!(alt_complete!(tag!(":=") | tag!("+=") | tag!("-=") | tag!("<-"))) >>
+           value: alt_complete!(apply!(output_record, OutputType::Commit) | expr | hashtag) >>
            (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Commit })));
 
 
@@ -665,7 +802,7 @@ named!(bind_section<Node<'a>>,
            sp!(tag!("bind")) >>
            items: many1!(sp!(alt_complete!(
                        apply!(output_record, OutputType::Bind) |
-                       bind_update
+                       complete!(bind_update)
                        ))) >>
            (Node::Bind(items))));
 
@@ -674,7 +811,7 @@ named!(commit_section<Node<'a>>,
            sp!(tag!("commit")) >>
            items: many1!(sp!(alt_complete!(
                        apply!(output_record, OutputType::Commit) |
-                       commit_update
+                       complete!(commit_update)
                        ))) >>
            (Node::Commit(items))));
 
@@ -687,12 +824,40 @@ named!(project_section<Node<'a>>,
 named!(block<Node<'a>>,
        sp!(do_parse!(
                search: opt!(search_section) >>
-               update: alt_complete!(
-                   bind_section |
-                   commit_section |
-                   project_section
-                   ) >>
+               update: alt_complete!( bind_section | commit_section | project_section ) >>
                (Node::Block {search:Box::new(search), update:Box::new(update)}))));
+
+named!(embedded_block<Node<'a>>,
+       sp!(alt_complete!(
+               delimited!(tag!("~~~"), block, tag!("~~~")) |
+               delimited!(tag!("```"), block, tag!("```")))));
+
+named!(surrounded_block<Option<Node<'a>>>,
+       sp!(do_parse!(
+               take_until_s!("~~~") >>
+               block: opt!(embedded_block) >>
+               (block))));
+
+named!(test<Option<(&'a str, Node<'a>)>>,
+       sp!(do_parse!(
+               res: map_res!(take_until_s!("~~~"), str::from_utf8) >>
+               tag!("~~~") >>
+               block: sp!(block) >>
+               sp!(tag!("~~~")) >>
+               (Some((res, block))))));
+
+named!(markdown<Node<'a>>,
+       sp!(do_parse!(
+               maybe_blocks: many1!(surrounded_block) >>
+               ({
+                   let mut blocks = vec![];
+                   for block in maybe_blocks {
+                       if let Some(v) = block {
+                           blocks.push(v.clone());
+                       }
+                   }
+                   Node::Doc { file:"foo.eve".to_string(), blocks}
+               }))));
 
 pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
     let parsed = block(content.as_bytes());
@@ -713,19 +878,57 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
     Block { name: name.to_string(), constraints:comp.constraints, pipes: vec![] }
 }
 
+fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
+    let mut file = File::open(path).expect("Unable to open the file");
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).expect("Unable to read the file");
+    let res = markdown(contents.as_bytes());
+    if let IResult::Done(left, mut cur) = res {
+        if let Node::Doc { ref mut blocks, .. } = cur {
+            let interner = &mut program.interner;
+            let mut program_blocks = vec![];
+            let mut ix = 0;
+            for block in blocks {
+                println!("\n\nBLOCK!");
+                println!("{:?}\n", block);
+                ix += 1;
+                let mut comp = Compilation::new(interner);
+                block.unify(&mut comp);
+                block.compile(&mut comp);
+                for c in comp.constraints.iter() {
+                    println!("{:?}", c);
+                }
+                program_blocks.push(Block { name: format!("{}|block|{}", path, ix), constraints:comp.constraints, pipes: vec![] });
+            }
+            program_blocks
+        } else {
+            panic!("Got a non-doc parse??");
+        }
+    } else if let IResult::Error(Err::Position(err, pos)) = res {
+        println!("ERROR: {:?}", err.description());
+        println!("{:?}", str::from_utf8(pos));
+        panic!("Failed to parse");
+    } else {
+        panic!("Failed to parse");
+    }
+}
+
 #[test]
 fn parser_coolness() {
-    // println!("{:?}", expr(b"3 * 4 + 5 * 6"));
+    let mut program = Program::new();
+    parse_file(&mut program, "/users/ibdknox/scratch/eve-starter/programs/test.eve");
+    // let res = commit_update(b"foo.hand += [asdf: 3]");
+    // println!("{:?}", res);
     // let res = inequality(b"woah += 10");
     // if let IResult::Error(Err::Position(err, pos)) = res {
     //     println!("{:?}", err);
     //     println!("{:?}", err.description());
     //     println!("{:?}", str::from_utf8(pos));
     // };
-    let mut program = Program::new();
-    program.block("simple block", "search f = [#foo woah] bind [#bar baz: [#zomg]]");
-    let mut txn = Transaction::new();
-    txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
-    txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
-    txn.exec(&mut program);
+    // let mut program = Program::new();
+    // program.block("simple block", "search f = [#foo woah] bind [#bar baz: [#zomg]]");
+    // let mut txn = Transaction::new();
+    // txn.input(program.interner.number_id(1.0), program.interner.string_id("tag"), program.interner.string_id("foo"), 1);
+    // txn.input(program.interner.number_id(1.0), program.interner.string_id("woah"), program.interner.number_id(1000.0), 1);
+    // txn.exec(&mut program);
 }

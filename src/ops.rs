@@ -744,6 +744,8 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "-" => subtract,
         "*" => multiply,
         "/" => divide,
+        "math/sin" => math_sin,
+        "math/cos" => math_cos,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -833,6 +835,27 @@ binary_math!(add, +);
 binary_math!(subtract, -);
 binary_math!(multiply, *);
 binary_math!(divide, /);
+
+
+pub fn math_sin(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.sin()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_cos(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.cos()))
+        },
+        _ => { None }
+    }
+}
 
 pub fn concat(params: Vec<&Internable>) -> Option<Internable> {
     let mut result = String::new();
