@@ -7,6 +7,21 @@ use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
 
+
+lazy_static! {
+    static ref FunctionInfo: HashMap<String, HashMap<String, usize>> = {
+        let mut m = HashMap::new();
+        let mut info = HashMap::new();
+        info.insert("degrees".to_string(), 0);
+        m.insert("math/sin".to_string(), info);
+        let mut info2 = HashMap::new();
+        info2.insert("degrees".to_string(), 0);
+        m.insert("math/cos".to_string(), info2);
+        m
+    };
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputType {
     Bind,
@@ -330,18 +345,19 @@ impl<'a> Node<'a> {
                     } else {
                         comp.constraints.push(make_filter("=", out_reg, out_value));
                     }
-                    let mut cur_params = vec![];
+                    let info = FunctionInfo.get(*op).unwrap();
+                    let mut cur_params = vec![Field::Value(0); info.len() - 1];
                     for param in params {
-                        let v = match param {
+                        let (a, v) = match param {
                             &Node::Attribute(a) => {
-                                comp.get_value(a)
+                                (a, comp.get_value(a))
                             }
                             &Node::AttributeEquality(a, ref v) => {
-                                v.compile(comp).unwrap()
+                                (a, v.compile(comp).unwrap())
                             }
                             _ => { panic!("invalid function param: {:?}", param) }
                         };
-                        cur_params.push(v);
+                        cur_params.insert(info[a], v);
                     }
                     comp.constraints.push(make_function(op, cur_params, out_reg));
                     Some(out_reg)

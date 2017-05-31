@@ -18,6 +18,9 @@ extern {}
 #[macro_use]
 extern crate nom;
 
+#[macro_use]
+extern crate lazy_static;
+
 pub mod ops;
 pub mod indexes;
 pub mod hash;
