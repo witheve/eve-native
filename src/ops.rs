@@ -60,7 +60,7 @@ impl Change {
         let a = prog.interner.get_value(self.a).print();
         let mut v = prog.interner.get_value(self.v).print();
         v = if v.contains("|") { format!("<{}>", self.v) } else { v };
-        format!("Change (<{}>, {:?}, {})  {}:{}:{}", prog.interner.get_value(self.e).print(), a, v, self.transaction, self.round, self.count)
+        format!("Change (<{}>, {:?}, {})  {}:{}:{}", self.e, a, v, self.transaction, self.round, self.count)
     }
 }
 
@@ -1681,7 +1681,11 @@ impl Transaction {
                 for pipe in pipes.iter() {
                     interpret(program, frame, pipe);
                 }
-                program.index.insert(change.e, change.a, change.v);
+                if change.count > 0 {
+                    program.index.insert(change.e, change.a, change.v);
+                } else {
+                    program.index.remove(change.e, change.a, change.v);
+                }
             }
 
             next_frame = program.rounds.prepare_commits(&mut program.index);
@@ -1741,7 +1745,11 @@ impl CodeTransaction {
                 for pipe in pipes.iter() {
                     interpret(program, frame, pipe);
                 }
-                program.index.insert(change.e, change.a, change.v);
+                if change.count > 0 {
+                    program.index.insert(change.e, change.a, change.v);
+                } else {
+                    program.index.remove(change.e, change.a, change.v);
+                }
             }
 
             next_frame = program.rounds.prepare_commits(&mut program.index);
