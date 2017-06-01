@@ -96,6 +96,18 @@ impl HashIndexLeaf {
         }
     }
 
+    pub fn remove(&mut self, neue_value:Interned) -> bool {
+        match self {
+            &mut HashIndexLeaf::Single(prev) => {
+                prev == neue_value
+            },
+            &mut HashIndexLeaf::Many(ref mut prev) => {
+                prev.remove(&neue_value);
+                prev.len() == 0
+            },
+        }
+    }
+
     pub fn check(&self, v:Interned) -> bool {
         match self {
             &HashIndexLeaf::Single(cur) => cur == v,
@@ -147,6 +159,34 @@ impl HashIndexLevel {
                 Entry::Vacant(o) => {
                     o.insert(HashIndexLeaf::Single(e));
                 },
+            };
+        }
+        added
+    }
+
+    pub fn remove(&mut self, e:Interned, v:Interned) -> bool {
+        let added = match self.e.entry(e) {
+            Entry::Occupied(mut o) => {
+                let is_empty = o.get_mut().remove(v);
+                if is_empty {
+                    o.remove_entry();
+                }
+                true
+            }
+            Entry::Vacant(o) => {
+                false
+            },
+        };
+        if added {
+            self.size -= 1;
+            match self.v.entry(v) {
+                Entry::Occupied(mut o) => {
+                    let is_empty = o.get_mut().remove(e);
+                    if is_empty {
+                        o.remove_entry();
+                    }
+                }
+                Entry::Vacant(o) => { },
             };
         }
         added
@@ -301,6 +341,31 @@ impl HashIndex {
         added
     }
 
+    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+        let removed = match self.eavs.entry((e,a,v)) {
+            Entry::Occupied(mut entry) => {
+                if !entry.get().rounds.iter().any(|x| *x != 0) {
+                    entry.remove_entry();
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(o) => { false },
+        };
+        if removed {
+            self.size -= 1;
+            match self.a.entry(a) {
+                Entry::Occupied(mut o) => {
+                    let mut level = o.get_mut();
+                    level.remove(e, v);
+                }
+                Entry::Vacant(o) => { },
+            };
+        }
+        removed
+    }
+
     #[inline(never)]
     pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
         if e > 0 && a > 0 && v > 0 {
@@ -364,10 +429,16 @@ impl HashIndex {
             let ref mut counts = info.rounds;
             ensure_len(counts, (round + 1) as usize);
             counts[round as usize] += count;
-            !info.inserted
+            // if the passed count is less than 0, this is actually a remove and we should send it
+            // through that path
+            !info.inserted || count < 0
         };
         if needs_insert {
-            self.insert(e,a,v);
+            if count > 0 {
+                self.insert(e,a,v);
+            } else if count < 0 {
+                self.remove(e,a,v);
+            }
         }
     }
 

@@ -37,11 +37,11 @@ fn bench_simple_gj(b:&mut Bencher) {
         // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("tag"), v: program.interner.string("html/div")},
         // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("person"), v: register(0)},
         // Constraint::Insert {e: program.interner.string("foo"), a: program.interner.string("text"), v: register(1)},
-        Constraint::Insert {e: register(3), a: program.interner.string("tag"), v: program.interner.string("html/div")},
-        Constraint::Insert {e: register(3), a: program.interner.string("person"), v: register(0)},
-        Constraint::Insert {e: register(3), a: program.interner.string("text"), v: register(2)},
+        Constraint::Insert {e: register(3), a: program.interner.string("tag"), v: program.interner.string("html/div"), commit: false},
+        Constraint::Insert {e: register(3), a: program.interner.string("person"), v: register(0), commit: false},
+        Constraint::Insert {e: register(3), a: program.interner.string("text"), v: register(2), commit: false},
     ];
-    program.register_block("simple block", Block { name: "simple block".to_string(), constraints, pipes: vec![] });
+    program.register_block(Block::new("simple_block", constraints));
 
         let mut ix = 0;
         let mut txn = Transaction::new();

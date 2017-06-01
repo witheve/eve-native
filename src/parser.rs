@@ -1,4 +1,3 @@
-
 use nom::{digit, alphanumeric, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::{HashMap, HashSet};
@@ -891,10 +890,10 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
         println!("{:?}", c);
     }
 
-    Block { name: name.to_string(), constraints:comp.constraints, pipes: vec![] }
+    Block::new(name, comp.constraints)
 }
 
-fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
+pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
     let mut file = File::open(path).expect("Unable to open the file");
     let mut contents = String::new();
     file.read_to_string(&mut contents).expect("Unable to read the file");
@@ -905,16 +904,16 @@ fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
             let mut program_blocks = vec![];
             let mut ix = 0;
             for block in blocks {
-                println!("\n\nBLOCK!");
-                println!("{:?}\n", block);
+                // println!("\n\nBLOCK!");
+                // println!("{:?}\n", block);
                 ix += 1;
                 let mut comp = Compilation::new(interner);
                 block.unify(&mut comp);
                 block.compile(&mut comp);
-                for c in comp.constraints.iter() {
-                    println!("{:?}", c);
-                }
-                program_blocks.push(Block { name: format!("{}|block|{}", path, ix), constraints:comp.constraints, pipes: vec![] });
+                // for c in comp.constraints.iter() {
+                //     println!("{:?}", c);
+                // }
+                program_blocks.push(Block::new(&format!("{}|block|{}", path, ix), comp.constraints));
             }
             program_blocks
         } else {
@@ -932,7 +931,10 @@ fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
 #[test]
 fn parser_coolness() {
     let mut program = Program::new();
-    parse_file(&mut program, "/users/ibdknox/scratch/eve-starter/programs/test.eve");
+    let blocks = parse_file(&mut program, "/users/ibdknox/scratch/eve-starter/programs/test.eve");
+    for block in blocks {
+        program.raw_block(block);
+    }
     // let res = commit_update(b"foo.hand += [asdf: 3]");
     // println!("{:?}", res);
     // let res = inequality(b"woah += 10");

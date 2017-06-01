@@ -21,7 +21,11 @@ extern crate nom;
 #[macro_use]
 extern crate lazy_static;
 
+extern crate tokio_timer;
+extern crate futures;
+
 pub mod ops;
 pub mod indexes;
 pub mod hash;
 pub mod parser;
+pub mod watcher;

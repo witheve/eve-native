@@ -4,7 +4,7 @@ use eve::ops::{EstimateIterPool, RoundHolder, Change};
 use std::collections::HashMap;
 
 #[test]
-fn basic_hash_index() {
+fn index_insert_check() {
     let mut index = HashIndex::new();
     index.insert(1,1,1);
     index.insert(1,2,1);
@@ -18,7 +18,7 @@ fn basic_hash_index() {
 }
 
 #[test]
-fn basic2() {
+fn index_insert_check2() {
     let mut index = HashIndex::new();
     index.insert(5,3,8);
     index.insert(9,3,8);
@@ -28,7 +28,7 @@ fn basic2() {
 }
 
 #[test]
-fn find_entities() {
+fn index_find_entities() {
     let mut index = HashIndexLevel::new();
     index.insert(1,1);
     index.insert(2,1);
@@ -41,7 +41,35 @@ fn find_entities() {
 }
 
 #[test]
-fn find_values() {
+fn index_level_remove() {
+    let mut index = HashIndexLevel::new();
+    index.insert(1,1);
+    index.insert(2,1);
+    assert!(index.check(1,1));
+    assert!(index.check(2,1));
+    assert!(!index.check(3,3));
+    index.remove(1,1);
+    assert!(!index.check(1,1));
+    index.remove(2,1);
+    assert!(!index.check(2,1));
+}
+
+#[test]
+fn index_remove() {
+    let mut index = HashIndex::new();
+    index.insert(1,1,1);
+    index.insert(2,1,1);
+    assert!(index.check(1,1,1));
+    assert!(index.check(2,1,1));
+    assert!(!index.check(3,3,3));
+    index.remove(1,1,1);
+    assert!(!index.check(1,1,1));
+    index.remove(2,1,1);
+    assert!(!index.check(2,1,1));
+}
+
+#[test]
+fn index_find_values() {
     let mut index = HashIndexLevel::new();
     index.insert(1,1);
     index.insert(1,2);
@@ -61,7 +89,7 @@ fn find_values() {
 }
 
 #[test]
-fn basic_propose() {
+fn index_propose() {
     let mut index = HashIndex::new();
     let mut pool = EstimateIterPool::new();
     index.insert(1,1,1);

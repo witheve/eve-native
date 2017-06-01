@@ -22,10 +22,14 @@ extern crate nom;
 #[macro_use]
 extern crate lazy_static;
 
+extern crate tokio_timer;
+extern crate futures;
+
 mod ops;
 mod parser;
 mod indexes;
 pub mod hash;
+pub mod watcher;
 
 fn main() {
     // test_lubm()
