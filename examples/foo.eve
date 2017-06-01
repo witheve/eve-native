@@ -1,0 +1,128 @@
+# RevoAce ticketing app
+
+make add ticket form
+submit a ticket
+make chrome
+make recent tickets
+allow editing
+make unsent tickets
+add tacking number and sent
+set packaging status
+
+~~~
+bind
+[#ui/column children:
+  [#section label:"Customer Info"]
+  [#field #text label:"Name" placeholder:"John Smith", value:""]
+  [#field #text label:"Phone" placeholder:"555-555-5555", value:""]
+  [#section label:"Customer Location"]
+  [#field #select label:"Country" placeholder:"Country", value:"US" option:
+    [#option text: "US"]
+    [#option text: "Canada"]]
+  [#field #text label:"Address" placeholder:"123 Apple Lane", value:""]
+  [#field #text label:"City" placeholder:"New York", value:""]
+  [#field #state-select label:"State" placeholder:"State", value:""]
+  [#field #text label:"Zip" placeholder:"12345", value:""]
+  [#field #text label:"Tracking" placeholder:"1234123412341234", value:""]
+  [#section label:"Model Info"]
+  [#field #model-select label:"Model" placeholder:"Select Model", value:""]
+  [#field #textarea label:"Notes" placeholder:"Notes", value:""]
+  [#section label:"Parts"]
+]
+~~~
+
+
+draw sections
+~~~
+search
+  s = [#section label]
+bind
+  s.tag += "ui/row"
+  s.children += [#ui/text text:label]
+~~~
+
+draw text fields
+~~~
+search
+  field = [#field #text label placeholder value]
+bind
+  field.tag += "ui/row"
+  field.children += (
+      [#ui/text text:label],
+      [#ui/input placeholder value],
+  )
+~~~
+
+draw textarea fields
+~~~
+search
+  field = [#field #textarea label placeholder value]
+bind
+  field.tag += "ui/row"
+  field.children += (
+      [#ui/text text:label],
+      [#html/element tagname:"textarea" placeholder value],
+  )
+~~~
+
+draw select fields
+~~~
+search
+  field = [#field #select label placeholder value option]
+bind
+  field.tag += "ui/row"
+  field.children += (
+      [#ui/text text:label],
+      [#html/element field label tagname:"select" | children:
+        [#html/element tagname: "option", value:option.text, text:option.text, sort: option.text]],
+  )
+~~~
+
+draw state select
+~~~
+search
+  field = [#field #state-select value]
+  type = if [#html/element label:"Country" value:"Canada"] then "province"
+         else "state"
+  [tag:type text]
+bind
+  field.tag += "ui/row"
+  field.children += (
+      [#ui/text text:type],
+      [#html/element field tagname:"select" value | children:
+        [#html/element tagname: "option", value:text, text:text, sort:text]],
+  )
+~~~
+
+draw model select
+~~~
+search
+  field = [#field #model-select label placeholder value]
+  region = if [#html/element label:"Country" value:"Canada"] then "Canada"
+         else "US"
+  [#region name:region model: [id]]
+bind
+  field.tag += "ui/row"
+  field.children += (
+      [#ui/text text:label],
+      [#html/element field tagname:"select" value | children:
+        [#html/element tagname: "option", value:"", text:placeholder, sort:"_"]
+        [#html/element tagname: "option", value:id, text:id, sort:id]],
+  )
+~~~
+
+~~~
+bind
+  [#state text:"NY"]
+  [#state text:"CA"]
+  [#province text:"Ontario"]
+  [#province text:"Ottawa"]
+
+  [#region name: "US" model:
+    [#model id: "asdf123"]
+    [#model id: "asdf456"]]
+
+  [#region name: "Canada" model:
+    [#model id: "casd1-c"]
+    [#model id: "casd3-c"]]
+~~~

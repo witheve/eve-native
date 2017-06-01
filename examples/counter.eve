@@ -1,0 +1,62 @@
+# Counter
+
+This program demonstrates:
+
+- responding to events
+- drawing elements on the screen
+- reusing elements programatically
+- extending an element
+
+### Increment a Counter
+
+Each button uses the referenced counter to increment itself. We need to think about two tags to accomplish this goal:
+
+- `#html/event/click` is a record created by the HTML watcher any time a user clicks somewhere within an Eve app.
+- `#ui/button` is a record we'll create a little later on to represent our button. The UI Watcher will helpfully draw it as a graphical button for us.
+
+~~~
+search
+  [#html/event/click element: [#ui/button diff counter]]
+
+commit
+  counter.count := counter.count + diff
+~~~
+
+### Build a Counter
+
+For every `#counter`, we create a `#ui/row` that contains the elements that draw the counter. These rows are added automatically to the root of the DOM, but you could add them to a particular element instead adding them as children to the parent's record.
+
+~~~
+search
+  counter = [#counter count]
+
+bind
+  [#ui/row counter sort: counter.sort style: [flex: "0 0 auto" width: "100px"] children:
+    [#ui/button text: "-" diff: -1 counter]
+    [#ui/text text: count counter style: [padding: "0 6px" flex: 1 text-align: "right"]]
+    [#ui/button text: "+" diff: 1 counter]]
+~~~
+
+Add some counters programatically. To make `n` unique and independent counters, we need to add something to the committed counter that makes it unique. Since `sort` = `{1, 2, 3, 4}`, when we add it to the counter record we get 4 different counters. As an added bonus, we can use it to choose what order to display our counters in. We also add one `#fancy` counter, which is a standard counter with new styling.
+
+~~~
+search
+  sort = math/range[start: 1 stop: 4]
+
+commit
+  [#counter sort count: 0]
+  [#counter #fancy sort: 5 count: 0]
+~~~
+
+### Extend the Counter
+
+This block says: "For every rows with a counter that is tagged fancy, add a style with a black background and pink text". Let's break it down. We search for all `#ui/row`s with a counter attribute. The counter is constrained to be only counters with a `#fancy` tag. Then we bind a new style to each.
+
+~~~
+search
+  container = [#ui/row counter]
+  counter.tag = "fancy"
+
+bind
+  container.style += [background: "black" color: "#FFD0E0"]
+~~~
