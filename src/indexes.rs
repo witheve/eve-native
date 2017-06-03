@@ -545,3 +545,67 @@ impl<'a> Iterator for DistinctIter<'a> {
         }
     }
 }
+
+//-------------------------------------------------------------------------
+// Watch Index
+//-------------------------------------------------------------------------
+
+pub struct WatchIndex {
+    cur: HashMap<Vec<Interned>, Count, MyHasher>,
+    next: HashMap<Vec<Interned>, Count, MyHasher>,
+}
+
+#[derive(Debug)]
+pub struct WatchDiff {
+    adds: Vec<Vec<Interned>>,
+    removes: Vec<Vec<Interned>>,
+}
+
+fn update_watch_count(index:&mut HashMap<Vec<Interned>, Count, MyHasher>, key:Vec<Interned>, count:Count) -> (Count, Count) {
+    match index.entry(key) {
+        Entry::Occupied(mut o) => {
+            let prev = *o.get();
+            let updated = prev + count;
+            if updated != 0 {
+                o.insert(updated);
+            } else {
+                o.remove_entry();
+            }
+            (prev, updated)
+        }
+        Entry::Vacant(mut o) => {
+            o.insert(count);
+            (0, count)
+        }
+    }
+}
+
+impl WatchIndex {
+    pub fn new() -> WatchIndex {
+        WatchIndex { cur: HashMap::default(), next: HashMap::default() }
+    }
+
+    pub fn dirty(&self) -> bool {
+       self.next.len() > 0
+    }
+
+    pub fn insert(&mut self, key: Vec<Interned>, count: Count) {
+        update_watch_count(&mut self.next, key, count);
+    }
+
+    pub fn reconcile(&mut self) -> WatchDiff {
+        let mut adds = vec![];
+        let mut removes = vec![];
+        for (k, v) in self.next.drain() {
+            let cloned = k.clone();
+            let (prev, neue) = update_watch_count(&mut self.cur, k, v);
+            if prev == 0 && neue > 0 {
+                adds.push(cloned);
+            } else if prev > 0 && neue == 0 {
+                removes.push(cloned);
+            }
+        }
+        WatchDiff { adds, removes }
+    }
+}
+

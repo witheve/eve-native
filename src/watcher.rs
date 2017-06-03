@@ -14,14 +14,20 @@ pub fn run_timer() {
     let timer = Timer::default();
 
     // Set a timeout that expires in 500 milliseconds
-    let interval = timer.interval(Duration::from_millis(500));
+    let interval = timer.interval_at(Instant::now(),Duration::from_millis(500));
     println!("int {:?}", interval);
     let foo = interval.for_each(|x| {
         println!("It's time! {:?}", x);
-        future::ok(())
+        future::ok::<(), TimerError>(())
+    }).map_err(|x| {
+        panic!("uh oh");
     });
     let mut core = Core::new().unwrap();
-    core.run(foo);
+    let handle = core.handle();
+    handle.spawn(foo);
+    println!("Should be running");
+    core.turn(None);
+    // core.run(future::ok::<(), TimerError>(()));
 }
 
 

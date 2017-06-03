@@ -53,6 +53,7 @@ pub enum Node<'a> {
     Bind(Vec<Node<'a>>),
     Commit(Vec<Node<'a>>),
     Project(Vec<Node<'a>>),
+    Watch(&'a str, Vec<Node<'a>>),
     Block{search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
     Doc { file:String, blocks:Vec<Node<'a>> }
 }
@@ -241,6 +242,12 @@ impl<'a> Node<'a> {
                 None
             },
             &mut Node::Project(ref mut values) => {
+                for v in values {
+                    v.gather_equalities(comp);
+                };
+                None
+            },
+            &mut Node::Watch(_, ref mut values) => {
                 for v in values {
                     v.gather_equalities(comp);
                 };
@@ -511,6 +518,15 @@ impl<'a> Node<'a> {
                                       .map(|v| if let Some(Field::Register(reg)) = v { reg } else { panic!() })
                                       .collect();
                 comp.constraints.push(Constraint::Project {registers});
+                None
+            },
+            &Node::Watch(ref name, ref values) => {
+                let registers = values.iter()
+                                      .map(|v| v.compile(comp))
+                                      .filter(|v| if let &Some(Field::Register(_)) = v { true } else { false })
+                                      .map(|v| if let Some(Field::Register(reg)) = v { reg } else { panic!() })
+                                      .collect();
+                comp.constraints.push(Constraint::Watch {name:name.to_string(), registers});
                 None
             },
             &Node::Block{ref search, ref update} => {
@@ -836,10 +852,17 @@ named!(project_section<Node<'a>>,
            items: sp!(delimited!(tag!("("), many1!(sp!(expr)) ,tag!(")"))) >>
            (Node::Project(items))));
 
+named!(watch_section<Node<'a>>,
+       do_parse!(
+           sp!(tag!("watch")) >>
+           watcher: sp!(identifier) >>
+           items: sp!(delimited!(tag!("("), many1!(sp!(expr)) ,tag!(")"))) >>
+           (Node::Watch(watcher, items))));
+
 named!(block<Node<'a>>,
        sp!(do_parse!(
                search: opt!(search_section) >>
-               update: alt_complete!( bind_section | commit_section | project_section ) >>
+               update: alt_complete!( bind_section | commit_section | project_section | watch_section ) >>
                (Node::Block {search:Box::new(search), update:Box::new(update)}))));
 
 named!(embedded_block<Node<'a>>,
@@ -931,7 +954,7 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
 #[test]
 fn parser_coolness() {
     let mut program = Program::new();
-    let blocks = parse_file(&mut program, "/users/ibdknox/scratch/eve-starter/programs/test.eve");
+    let blocks = parse_file(&mut program, "examples/test.eve");
     for block in blocks {
         program.raw_block(block);
     }

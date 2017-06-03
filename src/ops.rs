@@ -8,7 +8,7 @@
 
 extern crate time;
 
-use indexes::{HashIndex, DistinctIter, HashIndexIter};
+use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex};
 use parser::{make_block};
 use std::collections::HashMap;
 use std::mem::transmute;
@@ -96,6 +96,7 @@ impl Block {
         let mut get_rounds = vec![];
         let mut outputs = vec![];
         let mut project_constraints = vec![];
+        let mut watch_constraints = vec![];
         let mut registers = 0;
         for (ix_usize, constraint) in self.constraints.iter().enumerate() {
             let ix = ix_usize as u32;
@@ -151,6 +152,9 @@ impl Block {
                 },
                 &Constraint::Project {..} => {
                     project_constraints.push(constraint);
+                }
+                &Constraint::Watch {..} => {
+                    watch_constraints.push(constraint);
                 }
             }
         };
@@ -280,6 +284,14 @@ impl Block {
                             pipe.push(neue);
                         }
                     }
+                }
+            }
+
+            for constraint in watch_constraints.iter() {
+                if let &&Constraint::Watch {ref name, ref registers} = constraint {
+                    last_iter_next -= 1;
+                    let next = if to_solve > 0 {last_iter_next} else { PIPE_FINISHED };
+                    pipe.push(Instruction::Watch {next, registers:registers.iter().map(|x| *x as u32).collect(), name:name.to_string()});
                 }
             }
 
@@ -599,7 +611,7 @@ impl Frame {
 // Instruction
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum Instruction {
     StartBlock { block: usize },
     GetIterator {iterator: u32, bail: i32, constraint: u32},
@@ -611,6 +623,7 @@ pub enum Instruction {
     Bind {next: i32, constraint:u32},
     Commit {next: i32, constraint:u32},
     Project {next: i32, from:u32},
+    Watch { next:i32, registers:Vec<u32>, name:String}
 }
 
 #[inline(never)]
@@ -874,6 +887,17 @@ pub fn project(_: &mut Program, frame: &mut Frame, from:u32, next:i32) -> i32 {
     next
 }
 
+#[inline(never)]
+pub fn watch(program: &mut Program, frame: &mut Frame, name:&str, registers:&Vec<u32>, next:i32) -> i32 {
+    let resolved = registers.iter().map(|x| frame.get_register(*x)).collect();
+    let mut total = 0;
+    for &(_, count) in program.rounds.get_output_rounds().iter() {
+        total += count;
+    }
+    program.watch(name, resolved, total);
+    next
+}
+
 //-------------------------------------------------------------------------
 // Field
 //-------------------------------------------------------------------------
@@ -1004,6 +1028,7 @@ pub enum Constraint {
     RemoveAttribute {e: Field, a: Field},
     RemoveEntity {e: Field, a: Field},
     Project {registers: Vec<usize>},
+    Watch {name: String, registers: Vec<usize>},
 }
 
 impl fmt::Debug for Constraint {
@@ -1013,6 +1038,7 @@ impl fmt::Debug for Constraint {
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
             &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
+            &Constraint::Watch { ref name, ref registers } => { write!(f, "Watch {}{:?}", name, registers) }
             _ => { write!(f, "Constraint ...") }
         }
     }
@@ -1251,6 +1277,9 @@ pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>
             },
             Instruction::Project { from, next } => {
                 project(program, frame, from, next)
+            },
+            Instruction::Watch { ref name, ref registers, next } => {
+                watch(program, frame, name, registers, next)
             },
         }
     };
@@ -1501,6 +1530,7 @@ pub struct Program {
     pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
     block_names: HashMap<String, usize>,
     blocks: Vec<Block>,
+    watch_indexes: HashMap<String, WatchIndex>,
     pub index: HashIndex,
     pub interner: Interner,
     iter_pool: EstimateIterPool,
@@ -1513,8 +1543,9 @@ impl Program {
         let mut interner = Interner::new();
         let rounds = RoundHolder::new();
         let block_names = HashMap::new();
+        let watch_indexes = HashMap::new();
         let blocks = vec![];
-        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, index, iter_pool }
+        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, watch_indexes, index, iter_pool }
     }
 
     pub fn clear(&mut self) {
@@ -1575,6 +1606,11 @@ impl Program {
         let mut txn = CodeTransaction::new();
         txn.exec(self, name, true);
         txn
+    }
+
+    pub fn watch(&mut self, name:&str, resolved:Vec<Interned>, count:Count) {
+        let index = self.watch_indexes.entry(name.to_string()).or_insert_with(|| WatchIndex::new());
+        index.insert(resolved, count);
     }
 
     pub fn get_pipes(&self, input: Change, pipes: &mut Vec<Vec<Instruction>>) {
@@ -1690,6 +1726,11 @@ impl Transaction {
 
             next_frame = program.rounds.prepare_commits(&mut program.index);
         }
+
+        for (name, index) in program.watch_indexes.iter_mut() {
+            let diff = index.reconcile();
+            println!("DIFF {} {:?}", name, diff);
+        }
     }
 
     pub fn clear(&mut self) {
@@ -1755,5 +1796,11 @@ impl CodeTransaction {
             next_frame = program.rounds.prepare_commits(&mut program.index);
         }
 
+        for (name, index) in program.watch_indexes.iter_mut() {
+            if index.dirty() {
+                let diff = index.reconcile();
+                println!("DIFF {} {:?}", name, diff);
+            }
+        }
     }
 }
