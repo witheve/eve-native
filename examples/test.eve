@@ -39,6 +39,6 @@ bind
 search
   t = [#system/timer resolution]
 
-watch system/timer
+watch printer
   (t, resolution)
 ~~~

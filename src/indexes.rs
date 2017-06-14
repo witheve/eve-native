@@ -557,8 +557,8 @@ pub struct WatchIndex {
 
 #[derive(Debug)]
 pub struct WatchDiff {
-    adds: Vec<Vec<Interned>>,
-    removes: Vec<Vec<Interned>>,
+    pub adds: Vec<Vec<Interned>>,
+    pub removes: Vec<Vec<Interned>>,
 }
 
 fn update_watch_count(index:&mut HashMap<Vec<Interned>, Count, MyHasher>, key:Vec<Interned>, count:Count) -> (Count, Count) {

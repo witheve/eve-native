@@ -6,6 +6,32 @@ use self::tokio_core::reactor::Core;
 use tokio_timer::*;
 use futures::*;
 use std::time::*;
+use indexes::{WatchDiff, MyHasher};
+use hash::map::{HashMap};
+use ops::{Internable, Interner};
+use futures::sync::mpsc;
+use std::thread::{self, JoinHandle};
+
+pub trait Watcher {
+    fn on_diff(&self, interner:&Interner, diff:WatchDiff);
+}
+
+pub struct SystemTimerWatcher {
+    listeners: HashMap<Internable, Vec<Internable>, MyHasher>,
+    thread: JoinHandle<()>,
+}
+
+pub struct PrintWatcher {
+
+}
+
+impl Watcher for PrintWatcher {
+    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+        for add in diff.adds {
+            println!("Printer: {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+        }
+    }
+}
 
 pub fn run_timer() {
     // Create a new timer with default settings. While this is the easiest way

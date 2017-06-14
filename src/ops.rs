@@ -16,6 +16,7 @@ use std::collections::hash_map::Entry;
 use std::cmp;
 use std::iter::Iterator;
 use std::fmt;
+use watcher::{Watcher};
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -1531,6 +1532,7 @@ pub struct Program {
     block_names: HashMap<String, usize>,
     blocks: Vec<Block>,
     watch_indexes: HashMap<String, WatchIndex>,
+    watchers: HashMap<String, Box<Watcher>>,
     pub index: HashIndex,
     pub interner: Interner,
     iter_pool: EstimateIterPool,
@@ -1544,8 +1546,9 @@ impl Program {
         let rounds = RoundHolder::new();
         let block_names = HashMap::new();
         let watch_indexes = HashMap::new();
+        let watchers = HashMap::new();
         let blocks = vec![];
-        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, watch_indexes, index, iter_pool }
+        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, watch_indexes, watchers, index, iter_pool }
     }
 
     pub fn clear(&mut self) {
@@ -1611,6 +1614,10 @@ impl Program {
     pub fn watch(&mut self, name:&str, resolved:Vec<Interned>, count:Count) {
         let index = self.watch_indexes.entry(name.to_string()).or_insert_with(|| WatchIndex::new());
         index.insert(resolved, count);
+    }
+
+    pub fn attach(&mut self, name:&str, watcher:Box<Watcher>) {
+        self.watchers.insert(name.to_string(), watcher);
     }
 
     pub fn get_pipes(&self, input: Change, pipes: &mut Vec<Vec<Instruction>>) {
@@ -1800,6 +1807,9 @@ impl CodeTransaction {
             if index.dirty() {
                 let diff = index.reconcile();
                 println!("DIFF {} {:?}", name, diff);
+                if let Some(watcher) = program.watchers.get(name) {
+                    watcher.on_diff(&program.interner, diff);
+                }
             }
         }
     }

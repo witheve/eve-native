@@ -5,6 +5,7 @@ use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter
 use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
+use watcher::{PrintWatcher};
 
 
 lazy_static! {
@@ -955,6 +956,7 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
 fn parser_coolness() {
     let mut program = Program::new();
     let blocks = parse_file(&mut program, "examples/test.eve");
+    program.attach("printer", Box::new(PrintWatcher{}));
     for block in blocks {
         program.raw_block(block);
     }
