@@ -17,6 +17,8 @@ use std::cmp;
 use std::iter::Iterator;
 use std::fmt;
 use watcher::{Watcher};
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -62,6 +64,29 @@ impl Change {
         let mut v = prog.interner.get_value(self.v).print();
         v = if v.contains("|") { format!("<{}>", self.v) } else { v };
         format!("Change (<{}>, {:?}, {})  {}:{}:{}", self.e, a, v, self.transaction, self.round, self.count)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RawChange {
+    pub e: Internable,
+    pub a: Internable,
+    pub v: Internable,
+    pub n: Internable,
+    pub count: Count,
+}
+
+impl RawChange {
+    pub fn to_change(self, interner: &mut Interner) -> Change {
+       Change {
+           e: interner.internable_to_id(self.e),
+           a: interner.internable_to_id(self.a),
+           v: interner.internable_to_id(self.v),
+           n: interner.internable_to_id(self.n),
+           round: 0,
+           transaction: 0,
+           count: self.count,
+       }
     }
 }
 
@@ -925,14 +950,14 @@ pub enum Internable {
 }
 
 impl Internable {
-    fn to_number(intern: &Internable) -> f32 {
+    pub fn to_number(intern: &Internable) -> f32 {
         match intern {
             &Internable::Number(num) => unsafe { transmute::<u32, f32>(num) },
             _ => { panic!("to_number on non-number") }
         }
     }
 
-    fn from_number(num: f32) -> Internable {
+    pub fn from_number(num: f32) -> Internable {
         let value = unsafe { transmute::<f32, u32>(num) };
         Internable::Number(value)
     }
@@ -1536,6 +1561,8 @@ pub struct Program {
     pub index: HashIndex,
     pub interner: Interner,
     iter_pool: EstimateIterPool,
+    pub incoming: Receiver<Vec<RawChange>>,
+    pub outgoing: Sender<Vec<RawChange>>,
 }
 
 impl Program {
@@ -1548,7 +1575,8 @@ impl Program {
         let watch_indexes = HashMap::new();
         let watchers = HashMap::new();
         let blocks = vec![];
-        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, watch_indexes, watchers, index, iter_pool }
+        let (outgoing, incoming) = mpsc::channel();
+        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, watch_indexes, watchers, index, iter_pool, incoming, outgoing }
     }
 
     pub fn clear(&mut self) {
@@ -1700,6 +1728,10 @@ impl Transaction {
         self.changes.push(change);
     }
 
+    pub fn input_change(&mut self, change: Change) {
+        self.changes.push(change);
+    }
+
     pub fn exec(&mut self, program: &mut Program) {
         {
             let ref mut rounds = program.rounds;
@@ -1716,7 +1748,7 @@ impl Transaction {
         while next_frame {
             let mut items = program.rounds.iter();
             while let Some(change) = items.next(&mut program.rounds) {
-                // println!("Change {:?}", change);
+                println!("Change {:?}", change);
                 pipes.clear();
                 program.get_pipes(change, &mut pipes);
                 frame.reset();
@@ -1735,8 +1767,13 @@ impl Transaction {
         }
 
         for (name, index) in program.watch_indexes.iter_mut() {
-            let diff = index.reconcile();
-            println!("DIFF {} {:?}", name, diff);
+            if index.dirty() {
+                let diff = index.reconcile();
+                println!("DIFF {} {:?}", name, diff);
+                if let Some(watcher) = program.watchers.get(name) {
+                    watcher.on_diff(&program.interner, diff);
+                }
+            }
         }
     }
 

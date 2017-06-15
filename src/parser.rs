@@ -5,7 +5,7 @@ use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter
 use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
-use watcher::{PrintWatcher};
+use watcher::{PrintWatcher, SystemTimerWatcher};
 
 
 lazy_static! {
@@ -957,8 +957,20 @@ fn parser_coolness() {
     let mut program = Program::new();
     let blocks = parse_file(&mut program, "examples/test.eve");
     program.attach("printer", Box::new(PrintWatcher{}));
+    let outgoing = program.outgoing.clone();
+    program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
     for block in blocks {
         program.raw_block(block);
+    }
+    loop {
+        let mut v = program.incoming.recv().unwrap();
+        // println!("GOT {:?}", v);
+        let mut txn = Transaction::new();
+        for cur in v.drain(..) {
+            txn.input_change(cur.to_change(&mut program.interner));
+        };
+        txn.exec(&mut program);
+
     }
     // let res = commit_update(b"foo.hand += [asdf: 3]");
     // println!("{:?}", res);

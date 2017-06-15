@@ -4,7 +4,8 @@ Create a timer that will tick once per second.
 
 ~~~
 commit
-  [#time #system/timer resolution: 1000 seconds:10 minutes:10 hours:10]
+  [#time #system/timer resolution: 1000]
+  [#time #system/timer resolution: 10000]
 
 ~~~
 
@@ -39,6 +40,6 @@ bind
 search
   t = [#system/timer resolution]
 
-watch printer
+watch system/timer
   (t, resolution)
 ~~~
