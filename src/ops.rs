@@ -888,17 +888,44 @@ pub fn bind(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) 
 pub fn commit(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
     let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
-        &Constraint::Insert {ref e, ref a, ref v, ref commit} => {
+        &Constraint::Insert {ref e, ref a, ref v, ..} => {
             let n = (frame.block_ix as u32) * 10000 + constraint;
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
-            // println!("want to output {:?}", c);
             let ref mut rounds = program.rounds;
-            // println!("rounds {:?}", rounds.output_rounds);
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count);
                 rounds.commit(output, ChangeType::Insert)
-                // println!("insert {:?}", output);
+            }
+        },
+        &Constraint::Remove {ref e, ref a, ref v } => {
+            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
+            let ref mut rounds = program.rounds;
+            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
+            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+                let output = c.with_round_count(0, count * -1);
+                rounds.commit(output, ChangeType::Remove)
+            }
+        },
+        &Constraint::RemoveAttribute {ref e, ref a } => {
+            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:0, n, round:0, transaction: 0, count:0, };
+            let ref mut rounds = program.rounds;
+            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
+            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+                let output = c.with_round_count(0, count * -1);
+                rounds.commit(output, ChangeType::Remove)
+            }
+        },
+        &Constraint::RemoveEntity {ref e } => {
+            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let c = Change { e: frame.resolve(e), a: 0, v:0, n, round:0, transaction: 0, count:0, };
+            let ref mut rounds = program.rounds;
+            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
+            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+                let output = c.with_round_count(0, count * -1);
+                rounds.commit(output, ChangeType::Remove)
             }
         },
         _ => {}
@@ -1052,7 +1079,7 @@ pub enum Constraint {
     Insert {e: Field, a: Field, v:Field, commit:bool},
     Remove {e: Field, a: Field, v:Field},
     RemoveAttribute {e: Field, a: Field},
-    RemoveEntity {e: Field, a: Field},
+    RemoveEntity {e: Field },
     Project {registers: Vec<usize>},
     Watch {name: String, registers: Vec<usize>},
 }
@@ -1320,6 +1347,7 @@ pub struct RoundHolder {
     prev_output_rounds: Vec<(Round, Count)>,
     rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
     commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
+    staged_commit_keys: Vec<(Interned, Interned, Interned, Interned)>,
     collapsed_commits: HashMap<(Interned, Interned, Interned), Change>,
     pub max_round: usize,
 }
@@ -1349,7 +1377,7 @@ impl RoundHolder {
         for _ in 0..100 {
             rounds.push(HashMap::new());
         }
-        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), collapsed_commits:HashMap::new(), max_round: 0 }
+        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), staged_commit_keys:vec![], collapsed_commits:HashMap::new(), max_round: 0 }
     }
 
     pub fn get_output_rounds(&self) -> &Vec<(Round, Count)> {
@@ -1459,6 +1487,9 @@ impl RoundHolder {
 
     pub fn commit(&mut self, change:Change, change_type:ChangeType) {
         let key = (change.n, change.e, change.a, change.v);
+        if change.a == 0 || change.v == 0 {
+            self.staged_commit_keys.push(key);
+        }
         match self.commits.entry(key) {
             Entry::Occupied(mut o) => {
                 o.get_mut().1.count += change.count;
@@ -1470,6 +1501,41 @@ impl RoundHolder {
     }
 
     pub fn prepare_commits(&mut self, index:&mut HashIndex) -> bool {
+        for key in self.staged_commit_keys.iter() {
+            match self.commits.get(key) {
+                Some(&(ChangeType::Remove, Change {count, e, a, v, n, transaction, round})) => {
+                    if count < 0 {
+                        // do the index lookups and commit the changes
+                        match (a, v) {
+                            (0, 0) => {
+                                if let Some(attrs) = index.get(e, 0, 0) {
+                                    for attr in attrs {
+                                        if let Some(vals) = index.get(e, attr, 0) {
+                                            for val in vals {
+                                                let cloned = Change {e, a:attr, v:val, n, count, transaction, round};
+                                                commit_collapsed(&mut self.collapsed_commits, cloned);
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            (_, 0) => {
+                                if let Some(vals) = index.get(e, a, 0) {
+                                    for val in vals {
+                                        let cloned = Change {e, a, v:val, n, count, transaction, round};
+                                        commit_collapsed(&mut self.collapsed_commits, cloned);
+                                    }
+                                }
+                            },
+                            _ => { panic!("Staged remove that is completely filled in"); }
+                        }
+                    }
+                },
+                None => {},
+                _ => { panic!("Invalid staged commit"); }
+            }
+        }
+        self.staged_commit_keys.clear();
         for info in self.commits.values() {
             match info {
                 &(ChangeType::Insert, Change {count, ..}) => {
@@ -1748,7 +1814,7 @@ impl Transaction {
         while next_frame {
             let mut items = program.rounds.iter();
             while let Some(change) = items.next(&mut program.rounds) {
-                println!("Change {:?}", change);
+                // println!("{}", change.print(&program));
                 pipes.clear();
                 program.get_pipes(change, &mut pipes);
                 frame.reset();

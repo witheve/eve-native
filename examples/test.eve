@@ -5,8 +5,6 @@ Create a timer that will tick once per second.
 ~~~
 commit
   [#time #system/timer resolution: 1000]
-  [#time #system/timer resolution: 10000]
-
 ~~~
 
 Draw an appropriately positioned line into `#clock-hand`s.
@@ -30,9 +28,9 @@ search
 bind
   [#svg/root viewBox: "0 0 100 100", width: "300px", children:
     [#svg/circle sort: 1, cx: 50, cy: 50, r: 45, fill: "#0B79CE"]
-    [#clock-hand #hour-hand sort: 2, degrees: 30 * hours, length: 30, stroke: "#023963"]
-    [#clock-hand #minute-hand sort: 3, degrees: 6 * minutes, length: 40, stroke: "#023963"]
-    [#clock-hand #second-hand sort: 4, degrees: 6 * seconds, length: 40, stroke: "#ce0b46"]]
+    [#clock-hand #hour-hand | sort: 2, degrees: 30 * hours, length: 30, stroke: "#023963"]
+    [#clock-hand #minute-hand | sort: 3, degrees: 6 * minutes, length: 40, stroke: "#023963"]
+    [#clock-hand #second-hand | sort: 4, degrees: 6 * seconds, length: 40, stroke: "#ce0b46"]]
 ~~~
 
 
@@ -42,4 +40,15 @@ search
 
 watch system/timer
   (t, resolution)
+~~~
+
+~~~
+search
+  t = [#system/timer/change for hours minutes seconds]
+
+commit
+  for.minutes := minutes
+  for.seconds := seconds
+  for.hours := hours
+  t := none
 ~~~

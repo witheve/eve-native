@@ -50,7 +50,7 @@ impl Watcher for SystemTimerWatcher {
             let interval = timer.interval_at(Instant::now(),Duration::from_millis(resolution));
             let outgoing = self.outgoing.clone();
             let foo = interval.for_each(move |x| {
-                println!("It's time! {:?}", x);
+                // println!("It's time! {:?}", x);
                 let id = Internable::String(format!("system/timer/change/{:?}", timer_id));
                 let cur_time = time::now();
                 let changes = vec![

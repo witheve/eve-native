@@ -1,7 +1,9 @@
+extern crate time;
+
 use nom::{digit, alphanumeric, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::{HashMap, HashSet};
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block};
+use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block, Internable, RawChange};
 use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
@@ -35,6 +37,7 @@ pub enum Node<'a> {
     Float(f32),
     RawString(&'a str),
     EmbeddedString(Option<String>, Vec<Node<'a>>),
+    NoneValue,
     Tag(&'a str),
     Variable(&'a str),
     Attribute(&'a str),
@@ -138,6 +141,7 @@ impl<'a> Node<'a> {
             &mut Node::Float(v) => { Some(comp.interner.number(v)) },
             &mut Node::RawString(v) => { Some(comp.interner.string(v)) },
             &mut Node::Variable(v) => { Some(comp.get_register(v)) },
+            &mut Node::NoneValue => { None },
             &mut Node::Attribute(_) => { None },
             &mut Node::AttributeInequality {ref mut right, ..} => { right.gather_equalities(comp) },
             &mut Node::AttributeEquality(a, ref mut v) => { v.gather_equalities(comp) },
@@ -475,9 +479,13 @@ impl<'a> Node<'a> {
                 let ref val = **value;
                 let (a, v) = match (attr, val) {
                     (None, &Node::Tag(t)) => { (comp.interner.string("tag"), comp.interner.string(t)) },
+                    (None, &Node::NoneValue) => { (Field::Value(0), Field::Value(0)) }
+                    (Some(attr), &Node::NoneValue) => { (comp.interner.string(attr), Field::Value(0)) }
                     (Some(attr), v) => {
                         (comp.interner.string(attr), v.compile(comp).unwrap())
                     },
+                    // @TODO: this doesn't handle the case where you do
+                    // foo.bar <- [#zomg a]
                     (None, &Node::OutputRecord(..)) => {
                         match op {
                             &"<-" => {
@@ -489,8 +497,21 @@ impl<'a> Node<'a> {
                     }
                     _ => { panic!("Invalid {:?}", self) }
                 };
-                if a != Field::Value(0) && v != Field::Value(0) {
-                    comp.constraints.push(Constraint::Insert{e:reg, a, v, commit});
+                match (*op, a, v) {
+                    (":=", Field::Value(0), Field::Value(0)) => {
+                        comp.constraints.push(Constraint::RemoveEntity {e:reg });
+                    },
+                    (":=", _, Field::Value(0)) => {
+                        comp.constraints.push(Constraint::RemoveAttribute {e:reg, a });
+                    },
+                    (":=", _, _) => {
+                        comp.constraints.push(Constraint::RemoveAttribute {e:reg, a });
+                        comp.constraints.push(Constraint::Insert {e:reg, a, v, commit});
+                    },
+                    (_, Field::Value(0), Field::Value(0)) => {  }
+                    ("+=", _, _) => { comp.constraints.push(Constraint::Insert {e:reg, a, v, commit}); }
+                    ("-=", _, _) => { comp.constraints.push(Constraint::Remove {e:reg, a, v }); }
+                    _ => { panic!("Invalid record update {:?} {:?} {:?}", op, a, v) }
                 }
                 Some(reg)
             },
@@ -811,11 +832,16 @@ named!(bind_update<Node<'a>>,
            value: alt_complete!(apply!(output_record, OutputType::Bind) | expr | hashtag) >>
            (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Bind })));
 
+named!(none_value<Node<'a>>,
+       do_parse!(
+           tag!("none") >>
+           ( Node::NoneValue )));
+
 named!(commit_update<Node<'a>>,
        do_parse!(
            record: mutating_record_reference >>
            op: sp!(alt_complete!(tag!(":=") | tag!("+=") | tag!("-=") | tag!("<-"))) >>
-           value: alt_complete!(apply!(output_record, OutputType::Commit) | expr | hashtag) >>
+           value: alt_complete!(apply!(output_record, OutputType::Commit) | none_value | expr | hashtag) >>
            (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Commit })));
 
 
@@ -962,16 +988,36 @@ fn parser_coolness() {
     for block in blocks {
         program.raw_block(block);
     }
-    loop {
-        let mut v = program.incoming.recv().unwrap();
-        // println!("GOT {:?}", v);
+    for i in 0..100000 {
         let mut txn = Transaction::new();
-        for cur in v.drain(..) {
+        let cur_time = time::now();
+        let timer_id = Internable::String("tag|timer|tag|system/timer|resolution|1000|".to_string());
+        let id = Internable::String(format!("system/timer/change/{:?}", timer_id));
+        let changes = vec![
+            RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("system/timer/change".to_string()), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("for".to_string()), v: timer_id.clone(), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("hours".to_string()), v: Internable::from_number(cur_time.tm_hour as f32), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("minutes".to_string()), v: Internable::from_number(cur_time.tm_min as f32), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("seconds".to_string()), v: Internable::from_number(i as f32), n: Internable::String("System/timer".to_string()), count: 1},
+        ];
+        for cur in changes {
             txn.input_change(cur.to_change(&mut program.interner));
         };
         txn.exec(&mut program);
-
     }
+    // loop {
+    //     // let mut v = program.incoming.recv().unwrap();
+    //     // println!("GOT {:?}", v);
+    //     let mut start_ns = time::precise_time_ns();
+    //     let mut txn = Transaction::new();
+    //     for cur in v.drain(..) {
+    //         txn.input_change(cur.to_change(&mut program.interner));
+    //     };
+    //     txn.exec(&mut program);
+    //     let mut end_ns = time::precise_time_ns();
+    //     println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+
+    // }
     // let res = commit_update(b"foo.hand += [asdf: 3]");
     // println!("{:?}", res);
     // let res = inequality(b"woah += 10");
