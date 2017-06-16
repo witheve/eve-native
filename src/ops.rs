@@ -8,7 +8,7 @@
 
 extern crate time;
 
-use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex};
+use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, MyHasher};
 use parser::{make_block};
 use std::collections::HashMap;
 use std::mem::transmute;
@@ -1004,14 +1004,14 @@ impl Internable {
 }
 
 pub struct Interner {
-    id_to_value: HashMap<Internable, Interned>,
+    id_to_value: HashMap<Internable, Interned, MyHasher>,
     value_to_id: Vec<Internable>,
     next_id: Interned,
 }
 
 impl Interner {
     pub fn new() -> Interner {
-        let mut me = Interner {id_to_value: HashMap::new(), value_to_id:vec![Internable::Null], next_id:1};
+        let mut me = Interner {id_to_value: HashMap::default(), value_to_id:vec![Internable::Null], next_id:1};
         me.string("tag");
         me
     }

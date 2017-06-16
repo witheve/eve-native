@@ -988,39 +988,39 @@ fn parser_coolness() {
     for block in blocks {
         program.raw_block(block);
     }
-    // let mut start_ns = time::precise_time_ns();
-    // let timer_id = Internable::String("time|system/timer|1000|".to_string());
-    // let id = Internable::String(format!("system/timer/change/{}", "|time|system/timer|1000|"));
-    // for i in 0..100000 {
-    //     let mut txn = Transaction::new();
-    //     let cur_time = time::now();
-    //     let changes = vec![
-    //         RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("system/timer/change".to_string()), n: Internable::String("System/timer".to_string()), count: 1},
-    //         RawChange {e: id.clone(), a: Internable::String("for".to_string()), v: timer_id.clone(), n: Internable::String("System/timer".to_string()), count: 1},
-    //         RawChange {e: id.clone(), a: Internable::String("hours".to_string()), v: Internable::from_number(cur_time.tm_hour as f32), n: Internable::String("System/timer".to_string()), count: 1},
-    //         RawChange {e: id.clone(), a: Internable::String("minutes".to_string()), v: Internable::from_number(cur_time.tm_min as f32), n: Internable::String("System/timer".to_string()), count: 1},
-    //         RawChange {e: id.clone(), a: Internable::String("seconds".to_string()), v: Internable::from_number(i as f32), n: Internable::String("System/timer".to_string()), count: 1},
-    //     ];
-    //     for cur in changes {
-    //         txn.input_change(cur.to_change(&mut program.state.interner));
-    //     };
-    //     txn.exec(&mut program);
-    // }
-    // let mut end_ns = time::precise_time_ns();
-    // println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
-    loop {
-        let mut v = program.incoming.recv().unwrap();
-        // println!("GOT {:?}", v);
-        let mut start_ns = time::precise_time_ns();
+    let mut start_ns = time::precise_time_ns();
+    let timer_id = Internable::String("time|system/timer|1000|".to_string());
+    let id = Internable::String(format!("system/timer/change/{}", "|time|system/timer|1000|"));
+    for i in 0..100000 {
         let mut txn = Transaction::new();
-        for cur in v.drain(..) {
+        let cur_time = time::now();
+        let changes = vec![
+            RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("system/timer/change".to_string()), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("for".to_string()), v: timer_id.clone(), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("hours".to_string()), v: Internable::from_number(cur_time.tm_hour as f32), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("minutes".to_string()), v: Internable::from_number(cur_time.tm_min as f32), n: Internable::String("System/timer".to_string()), count: 1},
+            RawChange {e: id.clone(), a: Internable::String("seconds".to_string()), v: Internable::from_number(i as f32), n: Internable::String("System/timer".to_string()), count: 1},
+        ];
+        for cur in changes {
             txn.input_change(cur.to_change(&mut program.state.interner));
         };
         txn.exec(&mut program);
-        let mut end_ns = time::precise_time_ns();
-        println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
-
     }
+    let mut end_ns = time::precise_time_ns();
+    println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+    // loop {
+    //     let mut v = program.incoming.recv().unwrap();
+    //     // println!("GOT {:?}", v);
+    //     let mut start_ns = time::precise_time_ns();
+    //     let mut txn = Transaction::new();
+    //     for cur in v.drain(..) {
+    //         txn.input_change(cur.to_change(&mut program.state.interner));
+    //     };
+    //     txn.exec(&mut program);
+    //     let mut end_ns = time::precise_time_ns();
+    //     println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+
+    // }
     // let res = commit_update(b"foo.hand += [asdf: 3]");
     // println!("{:?}", res);
     // let res = inequality(b"woah += 10");

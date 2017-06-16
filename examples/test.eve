@@ -4,7 +4,7 @@ Create a timer that will tick once per second.
 
 ~~~
 commit
-  [#time #system/timer resolution: 1]
+  [#time #system/timer resolution: 1000]
 ~~~
 
 Draw an appropriately positioned line into `#clock-hand`s.
