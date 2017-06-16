@@ -60,8 +60,8 @@ impl Change {
         Change {e: self.e, a: self.a, v: self.v, n: self.n, round, transaction: self.transaction, count}
     }
     pub fn print(&self, prog:&Program) -> String {
-        let a = prog.interner.get_value(self.a).print();
-        let mut v = prog.interner.get_value(self.v).print();
+        let a = prog.state.interner.get_value(self.a).print();
+        let mut v = prog.state.interner.get_value(self.v).print();
         v = if v.contains("|") { format!("<{}>", self.v) } else { v };
         format!("Change (<{}>, {:?}, {})  {}:{}:{}", self.e, a, v, self.transaction, self.round, self.count)
     }
@@ -653,14 +653,14 @@ pub enum Instruction {
 }
 
 #[inline(never)]
-pub fn start_block(_: &mut Program, frame: &mut Frame, block:usize) -> i32 {
+pub fn start_block(_: &mut RuntimeState, frame: &mut Frame, block:usize) -> i32 {
     // println!("STARTING! {:?}", block);
     frame.block_ix = block;
     1
 }
 
 #[inline(never)]
-pub fn move_input_field(_: &mut Program, frame: &mut Frame, from:u32, to:u32) -> i32 {
+pub fn move_input_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u32) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(change) = frame.input {
         match from {
@@ -674,15 +674,14 @@ pub fn move_input_field(_: &mut Program, frame: &mut Frame, from:u32, to:u32) ->
 }
 
 #[inline(never)]
-pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
-    let cur = &program.blocks[frame.block_ix].constraints[cur_constraint as usize];
+pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
+    let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
     match cur {
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
             // if we have already solved all of this scan's vars, we just move on
             if check_bits(frame.row.solved_fields, *register_mask) {
                 return 1;
             }
-
 
             let resolved_e = frame.resolve(e);
             let resolved_a = frame.resolve(a);
@@ -747,7 +746,7 @@ pub fn get_iterator(program: &mut Program, frame: &mut Frame, iter_ix:u32, cur_c
 }
 
 #[inline(never)]
-pub fn iterator_next(_: &mut Program, frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
+pub fn iterator_next(_: &mut RuntimeState, frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
     let go = {
         let mut iter = frame.iters[iterator as usize].as_mut();
         // println!("Iter Next: {:?}", iter);
@@ -780,9 +779,9 @@ pub fn iterator_next(_: &mut Program, frame: &mut Frame, iterator:u32, bail:i32)
 }
 
 #[inline(never)]
-pub fn accept(program: &mut Program, frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32) -> i32 {
+pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32) -> i32 {
     frame.counters.accept += 1;
-    let cur = &program.blocks[frame.block_ix].constraints[cur_constraint as usize];
+    let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
     if cur_iterator > 0 {
         if let Some(EstimateIter::Scan { constraint, .. }) = frame.iters[(cur_iterator - 1) as usize] {
             if constraint == cur_constraint {
@@ -837,7 +836,7 @@ pub fn accept(program: &mut Program, frame: &mut Frame, cur_constraint:u32, cur_
 }
 
 #[inline(never)]
-pub fn clear_rounds(program: &mut Program, frame: &mut Frame) -> i32 {
+pub fn clear_rounds(program: &mut RuntimeState, frame: &mut Frame) -> i32 {
     program.rounds.clear_output_rounds();
     if let Some(change) = frame.input {
         program.rounds.output_rounds.push((change.round, change.count));
@@ -846,9 +845,9 @@ pub fn clear_rounds(program: &mut Program, frame: &mut Frame) -> i32 {
 }
 
 #[inline(never)]
-pub fn get_rounds(program: &mut Program, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
+pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
     // println!("get rounds!");
-    let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
+    let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Scan {ref e, ref a, ref v, .. } => {
             let resolved_e = frame.resolve(e);
@@ -864,8 +863,8 @@ pub fn get_rounds(program: &mut Program, frame: &mut Frame, constraint:u32, bail
 }
 
 #[inline(never)]
-pub fn bind(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
-    let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
+pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+    let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Insert {ref e, ref a, ref v, ..} => {
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n: 0, round:0, transaction: 0, count:0, };
@@ -885,8 +884,8 @@ pub fn bind(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) 
 }
 
 #[inline(never)]
-pub fn commit(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
-    let cur = &program.blocks[frame.block_ix].constraints[constraint as usize];
+pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+    let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Insert {ref e, ref a, ref v, ..} => {
             let n = (frame.block_ix as u32) * 10000 + constraint;
@@ -934,14 +933,14 @@ pub fn commit(program: &mut Program, frame: &mut Frame, constraint:u32, next:i32
 }
 
 #[inline(never)]
-pub fn project(_: &mut Program, frame: &mut Frame, from:u32, next:i32) -> i32 {
+pub fn project(_: &mut RuntimeState, frame: &mut Frame, from:u32, next:i32) -> i32 {
     let value = frame.get_register(from);
     frame.results.push(value);
     next
 }
 
 #[inline(never)]
-pub fn watch(program: &mut Program, frame: &mut Frame, name:&str, registers:&Vec<u32>, next:i32) -> i32 {
+pub fn watch(program: &mut RuntimeState, frame: &mut Frame, name:&str, registers:&Vec<u32>, next:i32) -> i32 {
     let resolved = registers.iter().map(|x| frame.get_register(*x)).collect();
     let mut total = 0;
     for &(_, count) in program.rounds.get_output_rounds().iter() {
@@ -1290,7 +1289,7 @@ pub fn clear_bit(solved:u64, bit:u32) -> u64 {
 //-------------------------------------------------------------------------
 
 #[inline(never)]
-pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>) {
+pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut Frame, pipe:&Vec<Instruction>) {
     // println!("Doing work");
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
@@ -1305,14 +1304,14 @@ pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>
                 move_input_field(program, frame, from, to)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
-                get_iterator(program, frame, iterator, constraint, bail)
+                get_iterator(program, block_info, frame, iterator, constraint, bail)
             },
             Instruction::IteratorNext { iterator, bail } => {
                 iterator_next(program, frame, iterator, bail)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();
-                let next = accept(program, frame, constraint, iterator, bail);
+                let next = accept(program, block_info, frame, constraint, iterator, bail);
                 // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
                 next
             },
@@ -1320,13 +1319,13 @@ pub fn interpret(program: &mut Program, frame:&mut Frame, pipe:&Vec<Instruction>
                 clear_rounds(program, frame)
             },
             Instruction::GetRounds { constraint, bail } => {
-                get_rounds(program, frame, constraint, bail)
+                get_rounds(program, block_info, frame, constraint, bail)
             },
             Instruction::Bind { constraint, next } => {
-                bind(program, frame, constraint, next)
+                bind(program, block_info, frame, constraint, next)
             },
             Instruction::Commit { constraint, next } => {
-                commit(program, frame, constraint, next)
+                commit(program, block_info, frame, constraint, next)
             },
             Instruction::Project { from, next } => {
                 project(program, frame, from, next)
@@ -1530,6 +1529,7 @@ impl RoundHolder {
                             _ => { panic!("Staged remove that is completely filled in"); }
                         }
                     }
+                    self.commits.remove(key);
                 },
                 None => {},
                 _ => { panic!("Invalid staged commit"); }
@@ -1598,7 +1598,7 @@ impl<'a> RoundHolderIter {
             cur_changes.clear();
             change_ix = 0;
             while round_ix <= max_round + 1 && cur_changes.len() == 0 {
-                for (_, change) in holder.rounds[round_ix].drain() {
+                for (_, change) in holder.rounds[round_ix].drain().filter(|v| v.1.count != 0) {
                     cur_changes.push(change);
                 }
                 round_ix += 1;
@@ -1617,16 +1617,40 @@ impl<'a> RoundHolderIter {
 // Program
 //-------------------------------------------------------------------------
 
-pub struct Program {
-    rounds: RoundHolder,
-    pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
-    block_names: HashMap<String, usize>,
-    blocks: Vec<Block>,
-    watch_indexes: HashMap<String, WatchIndex>,
-    watchers: HashMap<String, Box<Watcher>>,
+pub struct RuntimeState {
+    pub rounds: RoundHolder,
     pub index: HashIndex,
     pub interner: Interner,
-    iter_pool: EstimateIterPool,
+    pub iter_pool: EstimateIterPool,
+    pub watch_indexes: HashMap<String, WatchIndex>,
+}
+
+impl RuntimeState {
+    pub fn watch(&mut self, name:&str, resolved:Vec<Interned>, count:Count) {
+        let index = self.watch_indexes.entry(name.to_string()).or_insert_with(|| WatchIndex::new());
+        index.insert(resolved, count);
+    }
+}
+
+
+pub struct BlockInfo {
+    pub pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
+    pub block_names: HashMap<String, usize>,
+    pub blocks: Vec<Block>,
+}
+
+impl BlockInfo {
+    pub fn get_block(&self, name:&str) -> &Block {
+        let ix = self.block_names.get(name).unwrap();
+        &self.blocks[*ix]
+    }
+
+}
+
+pub struct Program {
+    pub state: RuntimeState,
+    pub block_info: BlockInfo,
+    watchers: HashMap<String, Box<Watcher>>,
     pub incoming: Receiver<Vec<RawChange>>,
     pub outgoing: Sender<Vec<RawChange>>,
 }
@@ -1640,53 +1664,51 @@ impl Program {
         let block_names = HashMap::new();
         let watch_indexes = HashMap::new();
         let watchers = HashMap::new();
+        let pipe_lookup = HashMap::new();
         let blocks = vec![];
         let (outgoing, incoming) = mpsc::channel();
-        Program { rounds, interner, pipe_lookup: HashMap::new(), blocks, block_names, watch_indexes, watchers, index, iter_pool, incoming, outgoing }
+        let state = RuntimeState { rounds, index, interner, iter_pool, watch_indexes };
+        let block_info = BlockInfo { pipe_lookup, block_names, blocks };
+        Program { state, block_info, watchers, incoming, outgoing }
     }
 
     pub fn clear(&mut self) {
-        self.index = HashIndex::new();
+        self.state.index = HashIndex::new();
     }
 
     #[allow(dead_code)]
     pub fn exec_query(&mut self, name:&str) -> Vec<Interned> {
         let mut frame = Frame::new();
         // let start_ns = time::precise_time_ns();
-        let pipe = self.get_block(name).pipes[0].clone();
-        interpret(self, &mut frame, &pipe);
+        let pipe = self.block_info.get_block(name).pipes[0].clone();
+        interpret(&mut self.state, &mut self.block_info, &mut frame, &pipe);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
         // println!("counters: {:?}", frame.counters);
         return frame.results;
     }
 
-    pub fn get_block(&self, name:&str) -> &Block {
-        let ix = self.block_names.get(name).unwrap();
-        &self.blocks[*ix]
-    }
-
     #[allow(dead_code)]
     pub fn raw_insert(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
-        self.index.insert_distinct(e,a,v,round,count);
+        self.state.index.insert_distinct(e,a,v,round,count);
     }
 
     pub fn register_block(&mut self, mut block:Block) {
-        let ix = self.blocks.len();
+        let ix = self.block_info.blocks.len();
         for (pipe_ix, ref mut pipe) in block.pipes.iter_mut().enumerate() {
             if let Some(&mut Instruction::StartBlock {ref mut block}) = pipe.get_mut(0) {
                 *block = ix;
             } else { panic!("Block where the first instruction is not a start block.") }
             for shape in block.shapes[pipe_ix].iter() {
-                let cur = self.pipe_lookup.entry(*shape).or_insert_with(|| vec![]);
+                let cur = self.block_info.pipe_lookup.entry(*shape).or_insert_with(|| vec![]);
                 cur.push(pipe.clone());
             }
         }
-        self.block_names.insert(block.name.to_string(), ix);
-        self.blocks.push(block);
+        self.block_info.block_names.insert(block.name.to_string(), ix);
+        self.block_info.blocks.push(block);
     }
 
     pub fn insert_block(&mut self, name:&str, code:&str) {
-        let mut b = make_block(&mut self.interner, name, code);
+        let mut b = make_block(&mut self.state.interner, name, code);
         self.register_block(b)
     }
 
@@ -1705,25 +1727,18 @@ impl Program {
         txn
     }
 
-    pub fn watch(&mut self, name:&str, resolved:Vec<Interned>, count:Count) {
-        let index = self.watch_indexes.entry(name.to_string()).or_insert_with(|| WatchIndex::new());
-        index.insert(resolved, count);
-    }
-
     pub fn attach(&mut self, name:&str, watcher:Box<Watcher>) {
         self.watchers.insert(name.to_string(), watcher);
     }
 
-    pub fn get_pipes(&self, input: Change, pipes: &mut Vec<Vec<Instruction>>) {
-        // @TODO @FIXME: the clones here are just a work around for the borrow checker
-        // they are not necessary, and I imagine pretty slow :(
-        let ref pipe_lookup = self.pipe_lookup;
+    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: Change, pipes: &mut Vec<&'a Vec<Instruction>>) {
+        let ref pipe_lookup = block_info.pipe_lookup;
         let mut tuple = (0,0,0);
         // look for (0,0,0), (0, a, 0) and (0, a, v) pipes
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe.clone());
+                    pipes.push(pipe);
                 }
             },
             None => {},
@@ -1732,7 +1747,7 @@ impl Program {
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe.clone());
+                    pipes.push(pipe);
                 }
             },
             None => {},
@@ -1741,21 +1756,21 @@ impl Program {
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe.clone());
+                    pipes.push(pipe);
                 }
             },
             None => {},
         }
         // lookup the tags for this e
         //  for each tag, lookup (e, a, 0) and (e, a, v)
-        if let Some(tags) = self.index.get(input.e, TAG_INTERNED_ID, 0) {
+        if let Some(tags) = self.state.index.get(input.e, TAG_INTERNED_ID, 0) {
             for tag in tags {
                 tuple.0 = tag;
                 tuple.2 = 0;
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe.clone());
+                            pipes.push(pipe);
                         }
                     },
                     None => {},
@@ -1764,7 +1779,7 @@ impl Program {
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe.clone());
+                            pipes.push(pipe);
                         }
                     },
                     None => {},
@@ -1800,10 +1815,10 @@ impl Transaction {
 
     pub fn exec(&mut self, program: &mut Program) {
         {
-            let ref mut rounds = program.rounds;
+            let ref mut rounds = program.state.rounds;
 
             for change in self.changes.iter() {
-                program.index.distinct(&change, rounds);
+                program.state.index.distinct(&change, rounds);
             }
         }
 
@@ -1812,32 +1827,32 @@ impl Transaction {
         let mut next_frame = true;
 
         while next_frame {
-            let mut items = program.rounds.iter();
-            while let Some(change) = items.next(&mut program.rounds) {
+            let mut items = program.state.rounds.iter();
+            while let Some(change) = items.next(&mut program.state.rounds) {
                 // println!("{}", change.print(&program));
                 pipes.clear();
-                program.get_pipes(change, &mut pipes);
+                program.get_pipes(&program.block_info, change, &mut pipes);
                 frame.reset();
                 frame.input = Some(change);
                 for pipe in pipes.iter() {
-                    interpret(program, frame, pipe);
+                    interpret(&mut program.state, &program.block_info, frame, pipe);
                 }
                 if change.count > 0 {
-                    program.index.insert(change.e, change.a, change.v);
+                    program.state.index.insert(change.e, change.a, change.v);
                 } else {
-                    program.index.remove(change.e, change.a, change.v);
+                    program.state.index.remove(change.e, change.a, change.v);
                 }
             }
 
-            next_frame = program.rounds.prepare_commits(&mut program.index);
+            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
         }
 
-        for (name, index) in program.watch_indexes.iter_mut() {
+        for (name, index) in program.state.watch_indexes.iter_mut() {
             if index.dirty() {
                 let diff = index.reconcile();
                 println!("DIFF {} {:?}", name, diff);
                 if let Some(watcher) = program.watchers.get(name) {
-                    watcher.on_diff(&program.interner, diff);
+                    watcher.on_diff(&program.state.interner, diff);
                 }
             }
         }
@@ -1865,53 +1880,53 @@ impl CodeTransaction {
 
     pub fn exec(&mut self, program: &mut Program, block_name: &str, insert:bool) {
         {
-            let ref mut rounds = program.rounds;
+            let ref mut rounds = program.state.rounds;
 
             for change in self.changes.iter() {
-                program.index.distinct(&change, rounds);
+                program.state.index.distinct(&change, rounds);
             }
         }
 
         let ref mut frame = self.frame;
 
         {
-            let pipe = program.get_block(block_name).pipes[0].clone();
+            let ref pipe = program.block_info.get_block(block_name).pipes[0];
             // run the block
             frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count: if insert { 1 } else { -1 } });
-            interpret(program, frame, &pipe);
+            interpret(&mut program.state, &program.block_info, frame, pipe);
         }
 
         let mut pipes = vec![];
-        let mut items = program.rounds.iter();
+        let mut items = program.state.rounds.iter();
         let mut next_frame = true;
 
         while next_frame {
-            let mut items = program.rounds.iter();
-            while let Some(change) = items.next(&mut program.rounds) {
+            let mut items = program.state.rounds.iter();
+            while let Some(change) = items.next(&mut program.state.rounds) {
                 println!("{}", change.print(program));
                 pipes.clear();
-                program.get_pipes(change, &mut pipes);
+                program.get_pipes(&program.block_info, change, &mut pipes);
                 frame.reset();
                 frame.input = Some(change);
                 for pipe in pipes.iter() {
-                    interpret(program, frame, pipe);
+                    interpret(&mut program.state, &program.block_info, frame, pipe);
                 }
                 if change.count > 0 {
-                    program.index.insert(change.e, change.a, change.v);
+                    program.state.index.insert(change.e, change.a, change.v);
                 } else {
-                    program.index.remove(change.e, change.a, change.v);
+                    program.state.index.remove(change.e, change.a, change.v);
                 }
             }
 
-            next_frame = program.rounds.prepare_commits(&mut program.index);
+            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
         }
 
-        for (name, index) in program.watch_indexes.iter_mut() {
+        for (name, index) in program.state.watch_indexes.iter_mut() {
             if index.dirty() {
                 let diff = index.reconcile();
                 println!("DIFF {} {:?}", name, diff);
                 if let Some(watcher) = program.watchers.get(name) {
-                    watcher.on_diff(&program.interner, diff);
+                    watcher.on_diff(&program.state.interner, diff);
                 }
             }
         }

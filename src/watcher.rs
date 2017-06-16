@@ -46,12 +46,12 @@ impl Watcher for SystemTimerWatcher {
             println!("timer: {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
             let resolution = Internable::to_number(interner.get_value(add[1])) as u64;
             let timer_id = interner.get_value(add[0]).clone();
+            let id = Internable::String(format!("system/timer/change/{}", add[0]));
             let timer = Timer::default();
             let interval = timer.interval_at(Instant::now(),Duration::from_millis(resolution));
             let outgoing = self.outgoing.clone();
             let foo = interval.for_each(move |x| {
                 // println!("It's time! {:?}", x);
-                let id = Internable::String(format!("system/timer/change/{:?}", timer_id));
                 let cur_time = time::now();
                 let changes = vec![
                     RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("system/timer/change".to_string()), n: Internable::String("System/timer".to_string()), count: 1},

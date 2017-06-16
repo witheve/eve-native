@@ -2,8 +2,8 @@ extern crate eve;
 
 use eve::ops::{Program};
 
-macro_rules! n (($p:ident, $i:expr) => ({ $p.interner.number_id($i as f32) }));
-macro_rules! s (($p:ident, $i:expr) => ({ $p.interner.string_id(&$i) }));
+macro_rules! n (($p:ident, $i:expr) => ({ $p.state.interner.number_id($i as f32) }));
+macro_rules! s (($p:ident, $i:expr) => ({ $p.state.interner.string_id(&$i) }));
 // macro_rules! txn (($p:ident, [ $($t:ident ($e:ident, $a:expr, $v:expr),)* ]) => ({
 //     let mut txn = Transaction::new();
 //     $(txn.input(s!($p, "insert|".to_owned() + stringify!($e)), s!($p, $a), $t!($p, $v), 1);)*
@@ -11,7 +11,7 @@ macro_rules! s (($p:ident, $i:expr) => ({ $p.interner.string_id(&$i) }));
 // }));
 macro_rules! valid (($blocks:tt) => ({
     let mut program = blocks!($blocks);
-    assert!(program.index.check(0, s!(program, "tag"), s!(program, "success")), "No success record");
+    assert!(program.state.index.check(0, s!(program, "tag"), s!(program, "success")), "No success record");
 }));
 
 macro_rules! blocks (($info:tt) => ({
