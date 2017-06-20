@@ -31,6 +31,35 @@ mod indexes;
 pub mod hash;
 pub mod watcher;
 
+extern crate ws;
+
+use ws::{listen, Message};
+
+#[macro_use]
+extern crate serde_derive;
+
+extern crate serde;
+extern crate serde_json;
+
+use serde_json::{Error};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ClientMessage {
+    Block { id:String, code:String },
+    RemoveBlock { id:String },
+    Yo { message:String },
+}
+
 fn main() {
-    // test_lubm()
+  listen("127.0.0.1:3012", |out| {
+      move |msg| {
+          if let Message::Text(s) = msg {
+              let deserialized: Result<ClientMessage, Error> = serde_json::from_str(&s);
+              println!("deserialized = {:?}", deserialized);
+              out.send(Message::text(serde_json::to_string(&ClientMessage::Yo {message: format!("{} - yo", s)}).unwrap()))
+          } else {
+                Ok(())
+          }
+      }
+  }).unwrap()
 }

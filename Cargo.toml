@@ -18,6 +18,10 @@ lazy_static = "0.2"
 tokio-core = "0.1"
 tokio-timer = "0.1"
 futures = "0.1.14"
+ws = "*"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
 
 [dependencies.nom]
 version = "^2.2"

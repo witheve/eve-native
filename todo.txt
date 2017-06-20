@@ -1,0 +1,59 @@
+----------------------------------------------------
+- Core language
+----------------------------------------------------
+
+Pipe combinations
+
+Not
+  - parser
+    - multi-block parses
+    - generate not block
+    - replace block with anti-scan
+  - anti-scan impl
+  - anti-rounds impl
+
+Choose
+  - parser
+    - generate branch blocks
+    - replace block with choose-select
+  - choose-select impl
+    - using not?
+    - using an aggregate?
+
+Aggregates
+  - parser
+    - replace aggregate with block
+    - scan for output if some output requires a non-grouped variable
+  - compiler
+    - collect
+    - on final bail, jump to the aggregate reporter
+  - Sum aggregates
+    - sum index
+    - collector impl
+    - reporter impl
+  - Sort aggregates
+    - sort index
+    - collector impl
+    - reporter impl
+
+----------------------------------------------------
+- Platform
+----------------------------------------------------
+
+Javascript
+  - compile
+  - js watchers
+  - eavs in
+Persistence
+Communication
+  - websocket in
+  - websocket out
+Permissions
+
+----------------------------------------------------
+- Distribution
+----------------------------------------------------
+
+Compiler
+  - Determine what code executes where
+  - Send code around
