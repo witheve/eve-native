@@ -667,10 +667,9 @@ named!(string<Node<'a>>,
            ({
                let mut info = string_parts(raw.as_bytes());
                let mut parts = info.unwrap().1;
-               if parts.len() == 1 {
-                   parts.pop().unwrap()
-               } else {
-                   Node::EmbeddedString(None, parts)
+               match (parts.len(), parts.get(0)) {
+                   (1, Some(&Node::RawString(_))) => parts.pop().unwrap(),
+                   _ => Node::EmbeddedString(None, parts)
                }
            })));
 
