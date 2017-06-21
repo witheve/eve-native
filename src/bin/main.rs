@@ -22,13 +22,14 @@ extern crate nom;
 #[macro_use]
 extern crate lazy_static;
 
+extern crate eve;
 extern crate tokio_timer;
 extern crate futures;
 extern crate time;
 
-use ops::{Program, Transaction};
-use parser::{parse_file};
-use watcher::{SystemTimerWatcher};
+use eve::ops::{Program, Transaction};
+use eve::parser::{parse_file};
+use eve::watcher::{SystemTimerWatcher};
 use std::env;
 
 fn main() {
@@ -57,3 +58,4 @@ fn main() {
 
     }
 }
+
