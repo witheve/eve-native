@@ -87,3 +87,31 @@ test!(base_no_scans_fail, {
     bind
         [#success]
 });
+
+test!(base_interpolation_simple, {
+    search
+        x = 1 + 1
+    bind
+        [#foo chorp: "{{x}}"]
+
+    ~~~
+
+    search
+        [#foo chorp: "2"]
+    bind
+        [#success]
+});
+
+test!(base_interpolation_expression, {
+    search
+        x = 1 + 1
+    bind
+        [#foo chorp: "{{x + 1}}"]
+
+    ~~~
+
+    search
+        [#foo chorp: "3"]
+    bind
+        [#success]
+});
