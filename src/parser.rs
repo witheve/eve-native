@@ -148,7 +148,10 @@ impl<'a> Node<'a> {
             &mut Node::Inequality {ref left, ref right, ref op} => {
                 None
             },
-            &mut Node::EmbeddedString(ref mut var, ref vs) => {
+            &mut Node::EmbeddedString(ref mut var, ref mut vs) => {
+                for v in vs {
+                    v.gather_equalities(comp);
+                }
                 let var_name = format!("__eve_concat{}", comp.id);
                 comp.id += 1;
                 let reg = comp.get_register(&var_name);
