@@ -17,7 +17,7 @@ use std::cmp;
 use std::iter::Iterator;
 use std::fmt;
 use watcher::{Watcher};
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Sender, SyncSender, Receiver};
 use std::sync::mpsc;
 
 //-------------------------------------------------------------------------
@@ -1652,7 +1652,7 @@ pub struct Program {
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher>>,
     pub incoming: Receiver<Vec<RawChange>>,
-    pub outgoing: Sender<Vec<RawChange>>,
+    pub outgoing: SyncSender<Vec<RawChange>>,
 }
 
 impl Program {
@@ -1666,7 +1666,7 @@ impl Program {
         let watchers = HashMap::new();
         let pipe_lookup = HashMap::new();
         let blocks = vec![];
-        let (outgoing, incoming) = mpsc::channel();
+        let (outgoing, incoming) = mpsc::sync_channel(1);
         let state = RuntimeState { rounds, index, interner, iter_pool, watch_indexes };
         let block_info = BlockInfo { pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }

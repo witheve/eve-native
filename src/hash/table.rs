@@ -50,24 +50,25 @@ impl TaggedHashUintPtr {
 
     #[inline]
     fn set_tag(&mut self, value: bool) {
-        let usize_ptr = &*self.0 as *const *mut HashUint as *mut usize;
+        let mut usize_ptr = self.0.as_ptr() as usize;
         unsafe {
             if value {
-                *usize_ptr |= 1;
+                usize_ptr |= 1;
             } else {
-                *usize_ptr &= !1;
+                usize_ptr &= !1;
             }
+            self.0 = Unique::new(usize_ptr as *mut HashUint)
         }
     }
 
     #[inline]
     fn tag(&self) -> bool {
-        (*self.0 as usize) & 1 == 1
+        (self.0.as_ptr() as usize) & 1 == 1
     }
 
     #[inline]
     fn ptr(&self) -> *mut HashUint {
-        (*self.0 as usize & !1) as *mut HashUint
+        (self.0.as_ptr() as usize & !1) as *mut HashUint
     }
 }
 

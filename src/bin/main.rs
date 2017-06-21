@@ -27,7 +27,7 @@ extern crate tokio_timer;
 extern crate futures;
 extern crate time;
 
-use eve::ops::{Program, Transaction};
+use eve::ops::{Program, Transaction, Internable, RawChange};
 use eve::parser::{parse_file};
 use eve::watcher::{SystemTimerWatcher};
 use std::env;
@@ -46,16 +46,14 @@ fn main() {
     }
     loop {
         let mut v = program.incoming.recv().unwrap();
-        // println!("GOT {:?}", v);
         let mut start_ns = time::precise_time_ns();
         let mut txn = Transaction::new();
-        for cur in v.drain(..) {
+        for cur in v {
             txn.input_change(cur.to_change(&mut program.state.interner));
         };
         txn.exec(&mut program);
         let mut end_ns = time::precise_time_ns();
         println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
-
     }
 }
 

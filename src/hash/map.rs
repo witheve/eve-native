@@ -2446,61 +2446,6 @@ fn assert_covariance() {
 }
 
 //------------------------------------------------------------
-// EVE MODIFICATIONS
-//------------------------------------------------------------
-
-/// An iterator over the keys of a `HashMap`.
-///
-/// This `struct` is created by the [`keys`] method on [`HashMap`]. See its
-/// documentation for more.
-///
-/// [`keys`]: struct.HashMap.html#method.keys
-/// [`HashMap`]: struct.HashMap.html
-
-pub trait GetDangerousKeys<K:Copy, V, S> {
-    fn get_dangerous_keys(&self) -> DangerousKeys<K, V>;
-}
-
-impl<K:Copy, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
-    fn get_dangerous_keys(&self) -> DangerousKeys<K, V> {
-        DangerousKeys {
-            inner: table::DangerousKeysIter::from_table(&self.table)
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct DangerousKeys<K:Copy, V> {
-    inner: table::DangerousKeysIter<K, V>,
-}
-
-impl<K:Copy, V> fmt::Debug for DangerousKeys<K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.pad("DangerousKeys { .. }")
-    }
-}
-
-impl<K:Copy, V> Iterator for DangerousKeys<K, V> {
-    type Item = K;
-
-    #[inline]
-    fn next(&mut self) -> Option<K> {
-        self.inner.next()
-    }
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<K:Copy, V> ExactSizeIterator for DangerousKeys<K, V> {
-    #[inline]
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-}
-
-//------------------------------------------------------------
 // Tests
 //------------------------------------------------------------
 
@@ -3386,3 +3331,59 @@ mod test_map {
     }
 
 }
+
+//------------------------------------------------------------
+// EVE MODIFICATIONS
+//------------------------------------------------------------
+
+/// An iterator over the keys of a `HashMap`.
+///
+/// This `struct` is created by the [`keys`] method on [`HashMap`]. See its
+/// documentation for more.
+///
+/// [`keys`]: struct.HashMap.html#method.keys
+/// [`HashMap`]: struct.HashMap.html
+
+pub trait GetDangerousKeys<K:Copy, V, S> {
+    fn get_dangerous_keys(&self) -> DangerousKeys<K, V>;
+}
+
+impl<K:Copy, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
+    fn get_dangerous_keys(&self) -> DangerousKeys<K, V> {
+        DangerousKeys {
+            inner: table::DangerousKeysIter::from_table(&self.table)
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DangerousKeys<K:Copy, V> {
+    inner: table::DangerousKeysIter<K, V>,
+}
+
+impl<K:Copy, V> fmt::Debug for DangerousKeys<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("DangerousKeys { .. }")
+    }
+}
+
+impl<K:Copy, V> Iterator for DangerousKeys<K, V> {
+    type Item = K;
+
+    #[inline]
+    fn next(&mut self) -> Option<K> {
+        self.inner.next()
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<K:Copy, V> ExactSizeIterator for DangerousKeys<K, V> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+

@@ -10,7 +10,7 @@ use std::time::*;
 use indexes::{WatchDiff, MyHasher};
 use hash::map::{HashMap};
 use ops::{Internable, Interner, RawChange};
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Sender, SyncSender, Receiver};
 use std::thread::{self, JoinHandle};
 use std::sync::mpsc;
 
@@ -22,18 +22,20 @@ pub struct SystemTimerWatcher {
     listeners: HashMap<Internable, Vec<Internable>, MyHasher>,
     thread: JoinHandle<()>,
     remote: Remote,
-    outgoing: Sender<Vec<RawChange>>,
+    outgoing: SyncSender<Vec<RawChange>>,
 }
 
 impl SystemTimerWatcher {
-    pub fn new(outgoing: Sender<Vec<RawChange>>) -> SystemTimerWatcher {
+    pub fn new(outgoing: SyncSender<Vec<RawChange>>) -> SystemTimerWatcher {
         let (sender, receiver) = mpsc::channel();
         let thread = thread::spawn(move || {
             let mut core = Core::new().unwrap();
             let timer = Timer::default();
             let remote = core.remote();
             sender.send(remote).unwrap();
-            core.run(timer.interval(Duration::from_millis(10000)).for_each(|x| { future::ok::<(), TimerError>(()) }).into_future());
+            loop {
+                core.turn(None);
+            }
         });
         let remote = receiver.recv().unwrap();
         SystemTimerWatcher { thread, listeners:HashMap::default(), remote, outgoing }
@@ -51,8 +53,8 @@ impl Watcher for SystemTimerWatcher {
             let interval = timer.interval_at(Instant::now(),Duration::from_millis(resolution));
             let outgoing = self.outgoing.clone();
             let foo = interval.for_each(move |x| {
-                // println!("It's time! {:?}", x);
                 let cur_time = time::now();
+                // println!("It's time! {:?}", cur_time);
                 let changes = vec![
                     RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("system/timer/change".to_string()), n: Internable::String("System/timer".to_string()), count: 1},
                     RawChange {e: id.clone(), a: Internable::String("for".to_string()), v: timer_id.clone(), n: Internable::String("System/timer".to_string()), count: 1},
