@@ -1830,6 +1830,17 @@ impl Transaction {
             let mut items = program.state.rounds.iter();
             while let Some(change) = items.next(&mut program.state.rounds) {
                 // println!("{}", change.print(&program));
+                // If this is an add, we want to do it *before* we start running pipes.
+                // This ensures that if there are two constraints in a single block that
+                // would both match the given input, they both have a chance to see this
+                // new triple at the same time. Doing so, means we don't have to go through
+                // every possible combination of the inputs, e.g. A, B, and AB. Instead we
+                // do AB and BA. To make sure that removes correctly cancel out, we don't
+                // want to do a real remove until *after* the pipes have run. Hence, the
+                // separation of insert and remove.
+                if change.count > 0 {
+                    program.state.index.insert(change.e, change.a, change.v);
+                }
                 pipes.clear();
                 program.get_pipes(&program.block_info, change, &mut pipes);
                 frame.reset();
@@ -1837,9 +1848,9 @@ impl Transaction {
                 for pipe in pipes.iter() {
                     interpret(&mut program.state, &program.block_info, frame, pipe);
                 }
-                if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v);
-                } else {
+                // as stated above, we want to do removes after so that when we look
+                // for AB and BA, they find the same values as when they were added.
+                if change.count < 0 {
                     program.state.index.remove(change.e, change.a, change.v);
                 }
             }
@@ -1904,6 +1915,9 @@ impl CodeTransaction {
             let mut items = program.state.rounds.iter();
             while let Some(change) = items.next(&mut program.state.rounds) {
                 println!("{}", change.print(program));
+                if change.count > 0 {
+                    program.state.index.insert(change.e, change.a, change.v);
+                }
                 pipes.clear();
                 program.get_pipes(&program.block_info, change, &mut pipes);
                 frame.reset();
@@ -1911,9 +1925,7 @@ impl CodeTransaction {
                 for pipe in pipes.iter() {
                     interpret(&mut program.state, &program.block_info, frame, pipe);
                 }
-                if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v);
-                } else {
+                if change.count < 0 {
                     program.state.index.remove(change.e, change.a, change.v);
                 }
             }
