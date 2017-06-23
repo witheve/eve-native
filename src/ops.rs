@@ -1124,6 +1124,14 @@ impl Constraint {
         }
     }
 
+    pub fn get_output_registers(&self) -> Vec<Field> {
+        match self {
+            &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::Function {ref output, ref params, ..} => { filter_registers(&vec![output]) }
+            _ => { vec![] }
+        }
+    }
+
     pub fn replace_registers(&mut self, lookup:&HashMap<Field, Field>) {
         match self {
             &mut Constraint::Scan { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {

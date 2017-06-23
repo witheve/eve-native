@@ -66,7 +66,7 @@ pub enum Node<'a> {
 
 #[derive(Debug, Clone)]
 pub enum SubBlock {
-    Not(Vec<Constraint>)
+    Not(BlockCompilation)
 }
 
 impl<'a> Node<'a> {
@@ -291,13 +291,13 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn compile(&self, comp:&mut Compilation, constraints: &mut Vec<Constraint>) -> Option<Field> {
+    pub fn compile(&self, comp:&mut Compilation, cur_block: &mut BlockCompilation) -> Option<Field> {
         match self {
             &Node::Integer(v) => { Some(comp.interner.number(v as f32)) }
             &Node::Float(v) => { Some(comp.interner.number(v)) },
             &Node::RawString(v) => { Some(comp.interner.string(v)) },
             &Node::Variable(v) => { Some(comp.get_value(v)) },
-            // &Node::AttributeEquality(a, ref v) => { v.compile(comp, constraints) },
+            // &Node::AttributeEquality(a, ref v) => { v.compile(comp, cur_block) },
             &Node::AttributeAccess(ref items) => {
                 let mut final_var = "attr_access".to_string();
                 let mut parent = comp.get_value(items[0]);
@@ -305,7 +305,7 @@ impl<'a> Node<'a> {
                     final_var.push_str("|");
                     final_var.push_str(item);
                     let next = comp.get_value(&final_var.to_string());
-                    constraints.push(make_scan(parent, comp.interner.string(item), next));
+                    cur_block.constraints.push(make_scan(parent, comp.interner.string(item), next));
                     parent = next;
                 }
                 Some(parent)
@@ -318,34 +318,34 @@ impl<'a> Node<'a> {
                         final_var.push_str("|");
                         final_var.push_str(item);
                         let next = comp.get_value(&final_var.to_string());
-                        constraints.push(make_scan(parent, comp.interner.string(item), next));
+                        cur_block.constraints.push(make_scan(parent, comp.interner.string(item), next));
                         parent = next;
                     }
                 }
                 Some(parent)
             },
             &Node::Inequality {ref left, ref right, ref op} => {
-                let left_value = left.compile(comp, constraints);
-                let right_value = right.compile(comp, constraints);
+                let left_value = left.compile(comp, cur_block);
+                let right_value = right.compile(comp, cur_block);
                 match (left_value, right_value) {
                     (Some(l), Some(r)) => {
-                        constraints.push(make_filter(op, l, r));
+                        cur_block.constraints.push(make_filter(op, l, r));
                     },
                     _ => panic!("inequality without both a left and right: {:?} {} {:?}", left, op, right)
                 }
                 right_value
             },
             &Node::EmbeddedString(ref var, ref vs) => {
-                let resolved = vs.iter().map(|v| v.compile(comp, constraints).unwrap()).collect();
+                let resolved = vs.iter().map(|v| v.compile(comp, cur_block).unwrap()).collect();
                 if let &Some(ref name) = var {
                     let mut out_reg = comp.get_register(name);
                     let out_value = comp.get_value(name);
                     if let Field::Register(_) = out_value {
                         out_reg = out_value;
                     } else {
-                        constraints.push(make_filter("=", out_reg, out_value));
+                        cur_block.constraints.push(make_filter("=", out_reg, out_value));
                     }
-                    constraints.push(make_function("concat", resolved, out_reg));
+                    cur_block.constraints.push(make_function("concat", resolved, out_reg));
                     Some(out_reg)
                 } else {
                     panic!("Embedded string without a result assigned {:?}", self);
@@ -353,17 +353,17 @@ impl<'a> Node<'a> {
 
             },
             &Node::Infix { ref op, ref result, ref left, ref right } => {
-                let left_value = left.compile(comp, constraints).unwrap();
-                let right_value = right.compile(comp, constraints).unwrap();
+                let left_value = left.compile(comp, cur_block).unwrap();
+                let right_value = right.compile(comp, cur_block).unwrap();
                 if let &Some(ref name) = result {
                     let mut out_reg = comp.get_register(name);
                     let out_value = comp.get_value(name);
                     if let Field::Register(_) = out_value {
                         out_reg = out_value;
                     } else {
-                        constraints.push(make_filter("=", out_reg, out_value));
+                        cur_block.constraints.push(make_filter("=", out_reg, out_value));
                     }
-                    constraints.push(make_function(op, vec![left_value, right_value], out_reg));
+                    cur_block.constraints.push(make_function(op, vec![left_value, right_value], out_reg));
                     Some(out_reg)
                 } else {
                     panic!("Infix without a result assigned {:?}", self);
@@ -376,7 +376,7 @@ impl<'a> Node<'a> {
                     if let Field::Register(_) = out_value {
                         out_reg = out_value;
                     } else {
-                        constraints.push(make_filter("=", out_reg, out_value));
+                        cur_block.constraints.push(make_filter("=", out_reg, out_value));
                     }
                     let info = FunctionInfo.get(*op).unwrap();
                     let mut cur_params = vec![Field::Value(0); info.len() - 1];
@@ -386,21 +386,21 @@ impl<'a> Node<'a> {
                                 (a, comp.get_value(a))
                             }
                             &Node::AttributeEquality(a, ref v) => {
-                                (a, v.compile(comp, constraints).unwrap())
+                                (a, v.compile(comp, cur_block).unwrap())
                             }
                             _ => { panic!("invalid function param: {:?}", param) }
                         };
                         cur_params.insert(info[a], v);
                     }
-                    constraints.push(make_function(op, cur_params, out_reg));
+                    cur_block.constraints.push(make_function(op, cur_params, out_reg));
                     Some(out_reg)
                 } else {
                     panic!("Function without a result assigned {:?}", self);
                 }
             },
             &Node::Equality {ref left, ref right} => {
-                left.compile(comp, constraints);
-                right.compile(comp, constraints);
+                left.compile(comp, cur_block);
+                right.compile(comp, cur_block);
                 None
             },
             &Node::Record(ref var, ref attrs) => {
@@ -418,28 +418,28 @@ impl<'a> Node<'a> {
                             let result = match **v {
                                 Node::RecordSet(ref records) => {
                                     for record in records[1..].iter() {
-                                        let cur_v = record.compile(comp, constraints).unwrap();
-                                        comp.constraints.push(make_scan(reg, result_a, cur_v));
+                                        let cur_v = record.compile(comp, cur_block).unwrap();
+                                        cur_block.constraints.push(make_scan(reg, result_a, cur_v));
                                     }
-                                    records[0].compile(comp, constraints).unwrap()
+                                    records[0].compile(comp, cur_block).unwrap()
                                 },
                                 Node::ExprSet(ref items) => {
                                     for value in items[1..].iter() {
-                                        let cur_v = value.compile(comp, constraints).unwrap();
-                                        comp.constraints.push(make_scan(reg, result_a, cur_v));
+                                        let cur_v = value.compile(comp, cur_block).unwrap();
+                                        cur_block.constraints.push(make_scan(reg, result_a, cur_v));
                                     }
-                                    items[0].compile(comp, constraints).unwrap()
+                                    items[0].compile(comp, cur_block).unwrap()
                                 },
-                                _ => v.compile(comp, constraints).unwrap()
+                                _ => v.compile(comp, cur_block).unwrap()
                             };
                             (result_a, result)
                         },
                         &Node::AttributeInequality {ref attribute, ref op, ref right } => {
                             let reg = comp.get_value(attribute);
-                            let right_value = right.compile(comp, constraints);
+                            let right_value = right.compile(comp, cur_block);
                             match right_value {
                                 Some(r) => {
-                                    constraints.push(make_filter(op, reg, r));
+                                    cur_block.constraints.push(make_filter(op, reg, r));
                                 },
                                 _ => panic!("inequality without both a left and right: {} {} {:?}", attribute, op, right)
                             }
@@ -447,7 +447,7 @@ impl<'a> Node<'a> {
                         },
                         _ => { panic!("TODO") }
                     };
-                    constraints.push(make_scan(reg, a, v));
+                    cur_block.constraints.push(make_scan(reg, a, v));
                 };
                 Some(reg)
             },
@@ -473,19 +473,19 @@ impl<'a> Node<'a> {
                             let result = match **v {
                                 Node::RecordSet(ref records) => {
                                     for record in records[1..].iter() {
-                                        let cur_v = record.compile(comp, constraints).unwrap();
-                                        comp.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
+                                        let cur_v = record.compile(comp, cur_block).unwrap();
+                                        cur_block.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
                                     }
-                                    records[0].compile(comp, constraints).unwrap()
+                                    records[0].compile(comp, cur_block).unwrap()
                                 },
                                 Node::ExprSet(ref items) => {
                                     for value in items[1..].iter() {
-                                        let cur_v = value.compile(comp, constraints).unwrap();
-                                        comp.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
+                                        let cur_v = value.compile(comp, cur_block).unwrap();
+                                        cur_block.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
                                     }
-                                    items[0].compile(comp, constraints).unwrap()
+                                    items[0].compile(comp, cur_block).unwrap()
                                 },
-                                _ => v.compile(comp, constraints).unwrap()
+                                _ => v.compile(comp, cur_block).unwrap()
                             };
 
                             (result_a, result)
@@ -495,10 +495,10 @@ impl<'a> Node<'a> {
                     if identity_contributing {
                         identity_attrs.push(v);
                     }
-                    constraints.push(Constraint::Insert{e:reg, a, v, commit});
+                    cur_block.constraints.push(Constraint::Insert{e:reg, a, v, commit});
                 };
                 if needs_id {
-                    constraints.push(make_function("gen_id", identity_attrs, reg));
+                    cur_block.constraints.push(make_function("gen_id", identity_attrs, reg));
                 }
                 Some(reg)
             },
@@ -506,7 +506,7 @@ impl<'a> Node<'a> {
                 // @TODO: compile attribute access correctly
                 let (reg, attr) = match **record {
                     Node::MutatingAttributeAccess(ref items) => {
-                        let parent = record.compile(comp, constraints);
+                        let parent = record.compile(comp, cur_block);
                         (parent.unwrap(), Some(items[items.len() - 1]))
                     },
                     Node::Variable(v) => {
@@ -521,14 +521,14 @@ impl<'a> Node<'a> {
                     (None, &Node::NoneValue) => { (Field::Value(0), Field::Value(0)) }
                     (Some(attr), &Node::NoneValue) => { (comp.interner.string(attr), Field::Value(0)) }
                     (Some(attr), v) => {
-                        (comp.interner.string(attr), v.compile(comp, constraints).unwrap())
+                        (comp.interner.string(attr), v.compile(comp, cur_block).unwrap())
                     },
                     // @TODO: this doesn't handle the case where you do
                     // foo.bar <- [#zomg a]
                     (None, &Node::OutputRecord(..)) => {
                         match op {
                             &"<-" => {
-                                val.compile(comp, constraints);
+                                val.compile(comp, cur_block);
                                 (Field::Value(0), Field::Value(0))
                             }
                             _ => panic!("Invalid {:?}", self)
@@ -538,89 +538,133 @@ impl<'a> Node<'a> {
                 };
                 match (*op, a, v) {
                     (":=", Field::Value(0), Field::Value(0)) => {
-                        constraints.push(Constraint::RemoveEntity {e:reg });
+                        cur_block.constraints.push(Constraint::RemoveEntity {e:reg });
                     },
                     (":=", _, Field::Value(0)) => {
-                        constraints.push(Constraint::RemoveAttribute {e:reg, a });
+                        cur_block.constraints.push(Constraint::RemoveAttribute {e:reg, a });
                     },
                     (":=", _, _) => {
-                        constraints.push(Constraint::RemoveAttribute {e:reg, a });
-                        constraints.push(Constraint::Insert {e:reg, a, v, commit});
+                        cur_block.constraints.push(Constraint::RemoveAttribute {e:reg, a });
+                        cur_block.constraints.push(Constraint::Insert {e:reg, a, v, commit});
                     },
                     (_, Field::Value(0), Field::Value(0)) => {  }
-                    ("+=", _, _) => { constraints.push(Constraint::Insert {e:reg, a, v, commit}); }
-                    ("-=", _, _) => { constraints.push(Constraint::Remove {e:reg, a, v }); }
+                    ("+=", _, _) => { cur_block.constraints.push(Constraint::Insert {e:reg, a, v, commit}); }
+                    ("-=", _, _) => { cur_block.constraints.push(Constraint::Remove {e:reg, a, v }); }
                     _ => { panic!("Invalid record update {:?} {:?} {:?}", op, a, v) }
                 }
                 Some(reg)
             },
             &Node::Not(ref items) => {
-                // comp.staged_nodes.push(SubBlock::Not(vec![]));
                 // @TODO: implement this
-                // for item in items {
-                //     item.compile(comp, constraints);
-                // };
+                let mut sub_block = BlockCompilation::new();
+                for item in items {
+                    item.compile(comp, &mut sub_block);
+                };
+                cur_block.sub_blocks.push(SubBlock::Not(sub_block));
                 None
             },
             &Node::Search(ref statements) => {
                 for s in statements {
-                    s.compile(comp, constraints);
+                    s.compile(comp, cur_block);
                 };
                 None
             },
             &Node::Bind(ref statements) => {
                 for s in statements {
-                    s.compile(comp, constraints);
+                    s.compile(comp, cur_block);
                 };
                 None
             },
             &Node::Commit(ref statements) => {
                 for s in statements {
-                    s.compile(comp, constraints);
+                    s.compile(comp, cur_block);
                 };
                 None
             },
             &Node::Project(ref values) => {
                 let registers = values.iter()
-                                      .map(|v| v.compile(comp, constraints))
+                                      .map(|v| v.compile(comp, cur_block))
                                       .filter(|v| if let &Some(Field::Register(_)) = v { true } else { false })
                                       .map(|v| if let Some(Field::Register(reg)) = v { reg } else { panic!() })
                                       .collect();
-                constraints.push(Constraint::Project {registers});
+                cur_block.constraints.push(Constraint::Project {registers});
                 None
             },
             &Node::Watch(ref name, ref values) => {
                 let registers = values.iter()
-                                      .map(|v| v.compile(comp, constraints))
+                                      .map(|v| v.compile(comp, cur_block))
                                       .filter(|v| if let &Some(Field::Register(_)) = v { true } else { false })
                                       .map(|v| if let Some(Field::Register(reg)) = v { reg } else { panic!() })
                                       .collect();
-                constraints.push(Constraint::Watch {name:name.to_string(), registers});
+                cur_block.constraints.push(Constraint::Watch {name:name.to_string(), registers});
                 None
             },
             &Node::Block{ref search, ref update} => {
-                let mut block_constraints = vec![];
                 if let Some(ref s) = **search {
-                    s.compile(comp, &mut block_constraints);
+                    s.compile(comp, cur_block);
                 };
-                update.compile(comp, &mut block_constraints);
-                for c in block_constraints {
-                    comp.constraints.push(c);
+                update.compile(comp, cur_block);
+                let subs = cur_block.sub_blocks.clone();
+                for sub in subs {
+                    self.sub_block(comp, cur_block, &sub);
                 }
-                // let subs = comp.staged_nodes.clone();
-                // for sub in subs {
-                //     self.sub_block(comp, &sub);
-                // }
                 None
             },
             _ => panic!("Trying to compile something we don't know how to compile {:?}", self)
         }
     }
 
-    pub fn sub_block(&self, comp:&mut Compilation, block:&SubBlock) {
-        println!("SUB {:?}", block);
+    pub fn sub_block(&self, comp:&mut Compilation, parent:&BlockCompilation, block:&SubBlock) {
+        println!("SUB");
+        match block {
+            &SubBlock::Not(ref cur_block) => {
+                let (related, inputs) = get_related_constraints(&cur_block.constraints, &parent.constraints);
+                println!("   INPUTS {:?}", inputs);
+                for c in related {
+                    println!("    {:?}", c);
+                }
+            }
+        }
     }
 
+}
+
+pub fn get_related_constraints(needles:&Vec<Constraint>, haystack:&Vec<Constraint>) -> (Vec<Constraint>, HashSet<Field>) {
+    let mut regs = HashSet::new();
+    let mut input_regs = HashSet::new();
+    let mut related = needles.clone();
+    for needle in needles.iter() {
+        for reg in needle.get_registers() {
+            regs.insert(reg);
+        }
+    }
+    for hay in haystack {
+        let mut found = false;
+        let outs = hay.get_output_registers();
+        for out in outs.iter() {
+            if regs.contains(out) {
+                found = true;
+                input_regs.insert(*out);
+            }
+        }
+        if found {
+            related.push(hay.clone());
+        }
+    }
+    (related, input_regs)
+}
+
+
+#[derive(Debug, Clone)]
+pub struct BlockCompilation {
+    constraints: Vec<Constraint>,
+    sub_blocks: Vec<SubBlock>,
+}
+
+impl BlockCompilation {
+    pub fn new() -> BlockCompilation {
+        BlockCompilation { constraints:vec![], sub_blocks:vec![] }
+    }
 }
 
 pub struct Compilation<'a> {
@@ -1022,20 +1066,21 @@ named!(markdown<Node<'a>>,
 pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
     let parsed = block(content.as_bytes());
     let mut comp = Compilation::new(interner);
+    let mut block_comp = BlockCompilation::new();
     // println!("Parsed {:?}", parsed);
     match parsed {
         IResult::Done(_, mut block) => {
             block.unify(&mut comp);
-            block.compile(&mut comp, &mut vec![]);
+            block.compile(&mut comp, &mut block_comp);
         }
         _ => { println!("Failed: {:?}", parsed); }
     }
 
-    for c in comp.constraints.iter() {
+    for c in block_comp.constraints.iter() {
         println!("{:?}", c);
     }
-    reassign_registers(&mut comp.constraints);
-    Block::new(name, comp.constraints)
+    reassign_registers(&mut block_comp.constraints);
+    Block::new(name, block_comp.constraints)
 }
 
 pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
@@ -1053,13 +1098,14 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
                 // println!("{:?}\n", block);
                 ix += 1;
                 let mut comp = Compilation::new(interner);
+                let mut block_comp = BlockCompilation::new();
                 block.unify(&mut comp);
-                block.compile(&mut comp, &mut vec![]);
-                reassign_registers(&mut comp.constraints);
-                for c in comp.constraints.iter() {
+                block.compile(&mut comp, &mut block_comp);
+                reassign_registers(&mut block_comp.constraints);
+                for c in block_comp.constraints.iter() {
                     println!("{:?}", c);
                 }
-                program_blocks.push(Block::new(&format!("{}|block|{}", path, ix), comp.constraints));
+                program_blocks.push(Block::new(&format!("{}|block|{}", path, ix), block_comp.constraints));
             }
             program_blocks
         } else {
