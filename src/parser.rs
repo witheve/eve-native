@@ -246,7 +246,7 @@ impl<'a> Node<'a> {
             },
             &mut Node::Not(ref mut items) => {
                 for item in items {
-                    // item.gather_equalities(comp);
+                    item.gather_equalities(comp);
                 };
                 None
             },

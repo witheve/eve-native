@@ -1132,12 +1132,12 @@ impl Constraint {
             }
             &mut Constraint::Function {ref mut output, ref mut params, ref mut param_mask, ref mut output_mask, ..} => {
                 {
-                    let out_copy = &mut output.clone();
-                    let mut vs = vec![out_copy];
+                    let mut vs = vec![];
                     vs.extend(params.iter_mut());
                     replace_registers(&mut vs, lookup);
                 }
                 *param_mask = make_register_mask(params.iter().collect());
+                *output = *lookup.get(output).unwrap();
                 *output_mask = make_register_mask(vec![output]);
             }
             &mut Constraint::Filter {ref mut left, ref mut right, ref mut param_mask, ..} => {
