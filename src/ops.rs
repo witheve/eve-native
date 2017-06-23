@@ -697,7 +697,7 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, frame: &
                         (0, &Field::Register(reg), _, _) => reg as u32,
                         (1, _, &Field::Register(reg), _) => reg as u32,
                         (2, _, _, &Field::Register(reg)) => reg as u32,
-                        _ => panic!("bad scan output"),
+                        _ => panic!("bad scan output {:?} {:?} {:?} {:?}", output,e,a,v),
                     };
                 }
                 _ => panic!("Implement me"),
@@ -964,6 +964,14 @@ pub fn register(ix: usize) -> Field {
     Field::Register(ix)
 }
 
+pub fn is_register(field:&Field) -> bool {
+    if let &Field::Register(_) = field {
+        true
+    } else {
+        false
+    }
+}
+
 //-------------------------------------------------------------------------
 // Interner
 //-------------------------------------------------------------------------
@@ -1081,6 +1089,81 @@ pub enum Constraint {
     RemoveEntity {e: Field },
     Project {registers: Vec<usize>},
     Watch {name: String, registers: Vec<usize>},
+}
+
+fn filter_registers(fields:&Vec<&Field>) -> Vec<Field> {
+    fields.iter().filter(|v| is_register(**v)).map(|v| (**v).clone()).collect()
+}
+
+fn replace_registers(fields:&mut Vec<&mut Field>, lookup:&HashMap<Field,Field>) {
+    for field in fields {
+        if is_register(*field) {
+            **field = *lookup.get(field).unwrap();
+        }
+    }
+}
+
+impl Constraint {
+    pub fn get_registers(&self) -> Vec<Field> {
+        match self {
+            &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::Function {ref output, ref params, ..} => {
+                let mut vs = vec![output];
+                vs.extend(params);
+                filter_registers(&vs)
+            }
+            &Constraint::Filter {ref left, ref right, ..} => {
+                filter_registers(&vec![left, right])
+            }
+            &Constraint::Insert { ref e, ref a, ref v, .. } => { filter_registers(&vec![e,a,v]) },
+            &Constraint::Remove { ref e, ref a, ref v } => { filter_registers(&vec![e,a,v]) },
+            &Constraint::RemoveAttribute { ref e, ref a } => { filter_registers(&vec![e,a]) },
+            &Constraint::RemoveEntity { ref e } => { filter_registers(&vec![e]) },
+            &Constraint::Project {ref registers} => { registers.iter().map(|v| Field::Register(*v)).collect() },
+            &Constraint::Watch {ref registers, ..} => { registers.iter().map(|v| Field::Register(*v)).collect() },
+        }
+    }
+
+    pub fn replace_registers(&mut self, lookup:&HashMap<Field, Field>) {
+        match self {
+            &mut Constraint::Scan { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
+                replace_registers(&mut vec![e,a,v], lookup);
+                *register_mask = make_register_mask(vec![e,a,v]);
+            }
+            &mut Constraint::Function {ref mut output, ref mut params, ref mut param_mask, ref mut output_mask, ..} => {
+                {
+                    let out_copy = &mut output.clone();
+                    let mut vs = vec![out_copy];
+                    vs.extend(params.iter_mut());
+                    replace_registers(&mut vs, lookup);
+                }
+                *param_mask = make_register_mask(params.iter().collect());
+                *output_mask = make_register_mask(vec![output]);
+            }
+            &mut Constraint::Filter {ref mut left, ref mut right, ref mut param_mask, ..} => {
+                replace_registers(&mut vec![left, right], lookup);
+                *param_mask = make_register_mask(vec![left, right]);
+            }
+            &mut Constraint::Insert { ref mut e, ref mut a, ref mut v, ..} => { replace_registers(&mut vec![e,a,v], lookup); },
+            &mut Constraint::Remove { ref mut e, ref mut a, ref mut v } => { replace_registers(&mut vec![e,a,v], lookup); },
+            &mut Constraint::RemoveAttribute { ref mut e, ref mut a } => { replace_registers(&mut vec![e,a], lookup); },
+            &mut Constraint::RemoveEntity { ref mut e } => { replace_registers(&mut vec![e], lookup); },
+            &mut Constraint::Project {ref mut registers} => {
+                for reg in registers.iter_mut() {
+                    if let &Field::Register(neue) = lookup.get(&Field::Register(*reg)).unwrap() {
+                        *reg = neue;
+                    }
+                }
+            },
+            &mut Constraint::Watch {ref mut registers, ..} => {
+                for reg in registers.iter_mut() {
+                    if let &Field::Register(neue) = lookup.get(&Field::Register(*reg)).unwrap() {
+                        *reg = neue;
+                    }
+                }
+            },
+        }
+    }
 }
 
 impl Clone for Constraint {

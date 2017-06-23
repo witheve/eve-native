@@ -646,6 +646,23 @@ impl<'a> Compilation<'a> {
     }
 }
 
+pub fn reassign_registers(constraints: &mut Vec<Constraint>) {
+    let mut regs = HashMap::new();
+    let mut ix = 0;
+    for c in constraints.iter() {
+        for reg in c.get_registers() {
+            regs.entry(reg).or_insert_with(|| {
+                let out = Field::Register(ix);
+                ix += 1;
+                out
+            });
+        }
+    }
+    for c in constraints.iter_mut() {
+        c.replace_registers(&regs);
+    }
+}
+
 named!(pub space, eat_separator!(&b" \t\n\r,"[..]));
 
 #[macro_export]
@@ -988,7 +1005,7 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
     for c in comp.constraints.iter() {
         println!("{:?}", c);
     }
-
+    reassign_registers(&mut comp.constraints);
     Block::new(name, comp.constraints)
 }
 
@@ -1009,6 +1026,7 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
                 let mut comp = Compilation::new(interner);
                 block.unify(&mut comp);
                 block.compile(&mut comp, &mut vec![]);
+                reassign_registers(&mut comp.constraints);
                 for c in comp.constraints.iter() {
                     println!("{:?}", c);
                 }
