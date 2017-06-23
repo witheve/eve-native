@@ -37,6 +37,7 @@ pub enum Node<'a> {
     Float(f32),
     RawString(&'a str),
     EmbeddedString(Option<String>, Vec<Node<'a>>),
+    ExprSet(Vec<Node<'a>>),
     NoneValue,
     Tag(&'a str),
     Variable(&'a str),
@@ -163,6 +164,12 @@ impl<'a> Node<'a> {
                 let l = left.gather_equalities(comp).unwrap();
                 let r = right.gather_equalities(comp).unwrap();
                 comp.equalities.push((l,r));
+                None
+            },
+            &mut Node::ExprSet(ref mut items) => {
+                for expr in items {
+                    expr.gather_equalities(comp);
+                }
                 None
             },
             &mut Node::Infix {ref mut result, ref mut left, ref mut right, ..} => {
@@ -396,14 +403,22 @@ impl<'a> Node<'a> {
                         &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result_a = comp.interner.string(a);
-                            let result = if let Node::RecordSet(ref records) = **v {
-                                for record in records[1..].iter() {
-                                    let cur_v = record.compile(comp).unwrap();
-                                    comp.constraints.push(make_scan(reg, result_a, cur_v));
-                                }
-                                records[0].compile(comp).unwrap()
-                            } else {
-                                v.compile(comp).unwrap()
+                            let result = match **v {
+                                Node::RecordSet(ref records) => {
+                                    for record in records[1..].iter() {
+                                        let cur_v = record.compile(comp).unwrap();
+                                        comp.constraints.push(make_scan(reg, result_a, cur_v));
+                                    }
+                                    records[0].compile(comp).unwrap()
+                                },
+                                Node::ExprSet(ref items) => {
+                                    for value in items[1..].iter() {
+                                        let cur_v = value.compile(comp).unwrap();
+                                        comp.constraints.push(make_scan(reg, result_a, cur_v));
+                                    }
+                                    items[0].compile(comp).unwrap()
+                                },
+                                _ => v.compile(comp).unwrap()
                             };
                             (result_a, result)
                         },
@@ -443,15 +458,24 @@ impl<'a> Node<'a> {
                         &Node::Attribute(a) => { (comp.interner.string(a), comp.get_value(a)) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result_a = comp.interner.string(a);
-                            let result = if let Node::RecordSet(ref records) = **v {
-                                for record in records[1..].iter() {
-                                    let cur_v = record.compile(comp).unwrap();
-                                    comp.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
-                                }
-                                records[0].compile(comp).unwrap()
-                            } else {
-                                v.compile(comp).unwrap()
+                            let result = match **v {
+                                Node::RecordSet(ref records) => {
+                                    for record in records[1..].iter() {
+                                        let cur_v = record.compile(comp).unwrap();
+                                        comp.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
+                                    }
+                                    records[0].compile(comp).unwrap()
+                                },
+                                Node::ExprSet(ref items) => {
+                                    for value in items[1..].iter() {
+                                        let cur_v = value.compile(comp).unwrap();
+                                        comp.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
+                                    }
+                                    items[0].compile(comp).unwrap()
+                                },
+                                _ => v.compile(comp).unwrap()
                             };
+
                             (result_a, result)
                         },
                         _ => { panic!("TODO") }
@@ -692,6 +716,11 @@ named!(expr<Node<'a>>,
                value
                )));
 
+named!(expr_set<Node<'a>>,
+       do_parse!(
+           items: sp!(delimited!(tag!("("), many1!(sp!(expr)) ,tag!(")"))) >>
+           (Node::ExprSet(items))));
+
 named!(hashtag<Node>,
        do_parse!(
            tag!("#") >>
@@ -714,7 +743,7 @@ named!(attribute_equality<Node<'a>>,
        do_parse!(
            attr: identifier >>
            sp!(alt_complete!(tag!(":") | tag!("="))) >>
-           value: alt_complete!(record_set | expr) >>
+           value: alt_complete!(record_set | expr | expr_set) >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
 named!(attribute<Node<'a>>,
@@ -778,7 +807,7 @@ named_args!(output_attribute_equality<'a>(output_type:OutputType) <Node<'a>>,
        do_parse!(
            attr: identifier >>
            sp!(alt_complete!(tag!(":") | tag!("="))) >>
-           value: alt_complete!(apply!(output_record_set, output_type) | expr) >>
+           value: alt_complete!(apply!(output_record_set, output_type) | expr | expr_set) >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
 named_args!(output_attribute<'a>(output_type:OutputType) <Node<'a>>,
