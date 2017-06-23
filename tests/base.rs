@@ -88,30 +88,251 @@ test!(base_no_scans_fail, {
         [#success]
 });
 
-test!(base_interpolation_simple, {
-    search
-        x = 1 + 1
-    bind
-        [#foo chorp: "{{x}}"]
+//////////////////////////////////////////////////////////////////////
+// Joins
+//////////////////////////////////////////////////////////////////////
+
+test!(base_join_constant, {
+    commit
+        [#foo x: 3]
 
     ~~~
 
     search
-        [#foo chorp: "2"]
+        x = 3
+        [#foo x]
     bind
         [#success]
 });
 
-test!(base_interpolation_expression, {
+test!(base_join_expression, {
+    commit
+        [#foo x: 3]
+    ~~~
+
     search
-        x = 1 + 1
+        x = 1 + 2
+        [#foo x]
     bind
-        [#foo chorp: "{{x + 1}}"]
+        [#success]
+});
+
+test!(base_join_cross_different, {
+    commit
+        [#foo x: 3]
+        [#bar y: "hi"]
 
     ~~~
 
     search
-        [#foo chorp: "3"]
+        [#foo x: 3]
+        [#bar y: "hi"]
+    bind
+        [#success]
+});
+
+test!(base_join_cross_similar, {
+    commit
+        [#foo x: 3]
+        [#foo x: 4]
+
+    ~~~
+
+    search
+        [#foo x: 3]
+        [#foo x: 4]
+    bind
+        [#success]
+});
+
+test!(base_join_many_attributes, {
+    commit
+        [#foo x: 3 y: "hi"]
+
+    ~~~
+
+    search
+        [#foo x: 3 y: "hi"]
+    bind
+        [#success]
+});
+
+test!(base_join_many_values, {
+    commit
+        [#foo x: (3, 4)]
+
+    ~~~
+
+    search
+        [#foo x: (3, 4)]
+    bind
+        [#success]
+});
+
+
+test!(base_join_binary, {
+    commit
+        [#foo x: 3]
+        [#bar x: 3]
+
+    ~~~
+
+    search
+        [#foo x]
+        [#bar x]
+    bind
+        [#success]
+});
+
+test!(base_join_binary_multi, {
+    commit
+        [#foo x: (3, 4, 5)]
+        [#bar y: (4, 5, 6)]
+
+    ~~~
+
+    search
+        [#foo x]
+        [#bar y: x]
+    bind
+        [#success]
+});
+
+test!(base_join_trinary, {
+    commit
+        [#foo x: 3]
+        [#bar x: 3]
+        [#baz x: 3]
+
+    ~~~
+
+    search
+        [#foo x]
+        [#bar x]
+        [#baz x]
+    bind
+        [#success]
+});
+
+test!(base_join_transitive, {
+    commit
+        [#foo x: 3]
+        [#bar x: 3 y: 5]
+        [#baz y: 5 z: 8]
+
+    ~~~
+
+    search
+        [#foo x]
+        [#bar x y]
+        [#baz y z]
+    bind
+        [#success]
+});
+
+
+test!(base_join_binary_unmatched, {
+    commit
+        [#foo x: 3]
+        [#bar y: 4]
+
+    ~~~
+
+    search
+        [#foo x]
+        [#bar y != x]
+    bind
+        [#success]
+});
+
+//////////////////////////////////////////////////////////////////////
+// Interpolation
+//////////////////////////////////////////////////////////////////////
+
+test!(base_interpolation_search_number, {
+    search
+        x = 1 + 1
+        baz = "{{x}}"
+    bind
+        [#foo baz]
+
+    ~~~
+
+    search
+        [#foo baz: "2"]
+    bind
+        [#success]
+});
+
+test!(base_interpolation_search_expression, {
+    search
+        baz = "{{1 + 2}}"
+    bind
+        [#foo baz]
+
+    ~~~
+
+    search
+        [#foo baz: "3"]
+    bind
+        [#success]
+});
+
+test!(base_interpolation_search_multiple, {
+    search
+        x = 1
+        y = 3.5
+        baz = "({{x}}, {{y}})"
+    bind
+        [#foo baz]
+
+    ~~~
+
+    search
+        [#foo baz: "(1, 3.5)"]
+    bind
+        [#success]
+});
+
+test!(base_interpolation_bind_string, {
+    search
+        x = "hi there!"
+    bind
+        [#foo baz: "{{x}}"]
+
+    ~~~
+
+    search
+        [#foo baz: "hi there!"]
+    bind
+        [#success]
+});
+
+
+test!(base_interpolation_bind_number, {
+    search
+        x = 1 + 1
+    bind
+        [#foo baz: "{{x}}"]
+
+    ~~~
+
+    search
+        [#foo baz: "2"]
+    bind
+        [#success]
+});
+
+test!(base_interpolation_bind_expression, {
+    search
+        x = 1 + 1
+    bind
+        [#foo baz: "{{x + 1}}"]
+
+    ~~~
+
+    search
+        [#foo baz: "3"]
     bind
         [#success]
 });
