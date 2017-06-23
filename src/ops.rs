@@ -1083,6 +1083,27 @@ pub enum Constraint {
     Watch {name: String, registers: Vec<usize>},
 }
 
+impl Clone for Constraint {
+    fn clone(&self) -> Self {
+        match self {
+            &Constraint::Scan { e, a, v, register_mask } => { Constraint::Scan {e,a,v,register_mask} }
+            &Constraint::Function {ref op, ref output, ref func, ref params, ref param_mask, ref output_mask} => {
+                Constraint::Function{ op:op.clone(), output:output.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
+            }
+            &Constraint::Filter {ref op, ref func, ref left, ref right, ref param_mask} => {
+                Constraint::Filter{ op:op.clone(), func:*func, left:left.clone(), right:right.clone(), param_mask:*param_mask }
+            }
+            &Constraint::Insert { e,a,v,commit } => { Constraint::Insert { e,a,v,commit } },
+            &Constraint::Remove { e,a,v } => { Constraint::Remove { e,a,v } },
+            &Constraint::RemoveAttribute { e,a } => { Constraint::RemoveAttribute { e,a } },
+            &Constraint::RemoveEntity { e } => { Constraint::RemoveEntity { e } },
+            &Constraint::Project {ref registers} => { Constraint::Project { registers:registers.clone() } },
+            &Constraint::Watch {ref name, ref registers} => { Constraint::Watch { name:name.clone(), registers:registers.clone() } },
+
+        }
+    }
+}
+
 impl fmt::Debug for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -1829,7 +1850,7 @@ impl Transaction {
         while next_frame {
             let mut items = program.state.rounds.iter();
             while let Some(change) = items.next(&mut program.state.rounds) {
-                // println!("{}", change.print(&program));
+                println!("{}", change.print(&program));
                 // If this is an add, we want to do it *before* we start running pipes.
                 // This ensures that if there are two constraints in a single block that
                 // would both match the given input, they both have a chance to see this
