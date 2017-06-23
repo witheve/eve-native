@@ -428,7 +428,7 @@ impl<'a> Node<'a> {
                                         let cur_v = value.compile(comp, constraints).unwrap();
                                         comp.constraints.push(make_scan(reg, result_a, cur_v));
                                     }
-                                    items[0].compile(comp).unwrap()
+                                    items[0].compile(comp, constraints).unwrap()
                                 },
                                 _ => v.compile(comp, constraints).unwrap()
                             };
@@ -485,7 +485,7 @@ impl<'a> Node<'a> {
                                     }
                                     items[0].compile(comp, constraints).unwrap()
                                 },
-                                _ => v.compile(comp).unwrap()
+                                _ => v.compile(comp, constraints).unwrap()
                             };
 
                             (result_a, result)
