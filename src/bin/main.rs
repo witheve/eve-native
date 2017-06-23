@@ -44,6 +44,7 @@ fn main() {
     for block in blocks {
         program.raw_block(block);
     }
+    println!("Starting run loop.");
     loop {
         let mut v = program.incoming.recv().unwrap();
         let mut start_ns = time::precise_time_ns();

@@ -2,10 +2,11 @@
 - Core language
 ----------------------------------------------------
 
-Pipe combinations
+x Pipe combinations
 
 Not
   - parser
+    - track variable level
     - multi-block parses
     - generate not block
     - replace block with anti-scan
