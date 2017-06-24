@@ -84,32 +84,3 @@ impl Watcher for PrintWatcher {
         }
     }
 }
-
-pub fn run_timer() {
-    // Create a new timer with default settings. While this is the easiest way
-    // to get a timer, usually you will want to tune the config settings for
-    // your usage patterns.
-    let timer = Timer::default();
-
-    // Set a timeout that expires in 500 milliseconds
-    let interval = timer.interval_at(Instant::now(),Duration::from_millis(500));
-    println!("int {:?}", interval);
-    let foo = interval.for_each(|x| {
-        println!("It's time! {:?}", x);
-        future::ok::<(), TimerError>(())
-    }).map_err(|x| {
-        panic!("uh oh");
-    });
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-    handle.spawn(foo);
-    println!("Should be running");
-    core.turn(None);
-    // core.run(future::ok::<(), TimerError>(()));
-}
-
-
-#[test]
-pub fn timer_test() {
-    run_timer();
-}
