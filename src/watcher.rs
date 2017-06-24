@@ -7,11 +7,10 @@ use self::tokio_core::reactor::{Core, Remote};
 use tokio_timer::*;
 use futures::*;
 use std::time::*;
-use indexes::{WatchDiff, MyHasher};
-use hash::map::{HashMap};
+use indexes::{WatchDiff};
 use ops::{Internable, Interner, RawChange};
-use std::sync::mpsc::{Sender, SyncSender, Receiver};
-use std::thread::{self, JoinHandle};
+use std::sync::mpsc::{SyncSender};
+use std::thread::{self};
 use std::sync::mpsc;
 
 pub trait Watcher {
@@ -19,8 +18,6 @@ pub trait Watcher {
 }
 
 pub struct SystemTimerWatcher {
-    listeners: HashMap<Internable, Vec<Internable>, MyHasher>,
-    thread: JoinHandle<()>,
     remote: Remote,
     outgoing: SyncSender<Vec<RawChange>>,
 }
@@ -28,9 +25,8 @@ pub struct SystemTimerWatcher {
 impl SystemTimerWatcher {
     pub fn new(outgoing: SyncSender<Vec<RawChange>>) -> SystemTimerWatcher {
         let (sender, receiver) = mpsc::channel();
-        let thread = thread::spawn(move || {
+        thread::spawn(move || {
             let mut core = Core::new().unwrap();
-            let timer = Timer::default();
             let remote = core.remote();
             sender.send(remote).unwrap();
             loop {
@@ -38,7 +34,7 @@ impl SystemTimerWatcher {
             }
         });
         let remote = receiver.recv().unwrap();
-        SystemTimerWatcher { thread, listeners:HashMap::default(), remote, outgoing }
+        SystemTimerWatcher { remote, outgoing }
     }
 }
 
@@ -52,7 +48,7 @@ impl Watcher for SystemTimerWatcher {
             let timer = Timer::default();
             let interval = timer.interval_at(Instant::now(),Duration::from_millis(resolution));
             let outgoing = self.outgoing.clone();
-            let foo = interval.for_each(move |x| {
+            let foo = interval.for_each(move |_| {
                 let cur_time = time::now();
                 // println!("It's time! {:?}", cur_time);
                 let changes = vec![
