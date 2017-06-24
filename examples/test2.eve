@@ -1,0 +1,15 @@
+hm.
+
+~~~
+search
+  f = [#foo]
+  not([#bar])
+bind
+  [#zomg]
+~~~
+
+~~~
+commit
+  [#foo]
+  [#bar]
+~~~
