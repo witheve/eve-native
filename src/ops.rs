@@ -148,6 +148,9 @@ impl Block {
                     }
                     moves.insert(ix, scan_moves);
                 },
+                &Constraint::AntiScan {ref e, ref a, ref v, .. } => {
+                    // @TODO
+                },
                 &Constraint::Function {ref output, ..} => {
                     // @TODO: ensure that all inputs are accounted for
                     // count the registers in the functions
@@ -1081,6 +1084,7 @@ type Function = fn(Vec<&Internable>) -> Option<Internable>;
 #[allow(dead_code)]
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
+    AntiScan {e: Field, a: Field, v: Field, register_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
@@ -1107,6 +1111,7 @@ impl Constraint {
     pub fn get_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::AntiScan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
             &Constraint::Function {ref output, ref params, ..} => {
                 let mut vs = vec![output];
                 vs.extend(params);
@@ -1135,6 +1140,10 @@ impl Constraint {
     pub fn replace_registers(&mut self, lookup:&HashMap<Field, Field>) {
         match self {
             &mut Constraint::Scan { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
+                replace_registers(&mut vec![e,a,v], lookup);
+                *register_mask = make_register_mask(vec![e,a,v]);
+            }
+            &mut Constraint::AntiScan { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
                 replace_registers(&mut vec![e,a,v], lookup);
                 *register_mask = make_register_mask(vec![e,a,v]);
             }
@@ -1178,6 +1187,7 @@ impl Clone for Constraint {
     fn clone(&self) -> Self {
         match self {
             &Constraint::Scan { e, a, v, register_mask } => { Constraint::Scan {e,a,v,register_mask} }
+            &Constraint::AntiScan { e, a, v, register_mask } => { Constraint::AntiScan {e,a,v,register_mask} }
             &Constraint::Function {ref op, ref output, ref func, ref params, ref param_mask, ref output_mask} => {
                 Constraint::Function{ op:op.clone(), output:output.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
             }
@@ -1199,6 +1209,7 @@ impl fmt::Debug for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::AntiScan { e, a, v, .. } => { write!(f, "AntiScan ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
             &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
@@ -1223,6 +1234,11 @@ pub fn make_register_mask(fields: Vec<&Field>) -> u64 {
 pub fn make_scan(e:Field, a:Field, v:Field) -> Constraint {
     let register_mask = make_register_mask(vec![&e,&a,&v]);
     Constraint::Scan{e, a, v, register_mask }
+}
+
+pub fn make_anti_scan(e:Field, a:Field, v:Field) -> Constraint {
+    let register_mask = make_register_mask(vec![&e,&a,&v]);
+    Constraint::AntiScan{e, a, v, register_mask }
 }
 
 pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint {
@@ -1820,8 +1836,10 @@ impl Program {
     }
 
     pub fn insert_block(&mut self, name:&str, code:&str) {
-        let mut b = make_block(&mut self.state.interner, name, code);
-        self.register_block(b)
+        let mut bs = make_block(&mut self.state.interner, name, code);
+        for b in bs {
+            self.register_block(b)
+        }
     }
 
     pub fn block(&mut self, name:&str, code:&str) -> CodeTransaction {

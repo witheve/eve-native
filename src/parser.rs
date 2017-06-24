@@ -3,7 +3,7 @@ extern crate time;
 use nom::{digit, alphanumeric, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::{HashMap, HashSet};
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_filter, make_function, Transaction, Block, Internable, RawChange};
+use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_filter, make_function, Transaction, Block, Internable, RawChange};
 use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
@@ -604,9 +604,8 @@ impl<'a> Node<'a> {
                     s.compile(comp, cur_block);
                 };
                 update.compile(comp, cur_block);
-                let subs = cur_block.sub_blocks.clone();
-                for sub in subs {
-                    self.sub_block(comp, cur_block, &sub);
+                for (ix, mut sub) in cur_block.sub_blocks.iter_mut().enumerate() {
+                    self.sub_block(comp, &mut cur_block.constraints, ix, sub);
                 }
                 None
             },
@@ -614,15 +613,30 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn sub_block(&self, comp:&mut Compilation, parent:&BlockCompilation, block:&SubBlock) {
+    pub fn sub_block(&self, comp:&mut Compilation, parent_constraints:&mut Vec<Constraint>, ix:usize, block:&mut SubBlock) {
         println!("SUB");
         match block {
-            &SubBlock::Not(ref cur_block) => {
-                let (related, inputs) = get_related_constraints(&cur_block.constraints, &parent.constraints);
+            &mut SubBlock::Not(ref mut cur_block) => {
+                let (mut related, inputs) = get_related_constraints(&cur_block.constraints, parent_constraints);
+                let block_name = comp.block_name.to_string();
+                let reg = comp.get_value(&format!("{}|sub_block|not|{}", block_name, ix));
+                let tag = comp.interner.string("tag");
+                let tag_value = comp.interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
+                let mut identity_attrs = vec![tag];
+                related.push(Constraint::Insert {e:reg, a:tag, v:tag_value, commit:false});
+                parent_constraints.push(make_anti_scan(reg, tag, tag_value));
+                for (in_ix, input) in inputs.iter().enumerate() {
+                    let a = comp.interner.string(&format!("input-{}", in_ix));
+                    related.push(Constraint::Insert {e:reg, a, v:*input, commit:false});
+                    parent_constraints.push(make_anti_scan(reg, a, *input));
+                    identity_attrs.push(*input);
+                }
+                related.push(make_function("gen_id", identity_attrs, reg));
                 println!("   INPUTS {:?}", inputs);
-                for c in related {
+                for c in related.iter() {
                     println!("    {:?}", c);
                 }
+                cur_block.constraints = related;
             }
         }
     }
@@ -668,6 +682,7 @@ impl BlockCompilation {
 }
 
 pub struct Compilation<'a> {
+    block_name: String,
     vars: HashMap<String, usize>,
     var_values: HashMap<Field, Field>,
     provided_registers: HashSet<Field>,
@@ -680,8 +695,8 @@ pub struct Compilation<'a> {
 }
 
 impl<'a> Compilation<'a> {
-    pub fn new(interner: &'a mut Interner) -> Compilation<'a> {
-        Compilation { vars:HashMap::new(), var_values:HashMap::new(), provided_registers:HashSet::new(), interner, constraints:vec![], equalities:vec![], staged_nodes:vec![], id:0, reg_count:0 }
+    pub fn new(interner: &'a mut Interner, block_name:String) -> Compilation<'a> {
+        Compilation { vars:HashMap::new(), var_values:HashMap::new(), provided_registers:HashSet::new(), interner, constraints:vec![], equalities:vec![], staged_nodes:vec![], id:0, reg_count:0, block_name }
     }
 
     pub fn get_register(&mut self, name: &str) -> Field {
@@ -1063,9 +1078,10 @@ named!(markdown<Node<'a>>,
                    Node::Doc { file:"foo.eve".to_string(), blocks}
                }))));
 
-pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
+pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block> {
+    let mut blocks = vec![];
     let parsed = block(content.as_bytes());
-    let mut comp = Compilation::new(interner);
+    let mut comp = Compilation::new(interner, name.to_string());
     let mut block_comp = BlockCompilation::new();
     // println!("Parsed {:?}", parsed);
     match parsed {
@@ -1076,11 +1092,28 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Block {
         _ => { println!("Failed: {:?}", parsed); }
     }
 
+    reassign_registers(&mut block_comp.constraints);
     for c in block_comp.constraints.iter() {
         println!("{:?}", c);
     }
-    reassign_registers(&mut block_comp.constraints);
-    Block::new(name, block_comp.constraints)
+    let sub_ix = 0;
+    let mut subs = block_comp.sub_blocks.clone();
+    while subs.len() > 0 {
+        let cur = subs.pop().unwrap();
+        let mut sub_comp = match cur {
+            SubBlock::Not(comp) => comp
+        };
+        subs.extend(sub_comp.sub_blocks);
+        reassign_registers(&mut sub_comp.constraints);
+        println!("    SubBlock");
+        for c in sub_comp.constraints.iter() {
+            println!("        {:?}", c);
+        }
+        blocks.push(Block::new(&format!("block|{}|sub_block|{}", name, sub_ix), sub_comp.constraints));
+    }
+
+    blocks.push(Block::new(name, block_comp.constraints));
+    blocks
 }
 
 pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
@@ -1097,15 +1130,33 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
                 // println!("\n\nBLOCK!");
                 // println!("{:?}\n", block);
                 ix += 1;
-                let mut comp = Compilation::new(interner);
+                let block_name = format!("{}|block|{}", path, ix);
+                let mut comp = Compilation::new(interner, block_name.to_string());
                 let mut block_comp = BlockCompilation::new();
                 block.unify(&mut comp);
                 block.compile(&mut comp, &mut block_comp);
                 reassign_registers(&mut block_comp.constraints);
+                println!("Block");
                 for c in block_comp.constraints.iter() {
                     println!("{:?}", c);
                 }
-                program_blocks.push(Block::new(&format!("{}|block|{}", path, ix), block_comp.constraints));
+                let sub_ix = 0;
+                let mut subs = block_comp.sub_blocks.clone();
+                while subs.len() > 0 {
+                    let cur = subs.pop().unwrap();
+                    let mut sub_comp = match cur {
+                        SubBlock::Not(comp) => comp
+                    };
+                    subs.extend(sub_comp.sub_blocks);
+                    reassign_registers(&mut sub_comp.constraints);
+                    println!("    SubBlock");
+                    for c in sub_comp.constraints.iter() {
+                        println!("        {:?}", c);
+                    }
+                    program_blocks.push(Block::new(&format!("{}|sub_block|{}", block_name, sub_ix), sub_comp.constraints));
+                }
+                println!("");
+                program_blocks.push(Block::new(&block_name, block_comp.constraints));
             }
             program_blocks
         } else {
