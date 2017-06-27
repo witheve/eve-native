@@ -3,7 +3,7 @@ hm.
 ~~~
 search
   f = [#foo]
-  not([#bar])
+  not([#bar f])
 bind
   [#zomg]
 ~~~
@@ -11,5 +11,5 @@ bind
 ~~~
 commit
   [#foo]
-  [#bar]
+  [#bar f: 3]
 ~~~

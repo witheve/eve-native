@@ -568,7 +568,7 @@ pub struct IntermediateIndex<K>
     where K: Hash + Eq + Clone + Debug
 {
     index: HashMap<K, RoundEntry, MyHasher>,
-    rounds: HashMap<Round, HashMap<K, Count, MyHasher>, MyHasher>,
+    pub rounds: HashMap<Round, HashMap<K, Count, MyHasher>, MyHasher>,
     empty: Vec<i32>,
 }
 

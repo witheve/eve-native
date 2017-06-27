@@ -280,8 +280,8 @@ impl Block {
             if outputs.len() > 0 {
                 for inst in get_rounds.iter() {
                     match inst {
-                        Instruction::GetRounds { costraint, .. } |
-                        Instruction::GetAntiRounds { constraint, .. } => {
+                        &Instruction::GetRounds { constraint, .. } |
+                        &Instruction::GetAntiRounds { constraint, .. } => {
                             if constraint != *scan_ix {
                                 last_iter_next -= 1;
                                 let mut neue = inst.clone();
@@ -295,6 +295,7 @@ impl Block {
                                 pipe.push(neue);
                             }
                         }
+                        _ => { panic!("Invalid instruction in rounds: {:?}", inst) }
                     }
                 }
             }
@@ -452,7 +453,8 @@ impl Row {
         self.solved_fields = clear_bit(self.solved_fields, field_index);
     }
 
-    pub fn reset(&mut self, size:u32) {
+    pub fn reset(&mut self) {
+        let size = 64;
         self.solved_fields = 0;
         self.solving_for = 0;
         for field_index in 0..size {
@@ -667,8 +669,9 @@ impl Frame {
 
     pub fn reset(&mut self) {
         self.input = None;
+        self.intermediate = None;
         self.results.clear();
-        self.row.reset(64);
+        self.row.reset();
     }
 }
 
@@ -888,10 +891,10 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
 #[inline(never)]
 pub fn clear_rounds(program: &mut RuntimeState, frame: &mut Frame) -> i32 {
     program.rounds.clear_output_rounds();
-    if let Some(change) = frame.input {
+    if let Some(ref change) = frame.input {
         program.rounds.output_rounds.push((change.round, change.count));
-    } else if Some(change) = frame.intermediate {
-        let count = if change.negate { change.count * -1 } else { change.count }
+    } else if let Some(ref change) = frame.intermediate {
+        let count = if change.negate { change.count * -1 } else { change.count };
         program.rounds.output_rounds.push((change.round, count));
     }
     1
@@ -1625,7 +1628,7 @@ impl RoundHolder {
     }
 
 
-    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F)
+    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F, leftOnEqual: bool)
         where F: FnMut(RoundState, &mut Vec<(Round, Count)>, Option<(Round, Count)>, Round, Count, Option<(Round, Count)>, Round, Count)
     {
         let (neue, current) = match (self.output_rounds.len(), self.prev_output_rounds.len()) {
@@ -1680,7 +1683,7 @@ impl RoundHolder {
                         move_output_round(&left, &mut left_round, &mut left_count);
                     },
                     (Some((next_left_round, _)), Some((next_right_round, _))) => {
-                        if next_left_round < next_right_round {
+                        if next_left_round < next_right_round || (leftOnEqual && next_left_round == next_right_round) {
                             left = next_left;
                             next_left = left_iter.next();
                             move_output_round(&left, &mut left_round, &mut left_count);
@@ -1708,7 +1711,6 @@ impl RoundHolder {
             match state {
                 RoundState::Equal => {
                     if let Some((_, count)) = left {
-                        let total = count * right_count;
                         if right_count == 0 && count != 0 {
                             neue.push((left_round, count));
                         }
@@ -1732,7 +1734,7 @@ impl RoundHolder {
                 }
             }
         };
-        self._compute_output_rounds(right_iter, action);
+        self._compute_output_rounds(right_iter, action, false);
     }
 
     pub fn compute_output_rounds(&mut self, mut right_iter: DistinctIter) {
@@ -1765,7 +1767,9 @@ impl RoundHolder {
                 }
             }
         };
-        self._compute_output_rounds(right_iter, action);
+        // @TODO: Figure out why leftOnEqual is actually necessary to maintain correctness
+        // in this case, but not in the anti case.
+        self._compute_output_rounds(right_iter, action, true);
     }
 
     pub fn insert(&mut self, change:Change) {
@@ -2008,7 +2012,6 @@ impl Program {
                     }
                     &PipeShape::Intermediate(id) => {
                         let cur = self.block_info.intermediate_pipe_lookup.entry(id).or_insert_with(|| vec![]);
-                        println!("Intermediate shape! {:?}, {:?}", shape, pipe);
                         cur.push(pipe.clone());
                     }
                 }
@@ -2111,6 +2114,77 @@ pub struct Transaction {
     frame: Frame,
 }
 
+fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round) {
+    if let Some(_) = state.intermediates.rounds.get(&current_round) {
+        let mut remaining:Vec<(Vec<Interned>, Count)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
+        while remaining.len() > 0 {
+            for (key, count) in remaining {
+                let cur = IntermediateChange { key, count, round:current_round, negate: true };
+                println!("LOOKIN {:?}", cur);
+                let actives = block_info.intermediate_pipe_lookup.get(&cur.key[0]).unwrap().iter();
+                frame.reset();
+                frame.intermediate = Some(cur);
+                for pipe in actives {
+                    frame.row.reset();
+                    interpret(state, block_info, frame, pipe);
+                }
+            }
+            remaining = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
+        }
+    }
+}
+
+fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
+    let mut pipes = vec![];
+    let mut next_frame = true;
+
+    while next_frame {
+        let mut current_round = 0;
+        let mut items = program.state.rounds.iter();
+        while let Some(change) = items.next(&mut program.state.rounds) {
+            current_round = change.round;
+            println!("{}", change.print(&program));
+            // If this is an add, we want to do it *before* we start running pipes.
+            // This ensures that if there are two constraints in a single block that
+            // would both match the given input, they both have a chance to see this
+            // new triple at the same time. Doing so, means we don't have to go through
+            // every possible combination of the inputs, e.g. A, B, and AB. Instead we
+            // do AB and BA. To make sure that removes correctly cancel out, we don't
+            // want to do a real remove until *after* the pipes have run. Hence, the
+            // separation of insert and remove.
+            if change.count > 0 {
+                program.state.index.insert(change.e, change.a, change.v);
+            }
+            pipes.clear();
+            program.get_pipes(&program.block_info, change, &mut pipes);
+            frame.reset();
+            frame.input = Some(change);
+            for pipe in pipes.iter() {
+                frame.row.reset();
+                interpret(&mut program.state, &program.block_info, frame, pipe);
+            }
+            // as stated above, we want to do removes after so that when we look
+            // for AB and BA, they find the same values as when they were added.
+            if change.count < 0 {
+                program.state.index.remove(change.e, change.a, change.v);
+            }
+            intermediate_flow(frame, &mut program.state, &program.block_info, current_round);
+        }
+
+        next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
+    }
+
+    for (name, index) in program.state.watch_indexes.iter_mut() {
+        if index.dirty() {
+            let diff = index.reconcile();
+            println!("DIFF {} {:?}", name, diff);
+            if let Some(watcher) = program.watchers.get(name) {
+                watcher.on_diff(&program.state.interner, diff);
+            }
+        }
+    }
+}
+
 impl Transaction {
     pub fn new() -> Transaction {
         let frame = Frame::new();
@@ -2135,51 +2209,7 @@ impl Transaction {
             }
         }
 
-        let ref mut frame = self.frame;
-        let mut pipes = vec![];
-        let mut next_frame = true;
-
-        while next_frame {
-            let mut items = program.state.rounds.iter();
-            while let Some(change) = items.next(&mut program.state.rounds) {
-                println!("{}", change.print(&program));
-                // If this is an add, we want to do it *before* we start running pipes.
-                // This ensures that if there are two constraints in a single block that
-                // would both match the given input, they both have a chance to see this
-                // new triple at the same time. Doing so, means we don't have to go through
-                // every possible combination of the inputs, e.g. A, B, and AB. Instead we
-                // do AB and BA. To make sure that removes correctly cancel out, we don't
-                // want to do a real remove until *after* the pipes have run. Hence, the
-                // separation of insert and remove.
-                if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v);
-                }
-                pipes.clear();
-                program.get_pipes(&program.block_info, change, &mut pipes);
-                frame.reset();
-                frame.input = Some(change);
-                for pipe in pipes.iter() {
-                    interpret(&mut program.state, &program.block_info, frame, pipe);
-                }
-                // as stated above, we want to do removes after so that when we look
-                // for AB and BA, they find the same values as when they were added.
-                if change.count < 0 {
-                    program.state.index.remove(change.e, change.a, change.v);
-                }
-            }
-
-            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
-        }
-
-        for (name, index) in program.state.watch_indexes.iter_mut() {
-            if index.dirty() {
-                let diff = index.reconcile();
-                println!("DIFF {} {:?}", name, diff);
-                if let Some(watcher) = program.watchers.get(name) {
-                    watcher.on_diff(&program.state.interner, diff);
-                }
-            }
-        }
+        transaction_flow(&mut self.frame, program);
     }
 
     pub fn clear(&mut self) {
@@ -2218,42 +2248,9 @@ impl CodeTransaction {
             // run the block
             frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count: if insert { 1 } else { -1 } });
             interpret(&mut program.state, &program.block_info, frame, pipe);
+            intermediate_flow(frame, &mut program.state, &program.block_info, 0);
         }
 
-        let mut pipes = vec![];
-        let mut items = program.state.rounds.iter();
-        let mut next_frame = true;
-
-        while next_frame {
-            let mut items = program.state.rounds.iter();
-            while let Some(change) = items.next(&mut program.state.rounds) {
-                println!("{}", change.print(program));
-                if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v);
-                }
-                pipes.clear();
-                program.get_pipes(&program.block_info, change, &mut pipes);
-                frame.reset();
-                frame.input = Some(change);
-                for pipe in pipes.iter() {
-                    interpret(&mut program.state, &program.block_info, frame, pipe);
-                }
-                if change.count < 0 {
-                    program.state.index.remove(change.e, change.a, change.v);
-                }
-            }
-
-            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
-        }
-
-        for (name, index) in program.state.watch_indexes.iter_mut() {
-            if index.dirty() {
-                let diff = index.reconcile();
-                println!("DIFF {} {:?}", name, diff);
-                if let Some(watcher) = program.watchers.get(name) {
-                    watcher.on_diff(&program.state.interner, diff);
-                }
-            }
-        }
+        transaction_flow(frame, program);
     }
 }
