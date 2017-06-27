@@ -88,9 +88,9 @@ test!(base_no_scans_fail, {
         [#success]
 });
 
-//////////////////////////////////////////////////////////////////////
+//--------------------------------------------------------------------
 // Joins
-//////////////////////////////////////////////////////////////////////
+//--------------------------------------------------------------------
 
 test!(base_join_constant, {
     commit
@@ -245,9 +245,9 @@ test!(base_join_binary_unmatched, {
         [#success]
 });
 
-//////////////////////////////////////////////////////////////////////
+//--------------------------------------------------------------------
 // Interpolation
-//////////////////////////////////////////////////////////////////////
+//--------------------------------------------------------------------
 
 test!(base_interpolation_search_number, {
     search
@@ -333,6 +333,110 @@ test!(base_interpolation_bind_expression, {
 
     search
         [#foo baz: "3"]
+    bind
+        [#success]
+});
+
+//--------------------------------------------------------------------
+// Not
+//--------------------------------------------------------------------
+
+test!(base_not, {
+    search
+        not([#foo])
+    bind
+        [#bar]
+
+    ~~~
+
+    search
+        [#bar]
+    bind
+        [#success]
+});
+
+test!(base_not_reverse, {
+    search
+        not([#foo])
+    bind
+        [#bar]
+
+    ~~~
+
+    commit
+        [#foo]
+
+    ~~~
+
+    search
+        not([#bar])
+    bind
+        [#success]
+});
+
+test!(base_not_no_join, {
+    search
+        [#zomg]
+        not([#foo])
+    bind
+        [#success]
+
+    ~~~
+
+    commit
+        [#zomg]
+
+});
+
+test!(base_not_no_join_retraction, {
+    search
+        [#zomg]
+        not([#foo])
+    bind
+        [#bar]
+
+    ~~~
+
+    commit
+        [#zomg]
+        [#foo]
+
+    ~~~
+    search
+        not([#bar])
+    bind
+        [#success]
+});
+
+test!(base_not_join, {
+    search
+        z = [#zomg]
+        not([#foo z])
+    bind
+        [#success]
+
+    ~~~
+
+    commit
+        [#zomg]
+        [#foo z: 4]
+});
+
+test!(base_not_join_retraction, {
+    search
+        z = [#zomg]
+        not([#foo z])
+    bind
+        [#bar]
+
+    ~~~
+
+    commit
+        [#foo z: [#zomg]]
+
+    ~~~
+    search
+        not([#bar])
     bind
         [#success]
 });
