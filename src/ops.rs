@@ -1892,13 +1892,24 @@ impl<'a> RoundHolderIter {
     }
 
     pub fn next(&mut self, holder: &mut RoundHolder) -> Option<Change> {
-        let ref mut cur_changes = self.cur_changes;
+        if self.change_ix >= self.cur_changes.len() {
+            self.next_round(holder);
+        }
+        let cur = self.change_ix;
+        self.change_ix = cur + 1;
+        match self.cur_changes.get(cur) {
+            None => None,
+            Some(&change) => Some(change.clone()),
+        }
+    }
+
+    pub fn next_round(&mut self, holder: &mut RoundHolder) -> &Vec<Change> {
         let mut round_ix = self.round_ix;
-        let mut change_ix = self.change_ix;
         let max_round = holder.max_round;
-        if change_ix >= cur_changes.len() {
+        {
+            let ref mut cur_changes = self.cur_changes;
             cur_changes.clear();
-            change_ix = 0;
+            self.change_ix = 0;
             while round_ix <= max_round + 1 && cur_changes.len() == 0 {
                 for (_, change) in holder.rounds[round_ix].drain().filter(|v| v.1.count != 0) {
                     cur_changes.push(change);
@@ -1906,12 +1917,8 @@ impl<'a> RoundHolderIter {
                 round_ix += 1;
             }
         }
-        self.change_ix = change_ix + 1;
         self.round_ix = round_ix;
-        match cur_changes.get(change_ix) {
-            None => None,
-            Some(&change) => Some(change.clone()),
-        }
+        &self.cur_changes
     }
 }
 
@@ -2047,7 +2054,7 @@ impl Program {
         self.watchers.insert(name.to_string(), watcher);
     }
 
-    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: Change, pipes: &mut Vec<&'a Vec<Instruction>>) {
+    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Vec<Instruction>>) {
         let ref pipe_lookup = block_info.pipe_lookup;
         let mut tuple = (0,0,0);
         // look for (0,0,0), (0, a, 0) and (0, a, v) pipes
@@ -2123,7 +2130,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
                 println!("LOOKIN {:?}", cur);
                 let actives = block_info.intermediate_pipe_lookup.get(&cur.key[0]).unwrap().iter();
                 frame.reset();
-                frame.intermediate = Some(cur);
+                frame.intermediate = Some(cur.clone());
                 for pipe in actives {
                     frame.row.reset();
                     interpret(state, block_info, frame, pipe);
@@ -2141,36 +2148,39 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
     while next_frame {
         let mut current_round = 0;
         let mut items = program.state.rounds.iter();
-        while let Some(change) = items.next(&mut program.state.rounds) {
-            current_round = change.round;
-            println!("{}", change.print(&program));
-            // If this is an add, we want to do it *before* we start running pipes.
-            // This ensures that if there are two constraints in a single block that
-            // would both match the given input, they both have a chance to see this
-            // new triple at the same time. Doing so, means we don't have to go through
-            // every possible combination of the inputs, e.g. A, B, and AB. Instead we
-            // do AB and BA. To make sure that removes correctly cancel out, we don't
-            // want to do a real remove until *after* the pipes have run. Hence, the
-            // separation of insert and remove.
-            if change.count > 0 {
-                program.state.index.insert(change.e, change.a, change.v);
-            }
-            pipes.clear();
-            program.get_pipes(&program.block_info, change, &mut pipes);
-            frame.reset();
-            frame.input = Some(change);
-            for pipe in pipes.iter() {
-                frame.row.reset();
-                interpret(&mut program.state, &program.block_info, frame, pipe);
-            }
-            // as stated above, we want to do removes after so that when we look
-            // for AB and BA, they find the same values as when they were added.
-            if change.count < 0 {
-                program.state.index.remove(change.e, change.a, change.v);
+        loop {
+            let round = items.next_round(&mut program.state.rounds);
+            if round.len() == 0 { break; }
+            for change in round.iter() {
+                current_round = change.round;
+                println!("{}", change.print(&program));
+                // If this is an add, we want to do it *before* we start running pipes.
+                // This ensures that if there are two constraints in a single block that
+                // would both match the given input, they both have a chance to see this
+                // new triple at the same time. Doing so, means we don't have to go through
+                // every possible combination of the inputs, e.g. A, B, and AB. Instead we
+                // do AB and BA. To make sure that removes correctly cancel out, we don't
+                // want to do a real remove until *after* the pipes have run. Hence, the
+                // separation of insert and remove.
+                if change.count > 0 {
+                    program.state.index.insert(change.e, change.a, change.v);
+                }
+                pipes.clear();
+                program.get_pipes(&program.block_info, change, &mut pipes);
+                frame.reset();
+                frame.input = Some(*change);
+                for pipe in pipes.iter() {
+                    frame.row.reset();
+                    interpret(&mut program.state, &program.block_info, frame, pipe);
+                }
+                // as stated above, we want to do removes after so that when we look
+                // for AB and BA, they find the same values as when they were added.
+                if change.count < 0 {
+                    program.state.index.remove(change.e, change.a, change.v);
+                }
             }
             intermediate_flow(frame, &mut program.state, &program.block_info, current_round);
         }
-
         next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
     }
 
@@ -2201,14 +2211,9 @@ impl Transaction {
     }
 
     pub fn exec(&mut self, program: &mut Program) {
-        {
-            let ref mut rounds = program.state.rounds;
-
-            for change in self.changes.iter() {
-                program.state.index.distinct(&change, rounds);
-            }
+        for change in self.changes.iter() {
+            program.state.index.distinct(&change, &mut program.state.rounds);
         }
-
         transaction_flow(&mut self.frame, program);
     }
 
@@ -2233,23 +2238,15 @@ impl CodeTransaction {
     }
 
     pub fn exec(&mut self, program: &mut Program, block_name: &str, insert:bool) {
-        {
-            let ref mut rounds = program.state.rounds;
-
-            for change in self.changes.iter() {
-                program.state.index.distinct(&change, rounds);
-            }
+        for change in self.changes.iter() {
+            program.state.index.distinct(&change, &mut program.state.rounds);
         }
 
         let ref mut frame = self.frame;
-
-        {
-            let ref pipe = program.block_info.get_block(block_name).pipes[0];
-            // run the block
-            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count: if insert { 1 } else { -1 } });
-            interpret(&mut program.state, &program.block_info, frame, pipe);
-            intermediate_flow(frame, &mut program.state, &program.block_info, 0);
-        }
+        // run the block
+        frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count: if insert { 1 } else { -1 } });
+        interpret(&mut program.state, &program.block_info, frame, &program.block_info.get_block(block_name).pipes[0]);
+        intermediate_flow(frame, &mut program.state, &program.block_info, 0);
 
         transaction_flow(frame, program);
     }
