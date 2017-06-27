@@ -432,7 +432,8 @@ test!(base_not_join_retraction, {
     ~~~
 
     commit
-        [#foo z: [#zomg]]
+        z = [#zomg]
+        [#foo z]
 
     ~~~
     search

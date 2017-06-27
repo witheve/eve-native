@@ -10,8 +10,9 @@ Not
     x multi-block parses
     x generate not block
     x replace block with anti-scan
-  - anti-scan impl
-  - anti-rounds impl
+  x anti-scan impl
+  x anti-rounds impl
+  - All intermediates are being negated
 
 Choose
   - parser

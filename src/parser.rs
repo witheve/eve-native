@@ -976,6 +976,13 @@ named!(commit_update<Node<'a>>,
            value: alt_complete!(apply!(output_record, OutputType::Commit) | none_value | expr | hashtag) >>
            (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Commit })));
 
+named_args!(output_equality<'a>(output_type:OutputType) <Node<'a>>,
+       do_parse!(
+           left: identifier >>
+           sp!(tag!("=")) >>
+           right: apply!(output_record, output_type) >>
+           (Node::Equality {left:Box::new(Node::Variable(left)), right:Box::new(right)})));
+
 named!(not_form<Node<'a>>,
        do_parse!(
            sp!(tag!("not")) >>
@@ -1004,6 +1011,7 @@ named!(bind_section<Node<'a>>,
        do_parse!(
            sp!(tag!("bind")) >>
            items: many1!(sp!(alt_complete!(
+                       apply!(output_equality, OutputType::Bind) |
                        apply!(output_record, OutputType::Bind) |
                        complete!(bind_update)
                        ))) >>
@@ -1013,6 +1021,7 @@ named!(commit_section<Node<'a>>,
        do_parse!(
            sp!(tag!("commit")) >>
            items: many1!(sp!(alt_complete!(
+                       apply!(output_equality, OutputType::Commit) |
                        apply!(output_record, OutputType::Commit) |
                        complete!(commit_update)
                        ))) >>
