@@ -8,9 +8,10 @@ use std::cmp;
 
 extern crate fnv;
 use indexes::fnv::FnvHasher;
-use std::hash::BuildHasherDefault;
+use std::hash::{BuildHasherDefault, Hash};
 use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
 use std::iter::{Iterator, ExactSizeIterator};
+use std::fmt::{Debug};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -289,6 +290,65 @@ impl HashIndexLevel {
 }
 
 //-------------------------------------------------------------------------
+// Generic distinct
+//-------------------------------------------------------------------------
+
+pub fn generic_distinct<T, F>(key: T, index:&mut HashMap<T, RoundEntry, MyHasher>, input_count:Count, input_round:Round, mut insert:F)
+    where T: Hash + Eq,
+          F: FnMut(Round, Count)
+{
+    let ref mut counts = index.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
+    // println!("Pre counts {:?}", counts);
+    ensure_len(counts, (input_round + 1) as usize);
+    let counts_len = counts.len() as u32;
+    let min = cmp::min(input_round + 1, counts_len);
+    let mut cur_count = 0;
+    for ix in 0..min {
+        cur_count += counts[ix as usize];
+    };
+
+    // @TODO: handle Infinity/-Infinity for commits at round 0
+
+    let next_count = cur_count + input_count;
+    let delta = get_delta(cur_count, next_count);
+    if delta != 0 {
+        insert(input_round, delta);
+    }
+
+    cur_count = next_count;
+    counts[input_round as usize] += input_count;
+
+    for round_ix in (input_round + 1)..counts_len {
+        let round_count = counts[round_ix as usize];
+        if round_count == 0 { continue; }
+
+        let last_count = cur_count - input_count;
+        let next_count = last_count + round_count;
+        let delta = get_delta(last_count, next_count);
+
+        let last_count_changed = cur_count;
+        let next_count_changed = cur_count + round_count;
+        let delta_changed = get_delta(last_count_changed, next_count_changed);
+
+        let mut final_delta = 0;
+        if delta != 0 && delta != delta_changed {
+            //undo the delta
+            final_delta = -delta;
+        } else if delta != delta_changed {
+            final_delta = delta_changed;
+        }
+
+        if final_delta != 0 {
+            // println!("HERE {:?} {:?} | {:?} {:?}", round_ix, final_delta, delta, delta_changed);
+            insert(round_ix, final_delta);
+        }
+
+        cur_count = next_count_changed;
+    }
+    // println!("Post counts {:?}", counts);
+}
+
+//-------------------------------------------------------------------------
 // HashIndex
 //-------------------------------------------------------------------------
 
@@ -452,56 +512,10 @@ impl HashIndex {
 
     pub fn distinct(&mut self, input:&Change, rounds:&mut RoundHolder) {
         let key = (input.e, input.a, input.v);
-        let input_count = input.count;
-        let ref mut counts = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
-        // println!("Pre counts {:?}", counts);
-        ensure_len(counts, (input.round + 1) as usize);
-        let counts_len = counts.len() as u32;
-        let min = cmp::min(input.round + 1, counts_len);
-        let mut cur_count = 0;
-        for ix in 0..min {
-           cur_count += counts[ix as usize];
+        let insert = |round, delta| {
+            rounds.insert(input.with_round_count(round, delta));
         };
-
-        // @TODO: handle Infinity/-Infinity for commits at round 0
-
-        let next_count = cur_count + input_count;
-        let delta = get_delta(cur_count, next_count);
-        if delta != 0 {
-            rounds.insert(input.with_round_count(input.round, delta));
-        }
-
-        cur_count = next_count;
-        counts[input.round as usize] += input.count;
-
-        for round_ix in (input.round + 1)..counts_len {
-            let round_count = counts[round_ix as usize];
-            if round_count == 0 { continue; }
-
-            let last_count = cur_count - input_count;
-            let next_count = last_count + round_count;
-            let delta = get_delta(last_count, next_count);
-
-            let last_count_changed = cur_count;
-            let next_count_changed = cur_count + round_count;
-            let delta_changed = get_delta(last_count_changed, next_count_changed);
-
-            let mut final_delta = 0;
-            if delta != 0 && delta != delta_changed {
-                //undo the delta
-                final_delta = -delta;
-            } else if delta != delta_changed {
-                final_delta = delta_changed;
-            }
-
-            if final_delta != 0 {
-                // println!("HERE {:?} {:?} | {:?} {:?}", round_ix, final_delta, delta, delta_changed);
-                rounds.insert(input.with_round_count(round_ix, final_delta));
-            }
-
-            cur_count = next_count_changed;
-        }
-        // println!("Post counts {:?}", counts);
+        generic_distinct(key, &mut self.eavs, input.count, input.round, insert);
     }
 }
 
@@ -543,6 +557,55 @@ impl<'a> Iterator for DistinctIter<'a> {
         } else {
             Some(((ix - 1) as Round, delta))
         }
+    }
+}
+
+//-------------------------------------------------------------------------
+// Intermediate Index
+//-------------------------------------------------------------------------
+
+pub struct IntermediateIndex<K>
+    where K: Hash + Eq + Clone + Debug
+{
+    index: HashMap<K, RoundEntry, MyHasher>,
+    rounds: HashMap<Round, HashMap<K, Count, MyHasher>, MyHasher>,
+    empty: Vec<i32>,
+}
+
+impl<K> IntermediateIndex<K>
+    where K: Hash + Eq + Clone + Debug
+{
+
+    pub fn new() -> IntermediateIndex<K> {
+        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![] }
+    }
+
+    pub fn distinct_iter(&self, key:K) -> DistinctIter {
+        match self.index.get(&key) {
+            Some(&RoundEntry { ref rounds, .. }) => DistinctIter::new(rounds),
+            None => DistinctIter::new(&self.empty),
+        }
+    }
+
+    pub fn distinct(&mut self, key:K, round:Round, count:Count) {
+        let cloned = key.clone();
+        let ref mut rounds = self.rounds;
+        let insert = |round, delta| {
+            println!("Intermediate! {:?} {:?} {:?}", cloned, round, delta);
+            match rounds.entry(round) {
+                Entry::Occupied(mut ent) => {
+                    let cur = ent.get_mut();
+                    let val = cur.entry(cloned.clone()).or_insert(0);
+                    *val = *val + delta;
+                }
+                Entry::Vacant(mut ent) => {
+                    let mut neue = HashMap::default();
+                    neue.insert(cloned.clone(), delta);
+                    ent.insert(neue);
+                }
+            }
+        };
+        generic_distinct(key, &mut self.index, count, round, insert);
     }
 }
 

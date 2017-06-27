@@ -167,7 +167,7 @@ fn test_distinct(counts: Vec<(u32, i32)>, expected: Vec<(u32, i32)>) {
 }
 
 #[test]
-fn basic_distinct() {
+fn distinct_basic() {
     test_distinct(vec![
                   (1,1),
                   (2,-1),
@@ -181,7 +181,7 @@ fn basic_distinct() {
 }
 
 #[test]
-fn basic_2() {
+fn distinct_basic_2() {
     test_distinct(vec![
                   (1,1),
                   (2,-1),
@@ -197,7 +197,7 @@ fn basic_2() {
 }
 
 #[test]
-fn basic_2_reverse_order() {
+fn distinct_basic_2_reverse_order() {
     test_distinct(vec![
                   (3,1),
                   (4,-1),
@@ -213,7 +213,7 @@ fn basic_2_reverse_order() {
 }
 
 #[test]
-fn basic_2_undone() {
+fn distinct_basic_2_undone() {
     test_distinct(vec![
                   (1,1),
                   (2,-1),
@@ -230,7 +230,7 @@ fn basic_2_undone() {
 }
 
 #[test]
-fn basic_multiple() {
+fn distinct_basic_multiple() {
     test_distinct(vec![
                   (1,1),
                   (1,1),
@@ -256,7 +256,7 @@ fn basic_multiple() {
 }
 
 #[test]
-fn basic_multiple_reversed() {
+fn distinct_basic_multiple_reversed() {
     test_distinct(vec![
                   (3, 1),
                   (3, 1),
@@ -282,7 +282,7 @@ fn basic_multiple_reversed() {
 }
 
 #[test]
-fn basic_interleaved() {
+fn distinct_basic_interleaved() {
     test_distinct(vec![
                   (3, 1),
                   (4, -1),
@@ -308,7 +308,7 @@ fn basic_interleaved() {
 }
 
 #[test]
-fn basic_multiple_negative_first() {
+fn distinct_basic_multiple_negative_first() {
     test_distinct(vec![
                   (2,-1),
                   (2,-1),
@@ -332,7 +332,7 @@ fn basic_multiple_negative_first() {
 }
 
 #[test]
-fn basic_multiple_undone() {
+fn distinct_basic_multiple_undone() {
     test_distinct(vec![
                   (1,1),
                   (1,1),
@@ -365,7 +365,7 @@ fn basic_multiple_undone() {
 }
 
 #[test]
-fn basic_multiple_undone_interleaved() {
+fn distinct_basic_multiple_undone_interleaved() {
     test_distinct(vec![
                   (1,1),
                   (1,1),
@@ -399,7 +399,7 @@ fn basic_multiple_undone_interleaved() {
 }
 
 #[test]
-fn basic_multiple_different_counts() {
+fn distinct_basic_multiple_different_counts() {
     test_distinct(vec![
                   (1,1),
                   (1,1),
@@ -421,7 +421,7 @@ fn basic_multiple_different_counts() {
 }
 
 #[test]
-fn basic_multiple_different_counts_extra_removes() {
+fn distinct_basic_multiple_different_counts_extra_removes() {
     test_distinct(vec![
                   (1,1),
                   (1,1),
@@ -450,7 +450,7 @@ fn basic_multiple_different_counts_extra_removes() {
 }
 
 #[test]
-fn simple_round_promotion() {
+fn distinct_simple_round_promotion() {
     test_distinct(vec![
                   (8,1),
                   (9,-1),
@@ -466,7 +466,7 @@ fn simple_round_promotion() {
 }
 
 #[test]
-fn full_promotion() {
+fn distinct_full_promotion() {
     test_distinct(vec![
                   (9,1),
                   (9,1),
@@ -494,7 +494,7 @@ fn full_promotion() {
 }
 
 #[test]
-fn positive_full_promotion() {
+fn distinct_positive_full_promotion() {
     test_distinct(vec![
                   (7,1),
                   (8,-1),
@@ -518,3 +518,118 @@ fn positive_full_promotion() {
     (4, 1),
     ])
 }
+
+//---------------------------------------------------------------
+// Anti Distinct index
+//---------------------------------------------------------------
+
+fn round_counts_to_distinct_counts(input: &Vec<(usize, i32)>) -> Vec<i32> {
+    let mut counts = vec![];
+    for &(round, count) in input.iter() {
+        if counts.len() < round + 1 {
+            counts.resize(round + 1, 0);
+        }
+        counts[round] += count;
+    }
+    counts
+}
+
+fn test_anti_distinct(left: Vec<(usize, i32)>, right: Vec<(usize, i32)>, expected: Vec<(u32, i32)>) {
+    let left_counts = round_counts_to_distinct_counts(&left);
+    println!("LEFT COUNTS {:?}", left_counts);
+    let mut left_iter = DistinctIter::new(&left_counts);
+    let left_iter2 = DistinctIter::new(&left_counts);
+    for (round, count) in left_iter2 {
+        println!("left: {:?} {:?}",round, count);
+    }
+    let right_counts = round_counts_to_distinct_counts(&right);
+    let right_iter = DistinctIter::new(&right_counts);
+    let mut distinct_changes = RoundHolder::new();
+    distinct_changes.output_rounds.push((0, 1));
+    distinct_changes.compute_output_rounds(left_iter);
+    distinct_changes.compute_anti_output_rounds(right_iter);
+    let results = distinct_changes.get_output_rounds();
+    assert_eq!(*results, expected);
+}
+
+#[test]
+fn distinct_anti_no_join() {
+    test_anti_distinct(
+        vec![(1,1), (3,-1)],
+        vec![],
+        vec![(1,1), (3,-1)]
+        );
+}
+
+#[test]
+fn distinct_anti_simple() {
+    test_anti_distinct(
+        vec![(1,1), (3,-1)],
+        vec![(1,1)],
+        vec![]
+        );
+}
+
+#[test]
+fn distinct_anti_simple_return() {
+    test_anti_distinct(
+        vec![(1,1), (3,-1)],
+        vec![(1,1), (2,-1)],
+        vec![(2,1), (3,-1)]
+        );
+}
+
+#[test]
+fn distinct_anti_simple_return_multi() {
+    test_anti_distinct(
+        vec![(1,1), (2,1), (3,1)],
+        vec![(1,1), (5,-1)],
+        vec![(5,1)]
+        );
+}
+
+#[test]
+fn distinct_anti_simple_no_return_multi() {
+    test_anti_distinct(
+        vec![(1,1), (2,1), (3,-2)],
+        vec![(1,1), (5,-1)],
+        vec![]
+        );
+}
+
+#[test]
+fn distinct_anti_simple_retraction() {
+    test_anti_distinct(
+        vec![(1,1), (2,1)],
+        vec![(3,1)],
+        vec![(1,1), (3, -1)]
+        );
+}
+
+#[test]
+fn distinct_anti_simple_retraction2() {
+    test_anti_distinct(
+        vec![(1,1), (2,1)],
+        vec![(3,1), (4,-1)],
+        vec![(1,1), (3, -1), (4,1)]
+        );
+}
+
+#[test]
+fn distinct_anti_simple_retraction3() {
+    test_anti_distinct(
+        vec![(1,1), (2,1)],
+        vec![(3,1), (4,1)],
+        vec![(1,1), (3, -1)]
+        );
+}
+
+#[test]
+fn distinct_anti_simple_retraction4() {
+    test_anti_distinct(
+        vec![(1,1), (2,-1)],
+        vec![(3,1), (4,1)],
+        vec![(1,1), (2,-1)]
+        );
+}
+

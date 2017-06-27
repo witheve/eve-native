@@ -2,13 +2,9 @@
 // Ops
 //-------------------------------------------------------------------------
 
-// TODO:
-//  - index insert
-//  - functions
-
 extern crate time;
 
-use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, MyHasher};
+use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher};
 use parser::{make_block};
 use std::collections::HashMap;
 use std::mem::transmute;
@@ -90,12 +86,25 @@ impl RawChange {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct IntermediateChange {
+    pub key: Vec<Interned>,
+    pub count: Count,
+    pub round: Round,
+    pub negate: bool,
+}
+
 //-------------------------------------------------------------------------
 // Block
 //-------------------------------------------------------------------------
 
 pub type Pipe = Vec<Instruction>;
-pub type PipeShape = (Interned, Interned, Interned);
+
+#[derive(Debug)]
+pub enum PipeShape {
+    Scan(Interned, Interned, Interned),
+    Intermediate(Interned),
+}
 
 #[derive(Debug)]
 pub struct Block {
@@ -148,9 +157,18 @@ impl Block {
                     }
                     moves.insert(ix, scan_moves);
                 },
-                &Constraint::AntiScan {ref e, ref a, ref v, .. } => {
-                    // @TODO
-                },
+                &Constraint::AntiScan {ref key, ..} => {
+                    scans.push(ix);
+                    let mut intermediate_moves = vec![];
+                    for (field_ix, field) in key.iter().enumerate() {
+                        if let &Field::Register(offset) = field {
+                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix as u32, to:offset as u32 });
+                            registers = cmp::max(registers, offset + 1);
+                        }
+                    }
+                    moves.insert(ix, intermediate_moves);
+                    get_rounds.push(Instruction::GetAntiRounds { bail: 0, constraint: ix });
+                }
                 &Constraint::Function {ref output, ..} => {
                     // @TODO: ensure that all inputs are accounted for
                     // count the registers in the functions
@@ -170,6 +188,9 @@ impl Block {
                         outputs.push(Instruction::Bind { next: 1, constraint: ix });
                     }
                 },
+                &Constraint::InsertIntermediate {..} => {
+                    outputs.push(Instruction::InsertIntermediate { next: 1, constraint: ix });
+                }
                 &Constraint::Remove {..} => {
                     outputs.push(Instruction::Commit { next: 1, constraint: ix });
                 },
@@ -258,14 +279,21 @@ impl Block {
 
             if outputs.len() > 0 {
                 for inst in get_rounds.iter() {
-                    if let &Instruction::GetRounds { constraint, .. } = inst {
-                        if constraint != *scan_ix {
-                            last_iter_next -= 1;
-                            let mut neue = inst.clone();
-                            if let Instruction::GetRounds { ref mut bail, .. } = neue {
-                                *bail = last_iter_next;
+                    match inst {
+                        Instruction::GetRounds { costraint, .. } |
+                        Instruction::GetAntiRounds { constraint, .. } => {
+                            if constraint != *scan_ix {
+                                last_iter_next -= 1;
+                                let mut neue = inst.clone();
+                                match neue {
+                                    Instruction::GetRounds { ref mut bail, .. } |
+                                    Instruction::GetAntiRounds { ref mut bail, .. } => {
+                                        *bail = last_iter_next;
+                                    }
+                                    _ => panic!()
+                                }
+                                pipe.push(neue);
                             }
-                            pipe.push(neue);
                         }
                     }
                 }
@@ -277,19 +305,18 @@ impl Block {
                     pipe.push(output.clone());
                 } else {
                     let mut neue = output.clone();
-                    if let Instruction::Bind {ref mut next, ..} = neue {
-                        *next = if to_solve > 0 {
-                            last_iter_next
-                        } else {
-                            PIPE_FINISHED
+                    match neue {
+                        Instruction::Bind {ref mut next, ..} |
+                        Instruction::Commit { ref mut next, ..} |
+                        Instruction::InsertIntermediate { ref mut next, ..} => {
+                            *next = if to_solve > 0 {
+                                last_iter_next
+                            } else {
+                                PIPE_FINISHED
+                            }
                         }
-                    } else if let Instruction::Commit { ref mut next, ..} = neue {
-                        *next = if to_solve > 0 {
-                            last_iter_next
-                        } else {
-                            PIPE_FINISHED
-                        }
-                    }
+                        _ => { panic!("Invalid output instruction"); }
+                    };
                     pipe.push(neue);
                 }
             }
@@ -343,7 +370,7 @@ impl Block {
         }
     }
 
-    pub fn to_shapes(&self, scans: Vec<&Constraint>) -> Vec<Vec<(Interned, Interned, Interned)>> {
+    pub fn to_shapes(&self, scans: Vec<&Constraint>) -> Vec<Vec<PipeShape>> {
         let mut shapes = vec![];
         let tag = TAG_INTERNED_ID;
         let mut tag_mappings:HashMap<Field, Vec<Interned>> = HashMap::new();
@@ -361,24 +388,34 @@ impl Block {
         // go through each scan and create tag, a, v pairs where 0 is wildcard
         for scan in scans.iter() {
             let mut scan_shapes = vec![];
-            if let &&Constraint::Scan {ref e, ref a, ref v, ..} = scan {
-                let actual_e = if let &Field::Value(val) = e { val } else { 0 };
-                let actual_a = if let &Field::Value(val) = a { val } else { 0 };
-                let actual_v = if let &Field::Value(val) = v { val } else { 0 };
-                if actual_a == tag {
-                    scan_shapes.push((0, actual_a, actual_v));
-                } else {
-                    match tag_mappings.get(e) {
-                        Some(mappings) => {
-                            for mapping in mappings {
-                                scan_shapes.push((*mapping, actual_a, actual_v))
+            match scan {
+                &&Constraint::Scan {ref e, ref a, ref v, ..} => {
+                    let actual_e = if let &Field::Value(val) = e { val } else { 0 };
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                    if actual_a == tag {
+                        scan_shapes.push(PipeShape::Scan(0, actual_a, actual_v));
+                    } else {
+                        match tag_mappings.get(e) {
+                            Some(mappings) => {
+                                for mapping in mappings {
+                                    scan_shapes.push(PipeShape::Scan(*mapping, actual_a, actual_v))
+                                }
+                            },
+                            None => {
+                                scan_shapes.push(PipeShape::Scan(actual_e, actual_a, actual_v))
                             }
-                        },
-                        None => {
-                            scan_shapes.push((actual_e, actual_a, actual_v))
                         }
                     }
+                },
+                &&Constraint::AntiScan { ref key, .. } => {
+                    if let Field::Value(id) = key[0] {
+                        scan_shapes.push(PipeShape::Intermediate(id));
+                    } else {
+                        panic!("Non value intremediate id: {:?}", scan);
+                    }
                 }
+                _ => { panic!("Non-scan in pipe shapes: {:?}", scan) }
             }
             shapes.push(scan_shapes);
         }
@@ -575,6 +612,7 @@ impl fmt::Debug for Counters {
 
 pub struct Frame {
     input: Option<Change>,
+    intermediate: Option<IntermediateChange>,
     row: Row,
     block_ix: usize,
     iters: Vec<Option<EstimateIter>>,
@@ -585,7 +623,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new() -> Frame {
-        Frame {row: Row::new(64), block_ix:0, input: None, iters: vec![None; 64], results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
+        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, iters: vec![None; 64], results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> Interned {
@@ -647,10 +685,13 @@ pub enum Instruction {
     IteratorNext {iterator: u32, bail: i32},
     Accept {bail: i32, constraint:u32, iterator:u32},
     MoveInputField { from:u32, to:u32, },
+    MoveIntermediateField { from:u32, to:u32, },
     ClearRounds,
     GetRounds {bail: i32, constraint: u32},
+    GetAntiRounds {bail: i32, constraint: u32},
     Bind {next: i32, constraint:u32},
     Commit {next: i32, constraint:u32},
+    InsertIntermediate {next: i32, constraint:u32},
     Project {next: i32, from:u32},
     Watch { next:i32, registers:Vec<u32>, name:String}
 }
@@ -672,6 +713,15 @@ pub fn move_input_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u3
             2 => { frame.row.set(to, change.v); }
             _ => { panic!("Unknown move: {:?}", from); },
         }
+    }
+    1
+}
+
+#[inline(never)]
+pub fn move_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u32) -> i32 {
+    // println!("STARTING! {:?}", block);
+    if let Some(ref intermediate) = frame.intermediate {
+        frame.row.set(to, intermediate.key[from as usize]);
     }
     1
 }
@@ -806,10 +856,7 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             let resolved_v = frame.resolve(v);
             let checked = program.index.check(resolved_e, resolved_a, resolved_v);
             // println!("scan accept {:?} {:?}", cur_constraint, checked);
-            match checked {
-                true => 1,
-                false => bail,
-            }
+            if checked { 1 } else { bail }
         },
         &Constraint::Function {/* ref op, ref outputs, ref params, */ ref param_mask, ref output_mask, .. } => {
             let solved = frame.row.solved_fields;
@@ -843,6 +890,9 @@ pub fn clear_rounds(program: &mut RuntimeState, frame: &mut Frame) -> i32 {
     program.rounds.clear_output_rounds();
     if let Some(change) = frame.input {
         program.rounds.output_rounds.push((change.round, change.count));
+    } else if Some(change) = frame.intermediate {
+        let count = if change.negate { change.count * -1 } else { change.count }
+        program.rounds.output_rounds.push((change.round, count));
     }
     1
 }
@@ -862,7 +912,21 @@ pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut
         },
         _ => { panic!("Get rounds on non-scan") }
     }
+}
 
+#[inline(never)]
+pub fn get_anti_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
+    // println!("get rounds!");
+    let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
+    match cur {
+        &Constraint::AntiScan {ref key, .. } => {
+            let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
+            // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
+            program.rounds.compute_anti_output_rounds(program.intermediates.distinct_iter(resolved));
+            1
+        },
+        _ => { panic!("Get rounds on non-scan") }
+    }
 }
 
 #[inline(never)]
@@ -934,6 +998,23 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
     };
     next
 }
+
+#[inline(never)]
+pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+    let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
+    match cur {
+        &Constraint::InsertIntermediate {ref key, register_mask} => {
+            let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
+            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
+            for &(round, count) in program.rounds.get_output_rounds().iter() {
+                program.intermediates.distinct(resolved.clone(), round, count);
+            }
+        },
+        _ => {}
+    };
+    next
+}
+
 
 #[inline(never)]
 pub fn project(_: &mut RuntimeState, frame: &mut Frame, from:u32, next:i32) -> i32 {
@@ -1084,10 +1165,11 @@ type Function = fn(Vec<&Internable>) -> Option<Internable>;
 #[allow(dead_code)]
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
-    AntiScan {e: Field, a: Field, v: Field, register_mask: u64},
+    AntiScan {key: Vec<Field>, register_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
+    InsertIntermediate {key:Vec<Field>, register_mask:u64},
     Remove {e: Field, a: Field, v:Field},
     RemoveAttribute {e: Field, a: Field},
     RemoveEntity {e: Field },
@@ -1111,7 +1193,7 @@ impl Constraint {
     pub fn get_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
-            &Constraint::AntiScan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::AntiScan { ref key, ..} => { filter_registers(&key.iter().collect()) }
             &Constraint::Function {ref output, ref params, ..} => {
                 let mut vs = vec![output];
                 vs.extend(params);
@@ -1121,6 +1203,7 @@ impl Constraint {
                 filter_registers(&vec![left, right])
             }
             &Constraint::Insert { ref e, ref a, ref v, .. } => { filter_registers(&vec![e,a,v]) },
+            &Constraint::InsertIntermediate { ref key, ..} => { filter_registers(&key.iter().collect()) }
             &Constraint::Remove { ref e, ref a, ref v } => { filter_registers(&vec![e,a,v]) },
             &Constraint::RemoveAttribute { ref e, ref a } => { filter_registers(&vec![e,a]) },
             &Constraint::RemoveEntity { ref e } => { filter_registers(&vec![e]) },
@@ -1143,9 +1226,9 @@ impl Constraint {
                 replace_registers(&mut vec![e,a,v], lookup);
                 *register_mask = make_register_mask(vec![e,a,v]);
             }
-            &mut Constraint::AntiScan { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
-                replace_registers(&mut vec![e,a,v], lookup);
-                *register_mask = make_register_mask(vec![e,a,v]);
+            &mut Constraint::AntiScan { ref mut key, ref mut register_mask} => {
+                replace_registers(&mut key.iter_mut().collect(), lookup);
+                *register_mask = make_register_mask(key.iter().collect());
             }
             &mut Constraint::Function {ref mut output, ref mut params, ref mut param_mask, ref mut output_mask, ..} => {
                 {
@@ -1162,6 +1245,10 @@ impl Constraint {
                 *param_mask = make_register_mask(vec![left, right]);
             }
             &mut Constraint::Insert { ref mut e, ref mut a, ref mut v, ..} => { replace_registers(&mut vec![e,a,v], lookup); },
+            &mut Constraint::InsertIntermediate { ref mut key, ref mut register_mask} => {
+                replace_registers(&mut key.iter_mut().collect(), lookup);
+                *register_mask = make_register_mask(key.iter().collect());
+            }
             &mut Constraint::Remove { ref mut e, ref mut a, ref mut v } => { replace_registers(&mut vec![e,a,v], lookup); },
             &mut Constraint::RemoveAttribute { ref mut e, ref mut a } => { replace_registers(&mut vec![e,a], lookup); },
             &mut Constraint::RemoveEntity { ref mut e } => { replace_registers(&mut vec![e], lookup); },
@@ -1187,7 +1274,7 @@ impl Clone for Constraint {
     fn clone(&self) -> Self {
         match self {
             &Constraint::Scan { e, a, v, register_mask } => { Constraint::Scan {e,a,v,register_mask} }
-            &Constraint::AntiScan { e, a, v, register_mask } => { Constraint::AntiScan {e,a,v,register_mask} }
+            &Constraint::AntiScan { ref key, register_mask } => { Constraint::AntiScan {key:key.clone(),register_mask} }
             &Constraint::Function {ref op, ref output, ref func, ref params, ref param_mask, ref output_mask} => {
                 Constraint::Function{ op:op.clone(), output:output.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
             }
@@ -1195,6 +1282,7 @@ impl Clone for Constraint {
                 Constraint::Filter{ op:op.clone(), func:*func, left:left.clone(), right:right.clone(), param_mask:*param_mask }
             }
             &Constraint::Insert { e,a,v,commit } => { Constraint::Insert { e,a,v,commit } },
+            &Constraint::InsertIntermediate { ref key, register_mask } => { Constraint::InsertIntermediate {key:key.clone(),register_mask} }
             &Constraint::Remove { e,a,v } => { Constraint::Remove { e,a,v } },
             &Constraint::RemoveAttribute { e,a } => { Constraint::RemoveAttribute { e,a } },
             &Constraint::RemoveEntity { e } => { Constraint::RemoveEntity { e } },
@@ -1209,8 +1297,9 @@ impl fmt::Debug for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
-            &Constraint::AntiScan { e, a, v, .. } => { write!(f, "AntiScan ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::AntiScan { ref key, .. } => { write!(f, "AntiScan ({:?})", key) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::InsertIntermediate { ref key, .. } => { write!(f, "InsertIntermediate ({:?})", key) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
             &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
             &Constraint::Watch { ref name, ref registers } => { write!(f, "Watch {}{:?}", name, registers) }
@@ -1236,9 +1325,14 @@ pub fn make_scan(e:Field, a:Field, v:Field) -> Constraint {
     Constraint::Scan{e, a, v, register_mask }
 }
 
-pub fn make_anti_scan(e:Field, a:Field, v:Field) -> Constraint {
-    let register_mask = make_register_mask(vec![&e,&a,&v]);
-    Constraint::AntiScan{e, a, v, register_mask }
+pub fn make_anti_scan(key: Vec<Field>) -> Constraint {
+    let register_mask = make_register_mask(key.iter().collect::<Vec<&Field>>());
+    Constraint::AntiScan{key, register_mask }
+}
+
+pub fn make_intermediate_insert(key: Vec<Field>) -> Constraint {
+    let register_mask = make_register_mask(key.iter().collect::<Vec<&Field>>());
+    Constraint::InsertIntermediate {key, register_mask}
 }
 
 pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint {
@@ -1431,6 +1525,9 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
             Instruction::MoveInputField { from, to } => {
                 move_input_field(program, frame, from, to)
             },
+            Instruction::MoveIntermediateField { from, to } => {
+                move_intermediate_field(program, frame, from, to)
+            },
             Instruction::GetIterator { iterator, constraint, bail } => {
                 get_iterator(program, block_info, frame, iterator, constraint, bail)
             },
@@ -1449,11 +1546,17 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
             Instruction::GetRounds { constraint, bail } => {
                 get_rounds(program, block_info, frame, constraint, bail)
             },
+            Instruction::GetAntiRounds { constraint, bail } => {
+                get_anti_rounds(program, block_info, frame, constraint, bail)
+            },
             Instruction::Bind { constraint, next } => {
                 bind(program, block_info, frame, constraint, next)
             },
             Instruction::Commit { constraint, next } => {
                 commit(program, block_info, frame, constraint, next)
+            },
+            Instruction::InsertIntermediate { constraint, next } => {
+                insert_intermediate(program, block_info, frame, constraint, next)
             },
             Instruction::Project { from, next } => {
                 project(program, frame, from, next)
@@ -1468,6 +1571,12 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
 //-------------------------------------------------------------------------
 // Round holder
 //-------------------------------------------------------------------------
+
+pub enum RoundState {
+    Equal,
+    Left,
+    Right
+}
 
 pub struct RoundHolder {
     pub output_rounds: Vec<(Round, Count)>,
@@ -1515,7 +1624,10 @@ impl RoundHolder {
         }
     }
 
-    pub fn compute_output_rounds(&mut self, mut right_iter: DistinctIter) {
+
+    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F)
+        where F: FnMut(RoundState, &mut Vec<(Round, Count)>, Option<(Round, Count)>, Round, Count, Option<(Round, Count)>, Round, Count)
+    {
         let (neue, current) = match (self.output_rounds.len(), self.prev_output_rounds.len()) {
             (0, _) => (&mut self.output_rounds, &mut self.prev_output_rounds),
             (_, 0) => (&mut self.prev_output_rounds, &mut self.output_rounds),
@@ -1528,47 +1640,33 @@ impl RoundHolder {
             let mut left_count = 0;
             let mut right_round = 0;
             let mut right_count = 0;
-            let mut left = left_iter.next();
-            let mut right = right_iter.next();
+            let mut left = None;
+            let mut right = None;
             let mut next_left = left_iter.next();
             let mut next_right = right_iter.next();
-            move_output_round(&left, &mut left_round, &mut left_count);
-            move_output_round(&right, &mut right_round, &mut right_count);
-            while left != None || right != None {
+            let mut keep_running = true;
+            // move_output_round(&left, &mut left_round, &mut left_count);
+            // move_output_round(&right, &mut right_round, &mut right_count);
+            while keep_running {
                 // println!("left: {:?}, right {:?}", left, right);
-                if left_round == right_round {
-                    if let Some((_, count)) = left {
-                        let total = count * right_count;
-                        if total != 0 {
-                            neue.push((left_round, total));
-                        }
-                    }
+                let state = if left_round == right_round {
+                    RoundState::Equal
                 } else if left_round > right_round {
                     while next_right != None && next_right.unwrap().0 < left_round {
                         right = next_right;
                         next_right = right_iter.next();
                         move_output_round(&right, &mut right_round, &mut right_count);
                     }
-                    if let Some((_, count)) = left {
-                        let total = count * right_count;
-                        if total != 0 {
-                            neue.push((left_round, total));
-                        }
-                    }
+                    RoundState::Right
                 } else {
                     while next_left != None && next_left.unwrap().0 < right_round {
                         left = next_left;
                         next_left = left_iter.next();
                         move_output_round(&left, &mut left_round, &mut left_count);
                     }
-                    if let Some((_, count)) = right {
-                        let total = count * left_count;
-                        if total != 0 {
-                            neue.push((right_round, total));
-                        }
-                    }
-                }
-
+                    RoundState::Left
+                };
+                action(state, neue, left, left_round, left_count, right, right_round, right_count);
                 match (next_left, next_right) {
                     (None, None) => { break; },
                     (None, Some(_)) => {
@@ -1581,11 +1679,18 @@ impl RoundHolder {
                         next_left = left_iter.next();
                         move_output_round(&left, &mut left_round, &mut left_count);
                     },
-                    (Some((next_left_count, _)), Some((next_right_count, _))) => {
-                        if next_left_count <= next_right_count {
+                    (Some((next_left_round, _)), Some((next_right_round, _))) => {
+                        if next_left_round < next_right_round {
                             left = next_left;
                             next_left = left_iter.next();
                             move_output_round(&left, &mut left_round, &mut left_count);
+                        } else if next_left_round == next_right_round {
+                            left = next_left;
+                            next_left = left_iter.next();
+                            move_output_round(&left, &mut left_round, &mut left_count);
+                            right = next_right;
+                            next_right = right_iter.next();
+                            move_output_round(&right, &mut right_round, &mut right_count);
                         } else {
                             right = next_right;
                             next_right = right_iter.next();
@@ -1593,9 +1698,74 @@ impl RoundHolder {
                         }
                     }
                 }
-
+                keep_running = left != None || right != None;
             }
         }
+    }
+
+    pub fn compute_anti_output_rounds(&mut self, mut right_iter: DistinctIter) {
+        let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
+            match state {
+                RoundState::Equal => {
+                    if let Some((_, count)) = left {
+                        let total = count * right_count;
+                        if right_count == 0 && count != 0 {
+                            neue.push((left_round, count));
+                        }
+                    }
+                },
+                RoundState::Right => {
+                    if let Some((_, count)) = left {
+                        let total = count * right_count;
+                        if right_count == 0 {
+                            neue.push((left_round, count));
+                        }
+                    }
+                },
+                RoundState::Left => {
+                    if let Some((_, count)) = right {
+                        let total = (count * -1) * left_count;
+                        if total != 0 {
+                            neue.push((right_round, total));
+                        }
+                    }
+                }
+            }
+        };
+        self._compute_output_rounds(right_iter, action);
+    }
+
+    pub fn compute_output_rounds(&mut self, mut right_iter: DistinctIter) {
+        let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
+            match state {
+                RoundState::Equal => {
+                    if let Some((_, count)) = left {
+                        let total = count * right_count;
+                        if total != 0 {
+                            neue.push((left_round, total));
+                        }
+                    }
+
+                },
+                RoundState::Right => {
+                    if let Some((_, count)) = left {
+                        let total = count * right_count;
+                        if total != 0 {
+                            neue.push((left_round, total));
+                        }
+                    }
+                },
+                RoundState::Left => {
+                    if let Some((_, count)) = right {
+                        let total = count * left_count;
+                        if total != 0 {
+                            neue.push((right_round, total));
+                        }
+                    }
+                }
+            }
+        };
+        self._compute_output_rounds(right_iter, action);
     }
 
     pub fn insert(&mut self, change:Change) {
@@ -1751,6 +1921,7 @@ pub struct RuntimeState {
     pub interner: Interner,
     pub iter_pool: EstimateIterPool,
     pub watch_indexes: HashMap<String, WatchIndex>,
+    pub intermediates: IntermediateIndex<Vec<Interned>>,
 }
 
 impl RuntimeState {
@@ -1763,6 +1934,7 @@ impl RuntimeState {
 
 pub struct BlockInfo {
     pub pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
+    pub intermediate_pipe_lookup: HashMap<Interned, Vec<Vec<Instruction>>>,
     pub block_names: HashMap<String, usize>,
     pub blocks: Vec<Block>,
 }
@@ -1786,6 +1958,7 @@ pub struct Program {
 impl Program {
     pub fn new() -> Program {
         let index = HashIndex::new();
+        let intermediates = IntermediateIndex::new();
         let iter_pool = EstimateIterPool::new();
         let mut interner = Interner::new();
         let rounds = RoundHolder::new();
@@ -1793,10 +1966,11 @@ impl Program {
         let watch_indexes = HashMap::new();
         let watchers = HashMap::new();
         let pipe_lookup = HashMap::new();
+        let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
         let (outgoing, incoming) = mpsc::sync_channel(1);
-        let state = RuntimeState { rounds, index, interner, iter_pool, watch_indexes };
-        let block_info = BlockInfo { pipe_lookup, block_names, blocks };
+        let state = RuntimeState { rounds, index, interner, iter_pool, watch_indexes, intermediates };
+        let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
     }
 
@@ -1827,8 +2001,17 @@ impl Program {
                 *block = ix;
             } else { panic!("Block where the first instruction is not a start block.") }
             for shape in block.shapes[pipe_ix].iter() {
-                let cur = self.block_info.pipe_lookup.entry(*shape).or_insert_with(|| vec![]);
-                cur.push(pipe.clone());
+                match shape {
+                    &PipeShape::Scan(e,a,v) => {
+                        let cur = self.block_info.pipe_lookup.entry((e,a,v)).or_insert_with(|| vec![]);
+                        cur.push(pipe.clone());
+                    }
+                    &PipeShape::Intermediate(id) => {
+                        let cur = self.block_info.intermediate_pipe_lookup.entry(id).or_insert_with(|| vec![]);
+                        println!("Intermediate shape! {:?}, {:?}", shape, pipe);
+                        cur.push(pipe.clone());
+                    }
+                }
             }
         }
         self.block_info.block_names.insert(block.name.to_string(), ix);

@@ -3,7 +3,7 @@ extern crate time;
 use nom::{digit, alphanumeric, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::{HashMap, HashSet};
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_filter, make_function, Transaction, Block, Internable, RawChange};
+use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_intermediate_insert, make_filter, make_function, Transaction, Block, Internable, RawChange};
 use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
@@ -619,20 +619,11 @@ impl<'a> Node<'a> {
             &mut SubBlock::Not(ref mut cur_block) => {
                 let (mut related, inputs) = get_related_constraints(&cur_block.constraints, parent_constraints);
                 let block_name = comp.block_name.to_string();
-                let reg = comp.get_value(&format!("{}|sub_block|not|{}", block_name, ix));
-                let tag = comp.interner.string("tag");
                 let tag_value = comp.interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
-                let mut identity_attrs = vec![tag];
-                related.push(Constraint::Insert {e:reg, a:tag, v:tag_value, commit:false});
-                parent_constraints.push(make_anti_scan(reg, tag, tag_value));
-                for (in_ix, input) in inputs.iter().enumerate() {
-                    let a = comp.interner.string(&format!("input-{}", in_ix));
-                    related.push(Constraint::Insert {e:reg, a, v:*input, commit:false});
-                    parent_constraints.push(make_anti_scan(reg, a, *input));
-                    identity_attrs.push(*input);
-                }
-                related.push(make_function("gen_id", identity_attrs, reg));
-                println!("   INPUTS {:?}", inputs);
+                let mut key_attrs = vec![tag_value];
+                key_attrs.extend(inputs);
+                parent_constraints.push(make_anti_scan(key_attrs.clone()));
+                related.push(make_intermediate_insert(key_attrs));
                 for c in related.iter() {
                     println!("    {:?}", c);
                 }
