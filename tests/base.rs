@@ -1,6 +1,7 @@
 extern crate eve;
 
 use eve::ops::{Program};
+use eve::parser::{parse_string};
 
 macro_rules! n (($p:ident, $i:expr) => ({ $p.state.interner.number_id($i as f32) }));
 macro_rules! s (($p:ident, $i:expr) => ({ $p.state.interner.string_id(&$i) }));
@@ -16,13 +17,10 @@ macro_rules! valid (($blocks:tt) => ({
 
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info);
-    let parts:Vec<&str> = stringy[1..stringy.len() - 1].split("~ ~ ~").collect();
-    let mut ix = 0;
-    for part in parts {
-        let fixed = part.replace("# ", "#");
-        program.block(&format!("block{}", ix), &format!("{}", fixed));
-        ix += 1;
+    let stringy = stringify!($info).replace("# ", "#").replace("! [", "[");
+    let blocks = parse_string(&mut program, &stringy, "test");
+    for block in blocks {
+        program.raw_block(block);
     }
     program
 }));
@@ -40,18 +38,17 @@ test!(base_bind, {
         [#foo woah]
     bind
         [#bar baz: [#zomg]]
-
-    ~~~
+    end
 
     search
         [#bar baz: [#zomg]]
     bind
         [#success]
-
-    ~~~
+    end
 
     commit
         [#foo woah: 1000]
+    end
 });
 
 test!(base_bind_plus, {
@@ -59,18 +56,17 @@ test!(base_bind_plus, {
         [#foo woah]
     bind
         [#bar baz: woah + 10]
-
-    ~~~
+    end
 
     search
         [#bar baz: 1010]
     bind
         [#success]
-
-    ~~~
+    end
 
     commit
         [#foo woah: 1000]
+    end
 });
 
 test!(base_no_scans, {
@@ -78,6 +74,7 @@ test!(base_no_scans, {
         2 = 1 + 1
     bind
         [#success]
+    end
 });
 
 test!(base_no_scans_fail, {
@@ -86,6 +83,7 @@ test!(base_no_scans_fail, {
         x != 3
     bind
         [#success]
+    end
 });
 
 //--------------------------------------------------------------------
@@ -95,78 +93,79 @@ test!(base_no_scans_fail, {
 test!(base_join_constant, {
     commit
         [#foo x: 3]
-
-    ~~~
+    end
 
     search
         x = 3
         [#foo x]
     bind
         [#success]
+    end
 });
 
 test!(base_join_expression, {
     commit
         [#foo x: 3]
-    ~~~
+    end
 
     search
         x = 1 + 2
         [#foo x]
     bind
         [#success]
+    end
 });
 
 test!(base_join_cross_different, {
     commit
         [#foo x: 3]
         [#bar y: "hi"]
-
-    ~~~
+    end
 
     search
         [#foo x: 3]
         [#bar y: "hi"]
     bind
         [#success]
+    end
 });
 
 test!(base_join_cross_similar, {
     commit
         [#foo x: 3]
         [#foo x: 4]
-
-    ~~~
+    end
 
     search
         [#foo x: 3]
         [#foo x: 4]
     bind
         [#success]
+    end
 });
 
 test!(base_join_many_attributes, {
     commit
         [#foo x: 3 y: "hi"]
-
-    ~~~
+    end
 
     search
         [#foo x: 3 y: "hi"]
     bind
         [#success]
+    end
 });
 
 test!(base_join_many_values, {
     commit
         [#foo x: (3, 4)]
-
-    ~~~
+    end
 
     search
         [#foo x: (3, 4)]
     bind
         [#success]
+    end
 });
 
 
@@ -174,28 +173,28 @@ test!(base_join_binary, {
     commit
         [#foo x: 3]
         [#bar x: 3]
-
-    ~~~
+    end
 
     search
         [#foo x]
         [#bar x]
     bind
         [#success]
+    end
 });
 
 test!(base_join_binary_multi, {
     commit
         [#foo x: (3, 4, 5)]
         [#bar y: (4, 5, 6)]
-
-    ~~~
+    end
 
     search
         [#foo x]
         [#bar y: x]
     bind
         [#success]
+    end
 });
 
 test!(base_join_trinary, {
@@ -203,8 +202,7 @@ test!(base_join_trinary, {
         [#foo x: 3]
         [#bar x: 3]
         [#baz x: 3]
-
-    ~~~
+    end
 
     search
         [#foo x]
@@ -212,6 +210,7 @@ test!(base_join_trinary, {
         [#baz x]
     bind
         [#success]
+    end
 });
 
 test!(base_join_transitive, {
@@ -219,8 +218,7 @@ test!(base_join_transitive, {
         [#foo x: 3]
         [#bar x: 3 y: 5]
         [#baz y: 5 z: 8]
-
-    ~~~
+    end
 
     search
         [#foo x]
@@ -228,21 +226,21 @@ test!(base_join_transitive, {
         [#baz y z]
     bind
         [#success]
+    end
 });
-
 
 test!(base_join_binary_unmatched, {
     commit
         [#foo x: 3]
         [#bar y: 4]
-
-    ~~~
+    end
 
     search
         [#foo x]
         [#bar y != x]
     bind
         [#success]
+    end
 });
 
 //--------------------------------------------------------------------
@@ -255,13 +253,13 @@ test!(base_interpolation_search_number, {
         baz = "{{x}}"
     bind
         [#foo baz]
-
-    ~~~
+    end
 
     search
         [#foo baz: "2"]
     bind
         [#success]
+    end
 });
 
 test!(base_interpolation_search_expression, {
@@ -269,13 +267,13 @@ test!(base_interpolation_search_expression, {
         baz = "{{1 + 2}}"
     bind
         [#foo baz]
-
-    ~~~
+    end
 
     search
         [#foo baz: "3"]
     bind
         [#success]
+    end
 });
 
 test!(base_interpolation_search_multiple, {
@@ -285,13 +283,13 @@ test!(base_interpolation_search_multiple, {
         baz = "({{x}}, {{y}})"
     bind
         [#foo baz]
-
-    ~~~
+    end
 
     search
         [#foo baz: "(1, 3.5)"]
     bind
         [#success]
+    end
 });
 
 test!(base_interpolation_bind_string, {
@@ -299,13 +297,13 @@ test!(base_interpolation_bind_string, {
         x = "hi there!"
     bind
         [#foo baz: "{{x}}"]
-
-    ~~~
+    end
 
     search
         [#foo baz: "hi there!"]
     bind
         [#success]
+    end
 });
 
 
@@ -314,13 +312,13 @@ test!(base_interpolation_bind_number, {
         x = 1 + 1
     bind
         [#foo baz: "{{x}}"]
-
-    ~~~
+    end
 
     search
         [#foo baz: "2"]
     bind
         [#success]
+    end
 });
 
 test!(base_interpolation_bind_expression, {
@@ -328,13 +326,13 @@ test!(base_interpolation_bind_expression, {
         x = 1 + 1
     bind
         [#foo baz: "{{x + 1}}"]
-
-    ~~~
+    end
 
     search
         [#foo baz: "3"]
     bind
         [#success]
+    end
 });
 
 //--------------------------------------------------------------------
@@ -346,13 +344,13 @@ test!(base_not, {
         not([#foo])
     bind
         [#bar]
-
-    ~~~
+    end
 
     search
         [#bar]
     bind
         [#success]
+    end
 });
 
 test!(base_not_reverse, {
@@ -360,18 +358,17 @@ test!(base_not_reverse, {
         not([#foo])
     bind
         [#bar]
-
-    ~~~
+    end
 
     commit
         [#foo]
-
-    ~~~
+    end
 
     search
         not([#bar])
     bind
         [#success]
+    end
 });
 
 test!(base_not_no_join, {
@@ -380,12 +377,11 @@ test!(base_not_no_join, {
         not([#foo])
     bind
         [#success]
-
-    ~~~
+    end
 
     commit
         [#zomg]
-
+    end
 });
 
 test!(base_not_no_join_retraction, {
@@ -394,18 +390,18 @@ test!(base_not_no_join_retraction, {
         not([#foo])
     bind
         [#bar]
-
-    ~~~
+    end
 
     commit
         [#zomg]
         [#foo]
+    end
 
-    ~~~
     search
         not([#bar])
     bind
         [#success]
+    end
 });
 
 test!(base_not_join, {
@@ -414,12 +410,12 @@ test!(base_not_join, {
         not([#foo z])
     bind
         [#success]
-
-    ~~~
+    end
 
     commit
         [#zomg]
         [#foo z: 4]
+    end
 });
 
 test!(base_not_join_retraction, {
@@ -428,16 +424,16 @@ test!(base_not_join_retraction, {
         not([#foo z])
     bind
         [#bar]
-
-    ~~~
+    end
 
     commit
         z = [#zomg]
         [#foo z]
+    end
 
-    ~~~
     search
         not([#bar])
     bind
         [#success]
+    end
 });

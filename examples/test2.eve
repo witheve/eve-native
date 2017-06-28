@@ -1,15 +1,16 @@
 hm.
 
-~~~
 search
   f = [#foo]
   not([#bar f])
 bind
   [#zomg]
-~~~
+end
 
-~~~
 commit
   [#foo]
   [#bar f: 3]
-~~~
+end
+
+meep moop
+beep boop

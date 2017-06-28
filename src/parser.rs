@@ -899,26 +899,26 @@ named!(equality<Node<'a>>,
            right: alt_complete!(expr | record) >>
            (Node::Equality {left:Box::new(left), right:Box::new(right)})));
 
-named_args!(output_record_set<'a>(output_type:OutputType) <Node<'a>>,
+named_args!(output_record_set<'a>(output_type:OutputType) <Node<'this_is_probably_unique_i_hope_please>>,
        do_parse!(
            records: many1!(sp!(apply!(output_record, output_type))) >>
            (Node::RecordSet(records))));
 
-named_args!(output_attribute_equality<'a>(output_type:OutputType) <Node<'a>>,
+named_args!(output_attribute_equality<'a>(output_type:OutputType) <Node<'this_is_probably_unique_i_hope_please>>,
        do_parse!(
            attr: identifier >>
            sp!(alt_complete!(tag!(":") | tag!("="))) >>
            value: alt_complete!(apply!(output_record_set, output_type) | expr | expr_set) >>
            (Node::AttributeEquality(attr, Box::new(value)))));
 
-named_args!(output_attribute<'a>(output_type:OutputType) <Node<'a>>,
+named_args!(output_attribute<'a>(output_type:OutputType) <Node<'this_is_probably_unique_i_hope_please>>,
        sp!(alt_complete!(
                hashtag |
                apply!(output_attribute_equality, output_type) |
                tag!("|") => { |v:&[u8]| Node::Pipe } |
-               identifier => { |v:&'a str| Node::Attribute(v) })));
+               identifier => { |v:&'this_is_probably_unique_i_hope_please str| Node::Attribute(v) })));
 
-named_args!(output_record<'a>(output_type:OutputType) <Node<'a>>,
+named_args!(output_record<'a>(output_type:OutputType) <Node<'this_is_probably_unique_i_hope_please>>,
        do_parse!(
            tag!("[") >>
            attrs: many0!(apply!(output_attribute, output_type)) >>
@@ -976,7 +976,7 @@ named!(commit_update<Node<'a>>,
            value: alt_complete!(apply!(output_record, OutputType::Commit) | none_value | expr | hashtag) >>
            (Node::RecordUpdate{ record: Box::new(record), op: str::from_utf8(op).unwrap(), value: Box::new(value), output_type:OutputType::Commit })));
 
-named_args!(output_equality<'a>(output_type:OutputType) <Node<'a>>,
+named_args!(output_equality<'a>(output_type:OutputType) <Node<'this_is_probably_unique_i_hope_please>>,
        do_parse!(
            left: identifier >>
            sp!(tag!("=")) >>
@@ -1044,26 +1044,17 @@ named!(block<Node<'a>>,
        sp!(do_parse!(
                search: opt!(search_section) >>
                update: alt_complete!( bind_section | commit_section | project_section | watch_section ) >>
+               sp!(tag!("end")) >>
                (Node::Block {search:Box::new(search), update:Box::new(update)}))));
 
-named!(embedded_block<Node<'a>>,
-       sp!(alt_complete!(
-               delimited!(tag!("~~~"), block, tag!("~~~")) |
-               delimited!(tag!("```"), block, tag!("```")))));
+named!(maybe_block<Option<Node<'a>>>,
+       alt_complete!(block => { |block| Some(block) } |
+                     eof!() => { |_| None }));
 
 named!(surrounded_block<Option<Node<'a>>>,
-       sp!(do_parse!(
-               take_until_s!("~~~") >>
-               block: opt!(embedded_block) >>
-               (block))));
-
-named!(test<Option<(&'a str, Node<'a>)>>,
-       sp!(do_parse!(
-               res: map_res!(take_until_s!("~~~"), str::from_utf8) >>
-               tag!("~~~") >>
-               block: sp!(block) >>
-               sp!(tag!("~~~")) >>
-               (Some((res, block))))));
+       do_parse!(
+           res: many_till!(anychar, maybe_block) >>
+           (res.1)));
 
 named!(markdown<Node<'a>>,
        sp!(do_parse!(
@@ -1116,11 +1107,8 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     blocks
 }
 
-pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
-    let mut file = File::open(path).expect("Unable to open the file");
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).expect("Unable to read the file");
-    let res = markdown(contents.as_bytes());
+pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block> {
+    let res = markdown(content.as_bytes());
     if let IResult::Done(left, mut cur) = res {
         if let Node::Doc { ref mut blocks, .. } = cur {
             let interner = &mut program.state.interner;
@@ -1169,5 +1157,21 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
     } else {
         panic!("Failed to parse");
     }
+}
+
+pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
+    let mut file = File::open(path).expect("Unable to open the file");
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).expect("Unable to read the file");
+    parse_string(program, &contents, path)
+}
+
+#[test]
+pub fn parser_test() {
+    let mut file = File::open("examples/test2.eve").expect("Unable to open the file");
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).expect("Unable to read the file");
+    let x = markdown(contents.as_bytes());
+    println!("{:?}", x);
 }
 
