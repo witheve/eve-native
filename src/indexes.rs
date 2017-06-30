@@ -565,27 +565,44 @@ impl<'a> Iterator for DistinctIter<'a> {
 // Intermediate Index
 //-------------------------------------------------------------------------
 
-pub struct IntermediateIndex<K>
-    where K: Hash + Eq + Ord + Clone + Debug
+enum IntermediateLevel {
+    Value(HashMap<Vec<Interned>, RoundEntry, MyHasher>),
+    KeyOnly(RoundEntry),
+}
+
+pub struct IntermediateIndex
 {
-    index: BTreeMap<K, RoundEntry>,
-    pub rounds: HashMap<Round, HashMap<K, IntermediateChange<K>, MyHasher>, MyHasher>,
+    index: HashMap<Vec<Interned>, IntermediateLevel, MyHasher>,
+    pub rounds: HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>,
     empty: Vec<i32>,
 }
 
-impl<K> IntermediateIndex<K>
-    where K: Hash + Eq + Ord + Clone + Debug
+impl IntermediateIndex
 {
 
-    pub fn new() -> IntermediateIndex<K> {
-        IntermediateIndex { index: BTreeMap::new(), rounds: HashMap::default(), empty: vec![] }
+    pub fn new() -> IntermediateIndex {
+        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![] }
     }
 
-    pub fn distinct_iter(&self, key:K) -> DistinctIter {
-        match self.index.get(&key) {
-            Some(&RoundEntry { ref rounds, .. }) => DistinctIter::new(rounds),
-            None => DistinctIter::new(&self.empty),
+    fn get_rounds(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> &mut Vec<i32> {
+        match self.index.get(key) {
+            Some(level) => {
+                match level {
+                    &IntermediateLevel::KeyOnly(entry) => &mut entry.rounds,
+                    &IntermediateLevel::Value(lookup) => {
+                        match lookup.get(value) {
+                            Some(entry) => &mut entry.rounds,
+                            None => &mut self.empty,
+                        }
+                    }
+                }
+            }
+            None => &mut self.empty,
         }
+    }
+
+    pub fn distinct_iter(&self, key:Vec<Interned>, value:Vec<Interned>) -> DistinctIter {
+        DistinctIter::new(self.get_rounds(&key, &value))
     }
 
     pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>) {
@@ -605,8 +622,8 @@ impl<K> IntermediateIndex<K>
     }
 
     // FIXME: attack of the clones.
-    pub fn distinct(&mut self, key:K, round:Round, count:Count, negate:bool) {
-        let cloned = key.clone();
+    pub fn distinct(&mut self, full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>, round:Round, count:Count, negate:bool) {
+        let cloned = full_key.clone();
         let ref mut rounds = self.rounds;
         let insert = |round, delta| {
             println!("Intermediate! {:?} {:?} {:?}", cloned, round, delta);
@@ -625,7 +642,18 @@ impl<K> IntermediateIndex<K>
                 }
             }
         };
-        let ref mut counts = self.index.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
+        // TODO: this needs to deal with Levels
+        self.index.entry(key).or_insert_with(|| {
+            let entry = RoundEntry { inserted:false, rounds: vec![] };
+            if value.len() == 0 {
+                IntermediateLevel::KeyOnly(entry)
+            } else {
+                let sub = HashMap::default();
+                sub.insert(value.clone(), entry);
+                IntermediateLevel::Value(sub)
+            }
+        });
+        let counts = self.get_rounds(&key, &value);
         generic_distinct(counts, count, round, insert);
     }
 }

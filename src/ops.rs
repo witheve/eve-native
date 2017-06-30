@@ -89,8 +89,8 @@ impl RawChange {
 }
 
 #[derive(Debug, Clone)]
-pub struct IntermediateChange<K> {
-    pub key: K,
+pub struct IntermediateChange {
+    pub key: Vec<Interned>,
     pub count: Count,
     pub round: Round,
     pub negate: bool,
@@ -645,7 +645,7 @@ impl fmt::Debug for Counters {
 
 pub struct Frame {
     input: Option<Change>,
-    intermediate: Option<IntermediateChange<Vec<Interned>>>,
+    intermediate: Option<IntermediateChange>,
     row: Row,
     block_ix: usize,
     results: Vec<Interned>,
@@ -1966,7 +1966,7 @@ pub struct RuntimeState {
     pub index: HashIndex,
     pub interner: Interner,
     pub watch_indexes: HashMap<String, WatchIndex>,
-    pub intermediates: IntermediateIndex<Vec<Interned>>,
+    pub intermediates: IntermediateIndex,
 }
 
 impl RuntimeState {
@@ -2156,7 +2156,7 @@ pub struct Transaction {
 
 fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round) {
     if let Some(_) = state.intermediates.rounds.get(&current_round) {
-        let mut remaining:Vec<(Vec<Interned>, IntermediateChange<Vec<Interned>>)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
+        let mut remaining:Vec<(Vec<Interned>, IntermediateChange)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
         while remaining.len() > 0 {
             for (_, cur) in remaining {
                 println!("LOOKIN {:?}", cur);
