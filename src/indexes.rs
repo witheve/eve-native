@@ -67,9 +67,9 @@ impl Iterator for HashIndexIter {
         match self {
             &mut HashIndexIter::Empty => None,
             &mut HashIndexIter::Single { value, ref mut returned } => if *returned { None } else { *returned = true; Some(value) },
-            &mut HashIndexIter::Root(ref mut iter) => iter.next(),
-            &mut HashIndexIter::Middle(ref mut iter) => iter.next(),
-            &mut HashIndexIter::Leaf(ref mut iter) => iter.next(),
+            &mut HashIndexIter::Root(ref mut iter) => iter.next().map(|x| *x),
+            &mut HashIndexIter::Middle(ref mut iter) => iter.next().map(|x| *x),
+            &mut HashIndexIter::Leaf(ref mut iter) => iter.next().map(|x| *x),
         }
     }
 }
@@ -606,7 +606,7 @@ impl IntermediateIndex
         match iter {
             &mut EstimateIter::Intermediate { ref mut estimate, ref mut iter, .. } => {
                 match self.index.get(&key) {
-                    Some(&IntermediateLevel::Value(lookup)) => {
+                    Some(&IntermediateLevel::Value(ref lookup)) => {
                         *estimate = lookup.len() as u32;
                         *iter = lookup.get_dangerous_keys();
                     },

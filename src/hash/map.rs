@@ -3344,11 +3344,11 @@ mod test_map {
 /// [`keys`]: struct.HashMap.html#method.keys
 /// [`HashMap`]: struct.HashMap.html
 
-pub trait GetDangerousKeys<K:Copy, V, S> {
+pub trait GetDangerousKeys<K, V, S> {
     fn get_dangerous_keys(&self) -> DangerousKeys<K, V>;
 }
 
-impl<K:Copy, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
+impl<K, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
     fn get_dangerous_keys(&self) -> DangerousKeys<K, V> {
         DangerousKeys {
             inner: table::DangerousKeysIter::from_table(&self.table)
@@ -3357,8 +3357,21 @@ impl<K:Copy, V, S> GetDangerousKeys<K,V,S> for HashMap<K, V, S> {
 }
 
 #[derive(Clone)]
-pub struct DangerousKeys<K:Copy, V> {
+pub struct DangerousKeys<K, V> {
     inner: table::DangerousKeysIter<K, V>,
+}
+
+impl<K,V> DangerousKeys<K, V> {
+    #[inline]
+    pub fn next(&mut self) -> Option<&K> {
+        self.inner.next()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
 }
 
 impl<K:Copy, V> fmt::Debug for DangerousKeys<K, V> {
@@ -3366,24 +3379,3 @@ impl<K:Copy, V> fmt::Debug for DangerousKeys<K, V> {
         f.pad("DangerousKeys { .. }")
     }
 }
-
-impl<K:Copy, V> Iterator for DangerousKeys<K, V> {
-    type Item = K;
-
-    #[inline]
-    fn next(&mut self) -> Option<K> {
-        self.inner.next()
-    }
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<K:Copy, V> ExactSizeIterator for DangerousKeys<K, V> {
-    #[inline]
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-}
-

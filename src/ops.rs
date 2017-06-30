@@ -561,7 +561,7 @@ pub enum EstimateIter {
     Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
     Function {estimate: u32, output: u32, result: Interned, returned: bool, constraint: u32},
     MultiRowFunction {estimate: u32, output: u32, results: Vec<Interned>, returned: bool, constraint: u32},
-    Intermediate {estimate: u32, iter: DangerousKeys<Interned, RoundEntry>, output: Vec<u32>, constraint: u32},
+    Intermediate {estimate: u32, iter: DangerousKeys<Vec<Interned>, RoundEntry>, output: Vec<u32>, constraint: u32},
 }
 
 impl EstimateIter {
