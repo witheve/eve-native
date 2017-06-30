@@ -3,12 +3,13 @@
 //-------------------------------------------------------------------------
 
 // use std::collections::HashMap;
-use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count};
+use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange};
 use std::cmp;
 
 extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault, Hash};
+use std::collections::BTreeMap;
 use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
 use std::iter::{Iterator, ExactSizeIterator};
 use std::fmt::{Debug};
@@ -293,11 +294,9 @@ impl HashIndexLevel {
 // Generic distinct
 //-------------------------------------------------------------------------
 
-pub fn generic_distinct<T, F>(key: T, index:&mut HashMap<T, RoundEntry, MyHasher>, input_count:Count, input_round:Round, mut insert:F)
-    where T: Hash + Eq,
-          F: FnMut(Round, Count)
+pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_round:Round, mut insert:F)
+    where F: FnMut(Round, Count)
 {
-    let ref mut counts = index.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
     // println!("Pre counts {:?}", counts);
     ensure_len(counts, (input_round + 1) as usize);
     let counts_len = counts.len() as u32;
@@ -515,7 +514,8 @@ impl HashIndex {
         let insert = |round, delta| {
             rounds.insert(input.with_round_count(round, delta));
         };
-        generic_distinct(key, &mut self.eavs, input.count, input.round, insert);
+        let ref mut counts = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
+        generic_distinct(counts, input.count, input.round, insert);
     }
 }
 
@@ -565,19 +565,19 @@ impl<'a> Iterator for DistinctIter<'a> {
 //-------------------------------------------------------------------------
 
 pub struct IntermediateIndex<K>
-    where K: Hash + Eq + Clone + Debug
+    where K: Hash + Eq + Ord + Clone + Debug
 {
-    index: HashMap<K, RoundEntry, MyHasher>,
-    pub rounds: HashMap<Round, HashMap<K, Count, MyHasher>, MyHasher>,
+    index: BTreeMap<K, RoundEntry>,
+    pub rounds: HashMap<Round, HashMap<K, IntermediateChange<K>, MyHasher>, MyHasher>,
     empty: Vec<i32>,
 }
 
 impl<K> IntermediateIndex<K>
-    where K: Hash + Eq + Clone + Debug
+    where K: Hash + Eq + Ord + Clone + Debug
 {
 
     pub fn new() -> IntermediateIndex<K> {
-        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![] }
+        IntermediateIndex { index: BTreeMap::new(), rounds: HashMap::default(), empty: vec![] }
     }
 
     pub fn distinct_iter(&self, key:K) -> DistinctIter {
@@ -587,7 +587,8 @@ impl<K> IntermediateIndex<K>
         }
     }
 
-    pub fn distinct(&mut self, key:K, round:Round, count:Count) {
+    // FIXME: attack of the clones.
+    pub fn distinct(&mut self, key:K, round:Round, count:Count, negate:bool) {
         let cloned = key.clone();
         let ref mut rounds = self.rounds;
         let insert = |round, delta| {
@@ -595,17 +596,20 @@ impl<K> IntermediateIndex<K>
             match rounds.entry(round) {
                 Entry::Occupied(mut ent) => {
                     let cur = ent.get_mut();
-                    let val = cur.entry(cloned.clone()).or_insert(0);
-                    *val = *val + delta;
+                    let val = cur.entry(cloned.clone()).or_insert_with(|| {
+                        IntermediateChange { key:cloned.clone(), round, count:0, negate }
+                    });
+                    val.count += count;
                 }
                 Entry::Vacant(mut ent) => {
                     let mut neue = HashMap::default();
-                    neue.insert(cloned.clone(), delta);
+                    neue.insert(cloned.clone(), IntermediateChange { key:cloned.clone(), round, count, negate });
                     ent.insert(neue);
                 }
             }
         };
-        generic_distinct(key, &mut self.index, count, round, insert);
+        let ref mut counts = self.index.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
+        generic_distinct(counts, count, round, insert);
     }
 }
 

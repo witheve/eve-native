@@ -3,7 +3,7 @@ extern crate time;
 use nom::{digit, alphanumeric, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::{HashMap, HashSet};
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_intermediate_insert, make_filter, make_function, Transaction, Block, Internable, RawChange};
+use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_intermediate_insert, make_intermediate_scan, make_filter, make_function, Transaction, Block, Internable, RawChange};
 use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
@@ -55,6 +55,8 @@ pub enum Node<'a> {
     OutputRecord(Option<String>, Vec<Node<'a>>, OutputType),
     RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str, output_type:OutputType},
     Not(Vec<Node<'a>>),
+    IfBranch { exclusive:bool, result:Box<Node<'a>>, body:Vec<Node<'a>> },
+    If { exclusive:bool, outputs:Option<Vec<Node<'a>>>, branches:Vec<Node<'a>> },
     Search(Vec<Node<'a>>),
     Bind(Vec<Node<'a>>),
     Commit(Vec<Node<'a>>),
@@ -66,7 +68,9 @@ pub enum Node<'a> {
 
 #[derive(Debug, Clone)]
 pub enum SubBlock {
-    Not(BlockCompilation)
+    Not(BlockCompilation),
+    IfBranch(BlockCompilation, Vec<Field>),
+    If(BlockCompilation, Vec<Field>, bool),
 }
 
 impl<'a> Node<'a> {
@@ -247,6 +251,24 @@ impl<'a> Node<'a> {
             &mut Node::Not(ref mut items) => {
                 for item in items {
                     item.gather_equalities(comp);
+                };
+                None
+            },
+            &mut Node::IfBranch {ref mut body, ref mut result, ..} => {
+                for item in body {
+                    item.gather_equalities(comp);
+                };
+                result.gather_equalities(comp);
+                None
+            },
+            &mut Node::If {ref mut branches, ref mut outputs, ..} => {
+                if let &mut Some(ref mut outs) = outputs {
+                    for out in outs {
+                        out.gather_equalities(comp);
+                    };
+                }
+                for branch in branches {
+                    branch.gather_equalities(comp);
                 };
                 None
             },
@@ -555,12 +577,47 @@ impl<'a> Node<'a> {
                 Some(reg)
             },
             &Node::Not(ref items) => {
-                // @TODO: implement this
                 let mut sub_block = BlockCompilation::new();
                 for item in items {
                     item.compile(comp, &mut sub_block);
                 };
                 cur_block.sub_blocks.push(SubBlock::Not(sub_block));
+                None
+            },
+            &Node::IfBranch { ref body, ref result, ..} => {
+                println!("  branch body: {:?}", body);
+                let mut sub_block = BlockCompilation::new();
+                for item in body {
+                    item.compile(comp, &mut sub_block);
+                };
+                let mut result_fields = vec![];
+                if let Node::ExprSet(ref nodes) = **result {
+                    for node in nodes {
+                        result_fields.push(node.compile(comp, &mut sub_block).unwrap());
+                    }
+                } else {
+                    result_fields.push(result.compile(comp, &mut sub_block).unwrap());
+                }
+                cur_block.sub_blocks.push(SubBlock::IfBranch(sub_block, result_fields));
+                None
+            },
+            &Node::If { ref branches, ref outputs, exclusive } => {
+                let mut sub_block = BlockCompilation::new();
+                for branch in branches {
+                    branch.compile(comp, &mut sub_block);
+                };
+                let out_registers = if let &Some(ref outs) = outputs {
+                    outs.iter().map(|cur| {
+                        if let &Node::Variable(v) = cur {
+                            comp.get_register(v)
+                        } else {
+                            panic!("Invalid output for If");
+                        }
+                    }).collect()
+                } else {
+                    vec![]
+                };
+                cur_block.sub_blocks.push(SubBlock::If(sub_block, out_registers, exclusive));
                 None
             },
             &Node::Search(ref statements) => {
@@ -623,15 +680,68 @@ impl<'a> Node<'a> {
                 let mut key_attrs = vec![tag_value];
                 key_attrs.extend(inputs);
                 parent_constraints.push(make_anti_scan(key_attrs.clone()));
-                related.push(make_intermediate_insert(key_attrs));
+                related.push(make_intermediate_insert(key_attrs, vec![], true));
                 for c in related.iter() {
                     println!("    {:?}", c);
                 }
                 cur_block.constraints = related;
             }
+            &mut SubBlock::IfBranch(ref mut cur_block, ref output_fields) => {
+            }
+            &mut SubBlock::If(ref mut cur_block, ref output_registers, exclusive) => {
+                println!("Let's compile an If!");
+                // find the inputs for all of the branches
+                let mut all_inputs = HashSet::new();
+                for sub in cur_block.sub_blocks.iter_mut() {
+                    if let &mut SubBlock::IfBranch(ref mut branch_block, ..) = sub {
+                        let (_, inputs) = get_related_constraints(&branch_block.constraints, parent_constraints);
+                        all_inputs.extend(inputs);
+                    }
+                }
+                // get related constraints for all the inputs
+                let related = get_input_constraints(&all_inputs, parent_constraints);
+                println!("    Inputs: {:?}", all_inputs);
+                println!("    RELATED: ");
+                for rel in related.iter() {
+                   println!("        {:?}", rel);
+                }
+                let block_name = comp.block_name.to_string();
+                let if_id = comp.interner.string(&format!("{}|sub_block|if|{}", block_name, ix));
+
+                // add an intermediate scan to the parent for the results of the branches
+                let mut parent_if_key = vec![if_id];
+                parent_if_key.extend(all_inputs.iter());
+                parent_if_key.extend(output_registers.iter());
+                parent_constraints.push(make_intermediate_scan(parent_if_key, output_registers.clone()));
+
+                // fix up the blocks for each branch
+                for (branch_ix, sub) in cur_block.sub_blocks.iter_mut().enumerate() {
+                    if let &mut SubBlock::IfBranch(ref mut branch_block, ref output_fields) = sub {
+                        // add the related constraints to each branch
+                        branch_block.constraints.extend(related.iter().map(|v| v.clone()));
+                        if exclusive {
+                            // Add an intermediate
+                            let mut branch_key = vec![if_id];
+                            branch_key.extend(all_inputs.iter());
+                            branch_key.push(comp.interner.number(branch_ix as f32));
+                            branch_block.constraints.push(make_intermediate_insert(branch_key, vec![], true));
+
+                            for prev_branch in 0..branch_ix {
+                                let mut key_attrs = vec![if_id];
+                                key_attrs.extend(all_inputs.iter());
+                                key_attrs.push(comp.interner.number(branch_ix as f32));
+                                branch_block.constraints.push(make_anti_scan(key_attrs));
+                            }
+                        }
+                        let mut if_key = vec![if_id];
+                        if_key.extend(all_inputs.iter());
+                        if_key.extend(output_fields.iter());
+                        branch_block.constraints.push(make_intermediate_insert(if_key, output_fields.clone(), false));
+                    }
+                }
+            }
         }
     }
-
 }
 
 pub fn get_related_constraints(needles:&Vec<Constraint>, haystack:&Vec<Constraint>) -> (Vec<Constraint>, HashSet<Field>) {
@@ -657,6 +767,23 @@ pub fn get_related_constraints(needles:&Vec<Constraint>, haystack:&Vec<Constrain
         }
     }
     (related, input_regs)
+}
+
+pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
+    let mut related = vec![];
+    for hay in haystack {
+        let mut found = false;
+        let outs = hay.get_output_registers();
+        for out in outs.iter() {
+            if needles.contains(out) {
+                found = true;
+            }
+        }
+        if found {
+            related.push(hay.clone());
+        }
+    }
+    related
 }
 
 
@@ -801,6 +928,10 @@ named!(string<Node<'a>>,
                }
            })));
 
+named!(variable<Node<'a>>,
+       do_parse!(i: identifier >>
+                 (Node::Variable(i))));
+
 named!(value<Node<'a>>,
        sp!(alt_complete!(
                number |
@@ -937,9 +1068,7 @@ named!(attribute_access<Node<'a>>,
                  })));
 
 named!(record_reference<Node<'a>>,
-       sp!(alt_complete!(
-               attribute_access |
-               identifier => { |v:&'a str| Node::Variable(v) })));
+       sp!(alt_complete!(attribute_access | variable)));
 
 named!(mutating_attribute_access<Node<'a>>,
        do_parse!(start: identifier >>
@@ -953,9 +1082,7 @@ named!(mutating_attribute_access<Node<'a>>,
                  })));
 
 named!(mutating_record_reference<Node<'a>>,
-       sp!(alt_complete!(
-               mutating_attribute_access |
-               identifier => { |v:&'a str| Node::Variable(v) })));
+       sp!(alt_complete!(mutating_attribute_access | variable)));
 
 named!(bind_update<Node<'a>>,
        do_parse!(
@@ -995,12 +1122,70 @@ named!(not_form<Node<'a>>,
                              tag!(")")) >>
            (Node::Not(items))));
 
+named!(if_equality<Vec<Node<'a>>>,
+       do_parse!(
+           outputs: alt_complete!(variable => { |v| vec![v] } |
+                                  delimited!(tag!("("), many1!(variable), tag!(")"))) >>
+           sp!(tag!("=")) >>
+           (outputs)));
+
+named!(if_else_branch<Node<'a>>,
+       alt_complete!(
+           if_branch |
+           do_parse!(
+               sp!(tag!("else")) >>
+               branch: if_branch >>
+               ({
+                   if let Node::IfBranch { ref mut exclusive, .. } = branch.clone() {
+                       *exclusive = true;
+                       branch
+                   } else {
+                       panic!("Invalid if branch");
+                   }
+               })) |
+           do_parse!(
+               sp!(tag!("else")) >>
+               result: alt_complete!(expr | expr_set) >>
+               (Node::IfBranch {exclusive:true, body:vec![], result:Box::new(result)}))));
+
+named!(if_branch<Node<'a>>,
+       do_parse!(
+           sp!(tag!("if")) >>
+           body: many0!(sp!(alt_complete!(
+                       inequality |
+                       record |
+                       equality
+                       ))) >>
+           sp!(tag!("then")) >>
+           result: alt_complete!(expr | expr_set) >>
+           (Node::IfBranch {exclusive:false, body, result:Box::new(result)})
+                ));
+
+named!(if_expression<Node<'a>>,
+       do_parse!(
+           outputs: opt!(if_equality) >>
+           start_branch: if_branch >>
+           other_branches: many0!(if_else_branch) >>
+           ({
+               let exclusive = other_branches.iter().any(|b| {
+                   if let &Node::IfBranch {exclusive, ..} = b {
+                       exclusive
+                   } else {
+                       false
+                   }
+               });
+               let mut branches = vec![start_branch];
+               branches.extend(other_branches);
+               Node::If {exclusive, outputs, branches}
+           })));
+
 
 named!(search_section<Node<'a>>,
        do_parse!(
            sp!(tag!("search")) >>
            items: many0!(sp!(alt_complete!(
                             not_form |
+                            if_expression |
                             inequality |
                             record |
                             equality
@@ -1092,15 +1277,19 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     while subs.len() > 0 {
         let cur = subs.pop().unwrap();
         let mut sub_comp = match cur {
-            SubBlock::Not(comp) => comp
+            SubBlock::Not(comp) => comp,
+            SubBlock::IfBranch(comp,..) => comp,
+            SubBlock::If(comp,..) => comp,
         };
         subs.extend(sub_comp.sub_blocks);
-        reassign_registers(&mut sub_comp.constraints);
-        println!("    SubBlock");
-        for c in sub_comp.constraints.iter() {
-            println!("        {:?}", c);
+        if sub_comp.constraints.len() > 0 {
+            reassign_registers(&mut sub_comp.constraints);
+            println!("    SubBlock");
+            for c in sub_comp.constraints.iter() {
+                println!("        {:?}", c);
+            }
+            blocks.push(Block::new(&format!("block|{}|sub_block|{}", name, sub_ix), sub_comp.constraints));
         }
-        blocks.push(Block::new(&format!("block|{}|sub_block|{}", name, sub_ix), sub_comp.constraints));
     }
 
     blocks.push(Block::new(name, block_comp.constraints));
@@ -1133,15 +1322,19 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 while subs.len() > 0 {
                     let cur = subs.pop().unwrap();
                     let mut sub_comp = match cur {
-                        SubBlock::Not(comp) => comp
+                        SubBlock::Not(comp) => comp,
+                        SubBlock::IfBranch(comp,..) => comp,
+                        SubBlock::If(comp,..) => comp,
                     };
                     subs.extend(sub_comp.sub_blocks);
-                    reassign_registers(&mut sub_comp.constraints);
-                    println!("    SubBlock");
-                    for c in sub_comp.constraints.iter() {
-                        println!("        {:?}", c);
+                    if sub_comp.constraints.len() > 0 {
+                        reassign_registers(&mut sub_comp.constraints);
+                        println!("    SubBlock");
+                        for c in sub_comp.constraints.iter() {
+                            println!("        {:?}", c);
+                        }
+                        program_blocks.push(Block::new(&format!("{}|sub_block|{}", block_name, sub_ix), sub_comp.constraints));
                     }
-                    program_blocks.push(Block::new(&format!("{}|sub_block|{}", block_name, sub_ix), sub_comp.constraints));
                 }
                 println!("");
                 program_blocks.push(Block::new(&block_name, block_comp.constraints));

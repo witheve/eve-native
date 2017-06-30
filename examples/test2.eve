@@ -1,16 +1,13 @@
 hm.
 
 search
-  f = [#foo]
-  not([#bar f])
+  [#foo x]
+  z = if x > 3 then "yep"
+      else "nope"
 bind
-  [#zomg]
+  [#zomg z]
 end
 
 commit
   [#foo]
-  [#bar f: 3]
 end
-
-meep moop
-beep boop

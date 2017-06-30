@@ -87,8 +87,8 @@ impl RawChange {
 }
 
 #[derive(Debug, Clone)]
-pub struct IntermediateChange {
-    pub key: Vec<Interned>,
+pub struct IntermediateChange<K> {
+    pub key: K,
     pub count: Count,
     pub round: Round,
     pub negate: bool,
@@ -167,7 +167,9 @@ impl Block {
                         }
                     }
                     moves.insert(ix, intermediate_moves);
-                    get_rounds.push(Instruction::GetAntiRounds { bail: 0, constraint: ix });
+                    get_rounds.push(Instruction::GetIntermediateRounds { bail: 0, constraint: ix });
+                }
+                &Constraint::IntermediateScan {ref key, ref value, ..} => {
                 }
                 &Constraint::Function {ref output, ..} => {
                     // @TODO: ensure that all inputs are accounted for
@@ -281,13 +283,13 @@ impl Block {
                 for inst in get_rounds.iter() {
                     match inst {
                         &Instruction::GetRounds { constraint, .. } |
-                        &Instruction::GetAntiRounds { constraint, .. } => {
+                        &Instruction::GetIntermediateRounds { constraint, .. } => {
                             if constraint != *scan_ix {
                                 last_iter_next -= 1;
                                 let mut neue = inst.clone();
                                 match neue {
                                     Instruction::GetRounds { ref mut bail, .. } |
-                                    Instruction::GetAntiRounds { ref mut bail, .. } => {
+                                    Instruction::GetIntermediateRounds { ref mut bail, .. } => {
                                         *bail = last_iter_next;
                                     }
                                     _ => panic!()
@@ -614,7 +616,7 @@ impl fmt::Debug for Counters {
 
 pub struct Frame {
     input: Option<Change>,
-    intermediate: Option<IntermediateChange>,
+    intermediate: Option<IntermediateChange<Vec<Interned>>>,
     row: Row,
     block_ix: usize,
     iters: Vec<Option<EstimateIter>>,
@@ -691,7 +693,7 @@ pub enum Instruction {
     MoveIntermediateField { from:u32, to:u32, },
     ClearRounds,
     GetRounds {bail: i32, constraint: u32},
-    GetAntiRounds {bail: i32, constraint: u32},
+    GetIntermediateRounds {bail: i32, constraint: u32},
     Bind {next: i32, constraint:u32},
     Commit {next: i32, constraint:u32},
     InsertIntermediate {next: i32, constraint:u32},
@@ -918,14 +920,18 @@ pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut
 }
 
 #[inline(never)]
-pub fn get_anti_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
+pub fn get_intermediate_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
     // println!("get rounds!");
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::AntiScan {ref key, .. } => {
             let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
-            // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
             program.rounds.compute_anti_output_rounds(program.intermediates.distinct_iter(resolved));
+            1
+        },
+        &Constraint::IntermediateScan {ref key, .. } => {
+            let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
+            program.rounds.compute_output_rounds(program.intermediates.distinct_iter(resolved));
             1
         },
         _ => { panic!("Get rounds on non-scan") }
@@ -1006,11 +1012,12 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
 pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
-        &Constraint::InsertIntermediate {ref key, register_mask} => {
+        &Constraint::InsertIntermediate {ref key, ref value, negate} => {
             let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
+            let resolved_value:Vec<Interned> = value.iter().map(|v| frame.resolve(v)).collect();
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                program.intermediates.distinct(resolved.clone(), round, count);
+                program.intermediates.distinct(resolved.clone(), round, count, negate);
             }
         },
         _ => {}
@@ -1169,10 +1176,11 @@ type Function = fn(Vec<&Internable>) -> Option<Internable>;
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
     AntiScan {key: Vec<Field>, register_mask: u64},
+    IntermediateScan {key: Vec<Field>, value: Vec<Field>, register_mask: u64, output_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
-    InsertIntermediate {key:Vec<Field>, register_mask:u64},
+    InsertIntermediate {key:Vec<Field>, value:Vec<Field>, negate:bool},
     Remove {e: Field, a: Field, v:Field},
     RemoveAttribute {e: Field, a: Field},
     RemoveEntity {e: Field },
@@ -1197,6 +1205,11 @@ impl Constraint {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
             &Constraint::AntiScan { ref key, ..} => { filter_registers(&key.iter().collect()) }
+            &Constraint::IntermediateScan { ref key, ref value, ..} => {
+                let mut cur:Vec<&Field> = key.iter().collect();
+                cur.extend(value);
+                filter_registers(&cur)
+            }
             &Constraint::Function {ref output, ref params, ..} => {
                 let mut vs = vec![output];
                 vs.extend(params);
@@ -1206,7 +1219,11 @@ impl Constraint {
                 filter_registers(&vec![left, right])
             }
             &Constraint::Insert { ref e, ref a, ref v, .. } => { filter_registers(&vec![e,a,v]) },
-            &Constraint::InsertIntermediate { ref key, ..} => { filter_registers(&key.iter().collect()) }
+            &Constraint::InsertIntermediate { ref key, ref value, .. } => {
+                let mut cur:Vec<&Field> = key.iter().collect();
+                cur.extend(value);
+                filter_registers(&cur)
+            }
             &Constraint::Remove { ref e, ref a, ref v } => { filter_registers(&vec![e,a,v]) },
             &Constraint::RemoveAttribute { ref e, ref a } => { filter_registers(&vec![e,a]) },
             &Constraint::RemoveEntity { ref e } => { filter_registers(&vec![e]) },
@@ -1219,6 +1236,7 @@ impl Constraint {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
             &Constraint::Function {ref output, ref params, ..} => { filter_registers(&vec![output]) }
+            &Constraint::IntermediateScan {ref value, ..} => { filter_registers(&value.iter().collect()) }
             _ => { vec![] }
         }
     }
@@ -1232,6 +1250,12 @@ impl Constraint {
             &mut Constraint::AntiScan { ref mut key, ref mut register_mask} => {
                 replace_registers(&mut key.iter_mut().collect(), lookup);
                 *register_mask = make_register_mask(key.iter().collect());
+            }
+            &mut Constraint::IntermediateScan { ref mut key, ref mut value, ref mut register_mask, ref mut output_mask} => {
+                replace_registers(&mut key.iter_mut().collect(), lookup);
+                *register_mask = make_register_mask(key.iter().collect());
+                replace_registers(&mut value.iter_mut().collect(), lookup);
+                *output_mask = make_register_mask(value.iter().collect());
             }
             &mut Constraint::Function {ref mut output, ref mut params, ref mut param_mask, ref mut output_mask, ..} => {
                 {
@@ -1248,9 +1272,9 @@ impl Constraint {
                 *param_mask = make_register_mask(vec![left, right]);
             }
             &mut Constraint::Insert { ref mut e, ref mut a, ref mut v, ..} => { replace_registers(&mut vec![e,a,v], lookup); },
-            &mut Constraint::InsertIntermediate { ref mut key, ref mut register_mask} => {
+            &mut Constraint::InsertIntermediate { ref mut key, ref mut value, .. } => {
                 replace_registers(&mut key.iter_mut().collect(), lookup);
-                *register_mask = make_register_mask(key.iter().collect());
+                replace_registers(&mut value.iter_mut().collect(), lookup);
             }
             &mut Constraint::Remove { ref mut e, ref mut a, ref mut v } => { replace_registers(&mut vec![e,a,v], lookup); },
             &mut Constraint::RemoveAttribute { ref mut e, ref mut a } => { replace_registers(&mut vec![e,a], lookup); },
@@ -1278,6 +1302,9 @@ impl Clone for Constraint {
         match self {
             &Constraint::Scan { e, a, v, register_mask } => { Constraint::Scan {e,a,v,register_mask} }
             &Constraint::AntiScan { ref key, register_mask } => { Constraint::AntiScan {key:key.clone(),register_mask} }
+            &Constraint::IntermediateScan { ref key, ref value, register_mask, output_mask } => {
+                Constraint::IntermediateScan {key:key.clone(), value:value.clone(), register_mask, output_mask}
+            }
             &Constraint::Function {ref op, ref output, ref func, ref params, ref param_mask, ref output_mask} => {
                 Constraint::Function{ op:op.clone(), output:output.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
             }
@@ -1285,7 +1312,7 @@ impl Clone for Constraint {
                 Constraint::Filter{ op:op.clone(), func:*func, left:left.clone(), right:right.clone(), param_mask:*param_mask }
             }
             &Constraint::Insert { e,a,v,commit } => { Constraint::Insert { e,a,v,commit } },
-            &Constraint::InsertIntermediate { ref key, register_mask } => { Constraint::InsertIntermediate {key:key.clone(),register_mask} }
+            &Constraint::InsertIntermediate { ref key, ref value, negate } => { Constraint::InsertIntermediate {key:key.clone(), value:value.clone(), negate} }
             &Constraint::Remove { e,a,v } => { Constraint::Remove { e,a,v } },
             &Constraint::RemoveAttribute { e,a } => { Constraint::RemoveAttribute { e,a } },
             &Constraint::RemoveEntity { e } => { Constraint::RemoveEntity { e } },
@@ -1301,9 +1328,11 @@ impl fmt::Debug for Constraint {
         match self {
             &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::AntiScan { ref key, .. } => { write!(f, "AntiScan ({:?})", key) }
+            &Constraint::IntermediateScan { ref key, ref value, .. } => { write!(f, "IntermediateScan ( {:?}, {:?} )", key, value) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
-            &Constraint::InsertIntermediate { ref key, .. } => { write!(f, "InsertIntermediate ({:?})", key) }
+            &Constraint::InsertIntermediate { ref key, ref value, negate } => { write!(f, "InsertIntermediate ({:?}, {:?}, negate? {:?})", key, value, negate) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
+            &Constraint::Filter { ref op, ref left, ref right, .. } => { write!(f, "Filter ( {:?} {} {:?} )", left, op, right) }
             &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
             &Constraint::Watch { ref name, ref registers } => { write!(f, "Watch {}{:?}", name, registers) }
             _ => { write!(f, "Constraint ...") }
@@ -1333,9 +1362,14 @@ pub fn make_anti_scan(key: Vec<Field>) -> Constraint {
     Constraint::AntiScan{key, register_mask }
 }
 
-pub fn make_intermediate_insert(key: Vec<Field>) -> Constraint {
+pub fn make_intermediate_scan(key: Vec<Field>, value: Vec<Field>) -> Constraint {
     let register_mask = make_register_mask(key.iter().collect::<Vec<&Field>>());
-    Constraint::InsertIntermediate {key, register_mask}
+    let output_mask = make_register_mask(value.iter().collect::<Vec<&Field>>());
+    Constraint::IntermediateScan{key, value, register_mask, output_mask }
+}
+
+pub fn make_intermediate_insert(key: Vec<Field>, value:Vec<Field>, negate:bool) -> Constraint {
+    Constraint::InsertIntermediate {key, value, negate}
 }
 
 pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint {
@@ -1549,8 +1583,8 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
             Instruction::GetRounds { constraint, bail } => {
                 get_rounds(program, block_info, frame, constraint, bail)
             },
-            Instruction::GetAntiRounds { constraint, bail } => {
-                get_anti_rounds(program, block_info, frame, constraint, bail)
+            Instruction::GetIntermediateRounds { constraint, bail } => {
+                get_intermediate_rounds(program, block_info, frame, constraint, bail)
             },
             Instruction::Bind { constraint, next } => {
                 bind(program, block_info, frame, constraint, next)
@@ -2123,14 +2157,13 @@ pub struct Transaction {
 
 fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round) {
     if let Some(_) = state.intermediates.rounds.get(&current_round) {
-        let mut remaining:Vec<(Vec<Interned>, Count)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
+        let mut remaining:Vec<(Vec<Interned>, IntermediateChange<Vec<Interned>>)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
         while remaining.len() > 0 {
-            for (key, count) in remaining {
-                let cur = IntermediateChange { key, count, round:current_round, negate: true };
+            for (_, cur) in remaining {
                 println!("LOOKIN {:?}", cur);
                 let actives = block_info.intermediate_pipe_lookup.get(&cur.key[0]).unwrap().iter();
                 frame.reset();
-                frame.intermediate = Some(cur.clone());
+                frame.intermediate = Some(cur);
                 for pipe in actives {
                     frame.row.reset();
                     interpret(state, block_info, frame, pipe);
