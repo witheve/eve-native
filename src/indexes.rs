@@ -352,6 +352,7 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_roun
 // HashIndex
 //-------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct RoundEntry {
     inserted: bool,
     rounds: Vec<i32>,
@@ -602,19 +603,20 @@ impl IntermediateIndex
     }
 
     pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>) {
-        // let zeros = key.iter().enumerate().filter(|&(ix, k)| *k == 0).map(|(ix, k)| ix);
-        // let mut upper_bound = key.clone();
-        // for zero in zeros {
-        //     upper_bound[zero] = u32::max_value();
-        // }
-        // match iter {
-        //     &mut EstimateIter::Intermediate { ref mut estimate, ref mut iter, .. } => {
-        //         let cur_range = self.index.range(key..upper_bound);
-        //         *estimate = cur_range.size_hint().1.unwrap() as u32;
-        //         *iter = cur_range;
-        //     }
-        //     _ => panic!("Non intermediate iterator passed to intermediate propose")
-        // }
+        match iter {
+            &mut EstimateIter::Intermediate { ref mut estimate, ref mut iter, .. } => {
+                match self.index.get(&key) {
+                    Some(&IntermediateLevel::Value(lookup)) => {
+                        *estimate = lookup.len() as u32;
+                        *iter = lookup.get_dangerous_keys();
+                    },
+                    Some(&IntermediateLevel::KeyOnly(_)) => { *estimate = 0 },
+                    None => { *estimate = 0; }
+
+                }
+            }
+            _ => panic!("Non intermediate iterator passed to intermediate propose")
+        }
     }
 
     // FIXME: attack of the clones.

@@ -6,6 +6,7 @@ extern crate time;
 
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry};
 use parser::{make_block};
+use hash::map::{DangerousKeys};
 use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
@@ -471,18 +472,18 @@ impl Row {
 // Estimate Iter
 //-------------------------------------------------------------------------
 
-pub struct EstimateIterPool<'a> {
-    available: Vec<EstimateIter<'a>>,
-    available_funcs: Vec<EstimateIter<'a>>,
-    iters: Vec<Option<EstimateIter<'a>>>,
+pub struct EstimateIterPool {
+    available: Vec<EstimateIter>,
+    available_funcs: Vec<EstimateIter>,
+    iters: Vec<Option<EstimateIter>>,
 }
 
-impl<'a> EstimateIterPool<'a> {
-    pub fn new() -> EstimateIterPool<'a> {
+impl EstimateIterPool {
+    pub fn new() -> EstimateIterPool {
         EstimateIterPool { available: vec![], available_funcs: vec![], iters:vec![None; 64] }
     }
 
-    pub fn release(&mut self, mut estimate_iter:EstimateIter<'a>) {
+    pub fn release(&mut self, mut estimate_iter:EstimateIter) {
         match estimate_iter {
             EstimateIter::Scan {ref mut estimate, ref mut iter, ref mut output, ref mut constraint} => {
                 *estimate = 0;
@@ -510,21 +511,21 @@ impl<'a> EstimateIterPool<'a> {
         }
     }
 
-    pub fn get(&mut self) -> EstimateIter<'a> {
+    pub fn get(&mut self) -> EstimateIter {
         match self.available.pop() {
             Some(iter) => iter,
             None => EstimateIter::Scan { estimate:0, iter:HashIndexIter::Empty, output:0, constraint: 0 },
         }
     }
 
-    pub fn get_func(&mut self) -> EstimateIter<'a> {
+    pub fn get_func(&mut self) -> EstimateIter {
         match self.available_funcs.pop() {
             Some(iter) => iter,
             None => EstimateIter::Function { estimate:0, result:0, output:0, returned: false, constraint:0 },
         }
     }
 
-    pub fn check_iter(&mut self, iter_ix:u32, iter: EstimateIter<'a>) {
+    pub fn check_iter(&mut self, iter_ix:u32, iter: EstimateIter) {
         // @FIXME: it seems like there should be a better way to pull a value
         // out of a vector and potentially replace it
         let ix = iter_ix as usize;
@@ -556,14 +557,14 @@ impl<'a> EstimateIterPool<'a> {
 
 
 #[derive(Clone)]
-pub enum EstimateIter<'a> {
+pub enum EstimateIter {
     Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
     Function {estimate: u32, output: u32, result: Interned, returned: bool, constraint: u32},
     MultiRowFunction {estimate: u32, output: u32, results: Vec<Interned>, returned: bool, constraint: u32},
-    Intermediate {estimate: u32, iter: Range<'a, Vec<Interned>, RoundEntry>, output: Vec<u32>, constraint: u32},
+    Intermediate {estimate: u32, iter: DangerousKeys<Interned, RoundEntry>, output: Vec<u32>, constraint: u32},
 }
 
-impl<'a> EstimateIter<'a> {
+impl EstimateIter {
     pub fn estimate(&self) -> u32 {
         match self {
             &EstimateIter::Scan {ref estimate, .. } |
