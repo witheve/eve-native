@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
 use std::iter::{Iterator, ExactSizeIterator};
 use std::fmt::{Debug};
+use std::ptr::{Unique};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -585,6 +586,22 @@ impl<K> IntermediateIndex<K>
             Some(&RoundEntry { ref rounds, .. }) => DistinctIter::new(rounds),
             None => DistinctIter::new(&self.empty),
         }
+    }
+
+    pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>) {
+        // let zeros = key.iter().enumerate().filter(|&(ix, k)| *k == 0).map(|(ix, k)| ix);
+        // let mut upper_bound = key.clone();
+        // for zero in zeros {
+        //     upper_bound[zero] = u32::max_value();
+        // }
+        // match iter {
+        //     &mut EstimateIter::Intermediate { ref mut estimate, ref mut iter, .. } => {
+        //         let cur_range = self.index.range(key..upper_bound);
+        //         *estimate = cur_range.size_hint().1.unwrap() as u32;
+        //         *iter = cur_range;
+        //     }
+        //     _ => panic!("Non intermediate iterator passed to intermediate propose")
+        // }
     }
 
     // FIXME: attack of the clones.
