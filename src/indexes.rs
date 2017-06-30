@@ -584,25 +584,21 @@ impl IntermediateIndex
         IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![] }
     }
 
-    fn get_rounds(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> &mut Vec<i32> {
+    pub fn distinct_iter(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> DistinctIter {
         match self.index.get(key) {
             Some(level) => {
                 match level {
-                    &IntermediateLevel::KeyOnly(entry) => &mut entry.rounds,
-                    &IntermediateLevel::Value(lookup) => {
+                    &IntermediateLevel::KeyOnly(ref entry) => DistinctIter::new(&entry.rounds),
+                    &IntermediateLevel::Value(ref lookup) => {
                         match lookup.get(value) {
-                            Some(entry) => &mut entry.rounds,
-                            None => &mut self.empty,
+                            Some(ref entry) => DistinctIter::new(&entry.rounds),
+                            None => DistinctIter::new(&self.empty),
                         }
                     }
                 }
             }
-            None => &mut self.empty,
+            None => DistinctIter::new(&self.empty),
         }
-    }
-
-    pub fn distinct_iter(&self, key:Vec<Interned>, value:Vec<Interned>) -> DistinctIter {
-        DistinctIter::new(self.get_rounds(&key, &value))
     }
 
     pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>) {
@@ -642,18 +638,22 @@ impl IntermediateIndex
                 }
             }
         };
-        // TODO: this needs to deal with Levels
-        self.index.entry(key).or_insert_with(|| {
+        let entry = self.index.entry(key.clone()).or_insert_with(|| {
             let entry = RoundEntry { inserted:false, rounds: vec![] };
             if value.len() == 0 {
                 IntermediateLevel::KeyOnly(entry)
             } else {
-                let sub = HashMap::default();
+                let mut sub = HashMap::default();
                 sub.insert(value.clone(), entry);
                 IntermediateLevel::Value(sub)
             }
         });
-        let counts = self.get_rounds(&key, &value);
+        let counts = match entry {
+            &mut IntermediateLevel::KeyOnly(ref mut entry) => &mut entry.rounds,
+            &mut IntermediateLevel::Value(ref mut lookup) => {
+                &mut lookup.get_mut(&value).unwrap().rounds
+            }
+        };
         generic_distinct(counts, count, round, insert);
     }
 }
