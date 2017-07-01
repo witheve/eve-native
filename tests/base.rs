@@ -3,7 +3,7 @@ extern crate eve;
 use eve::ops::{Program};
 use eve::parser::{parse_string};
 
-macro_rules! n (($p:ident, $i:expr) => ({ $p.state.interner.number_id($i as f32) }));
+// macro_rules! n (($p:ident, $i:expr) => ({ $p.state.interner.number_id($i as f32) }));
 macro_rules! s (($p:ident, $i:expr) => ({ $p.state.interner.string_id(&$i) }));
 // macro_rules! txn (($p:ident, [ $($t:ident ($e:ident, $a:expr, $v:expr),)* ]) => ({
 //     let mut txn = Transaction::new();

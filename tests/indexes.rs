@@ -537,7 +537,7 @@ fn round_counts_to_distinct_counts(input: &Vec<(usize, i32)>) -> Vec<i32> {
 fn test_anti_distinct(left: Vec<(usize, i32)>, right: Vec<(usize, i32)>, expected: Vec<(u32, i32)>) {
     let left_counts = round_counts_to_distinct_counts(&left);
     println!("LEFT COUNTS {:?}", left_counts);
-    let mut left_iter = DistinctIter::new(&left_counts);
+    let left_iter = DistinctIter::new(&left_counts);
     let left_iter2 = DistinctIter::new(&left_counts);
     for (round, count) in left_iter2 {
         println!("left: {:?} {:?}",round, count);

@@ -8,12 +8,9 @@ use std::cmp;
 
 extern crate fnv;
 use indexes::fnv::FnvHasher;
-use std::hash::{BuildHasherDefault, Hash};
-use std::collections::BTreeMap;
+use std::hash::{BuildHasherDefault};
 use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
-use std::iter::{Iterator, ExactSizeIterator};
-use std::fmt::{Debug};
-use std::ptr::{Unique};
+use std::iter::{Iterator};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -176,7 +173,7 @@ impl HashIndexLevel {
                 }
                 true
             }
-            Entry::Vacant(o) => {
+            Entry::Vacant(_) => {
                 false
             },
         };
@@ -189,7 +186,7 @@ impl HashIndexLevel {
                         o.remove_entry();
                     }
                 }
-                Entry::Vacant(o) => { },
+                Entry::Vacant(_) => { },
             };
         }
         added
@@ -404,7 +401,7 @@ impl HashIndex {
 
     pub fn remove(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
         let removed = match self.eavs.entry((e,a,v)) {
-            Entry::Occupied(mut entry) => {
+            Entry::Occupied(entry) => {
                 if !entry.get().rounds.iter().any(|x| *x != 0) {
                     entry.remove_entry();
                     true
@@ -412,7 +409,7 @@ impl HashIndex {
                     false
                 }
             }
-            Entry::Vacant(o) => { false },
+            Entry::Vacant(_) => { false },
         };
         if removed {
             self.size -= 1;
@@ -421,7 +418,7 @@ impl HashIndex {
                     let mut level = o.get_mut();
                     level.remove(e, v);
                 }
-                Entry::Vacant(o) => { },
+                Entry::Vacant(_) => { },
             };
         }
         removed
@@ -633,7 +630,7 @@ impl IntermediateIndex
                     });
                     val.count += count;
                 }
-                Entry::Vacant(mut ent) => {
+                Entry::Vacant(ent) => {
                     let mut neue = HashMap::default();
                     neue.insert(cloned.clone(), IntermediateChange { key:cloned.clone(), round, count, negate });
                     ent.insert(neue);
@@ -687,7 +684,7 @@ fn update_watch_count(index:&mut HashMap<Vec<Interned>, Count, MyHasher>, key:Ve
             }
             (prev, updated)
         }
-        Entry::Vacant(mut o) => {
+        Entry::Vacant(o) => {
             o.insert(count);
             (0, count)
         }

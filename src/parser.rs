@@ -1,17 +1,14 @@
 extern crate time;
 
-use nom::{digit, alphanumeric, anychar, IResult, Err};
+use nom::{digit, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::{HashMap, HashSet};
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_intermediate_insert, make_intermediate_scan, make_filter, make_function, Transaction, Block, Internable, RawChange};
-use std::error::Error;
+use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_intermediate_insert, make_intermediate_scan, make_filter, make_function, Block};
 use std::io::prelude::*;
 use std::fs::File;
-use watcher::{PrintWatcher, SystemTimerWatcher};
-
 
 lazy_static! {
-    static ref FunctionInfo: HashMap<String, HashMap<String, usize>> = {
+    static ref FUNCTION_INFO: HashMap<String, HashMap<String, usize>> = {
         let mut m = HashMap::new();
         let mut info = HashMap::new();
         info.insert("degrees".to_string(), 0);
@@ -155,8 +152,10 @@ impl<'a> Node<'a> {
             &mut Node::NoneValue => { None },
             &mut Node::Attribute(_) => { None },
             &mut Node::AttributeInequality {ref mut right, ..} => { right.gather_equalities(comp) },
-            &mut Node::AttributeEquality(a, ref mut v) => { v.gather_equalities(comp) },
-            &mut Node::Inequality {ref left, ref right, ref op} => {
+            &mut Node::AttributeEquality(_, ref mut v) => { v.gather_equalities(comp) },
+            &mut Node::Inequality {ref mut left, ref mut right, ..} => {
+                left.gather_equalities(comp);
+                right.gather_equalities(comp);
                 None
             },
             &mut Node::EmbeddedString(ref mut var, ref mut vs) => {
@@ -191,7 +190,7 @@ impl<'a> Node<'a> {
                 *result = Some(result_name);
                 Some(reg)
             },
-            &mut Node::RecordFunction {ref mut result, ref op, ref mut params} => {
+            &mut Node::RecordFunction {ref mut result, ref mut params, ..} => {
                 for param in params {
                     param.gather_equalities(comp);
                 }
@@ -236,7 +235,7 @@ impl<'a> Node<'a> {
                 let reg = comp.get_register(&final_var);
                 Some(reg)
             },
-            &mut Node::MutatingAttributeAccess(ref items) => {
+            &mut Node::MutatingAttributeAccess(_) => {
                 None
             },
             &mut Node::RecordUpdate {ref mut record, ref op, ref mut value, ..} => {
@@ -400,7 +399,7 @@ impl<'a> Node<'a> {
                     } else {
                         cur_block.constraints.push(make_filter("=", out_reg, out_value));
                     }
-                    let info = FunctionInfo.get(*op).unwrap();
+                    let info = FUNCTION_INFO.get(*op).unwrap();
                     let mut cur_params = vec![Field::Value(0); info.len() - 1];
                     for param in params {
                         let (a, v) = match param {
@@ -686,7 +685,7 @@ impl<'a> Node<'a> {
                 }
                 cur_block.constraints = related;
             }
-            &mut SubBlock::IfBranch(ref mut cur_block, ref output_fields) => {
+            &mut SubBlock::IfBranch(..) => {
             }
             &mut SubBlock::If(ref mut cur_block, ref output_registers, exclusive) => {
                 println!("Let's compile an If!");
@@ -729,7 +728,7 @@ impl<'a> Node<'a> {
                             for prev_branch in 0..branch_ix {
                                 let mut key_attrs = vec![if_id];
                                 key_attrs.extend(all_inputs.iter());
-                                key_attrs.push(comp.interner.number(branch_ix as f32));
+                                key_attrs.push(comp.interner.number(prev_branch as f32));
                                 branch_block.constraints.push(make_anti_scan(key_attrs));
                             }
                         }
@@ -805,16 +804,14 @@ pub struct Compilation<'a> {
     var_values: HashMap<Field, Field>,
     provided_registers: HashSet<Field>,
     interner: &'a mut Interner,
-    constraints: Vec<Constraint>,
     equalities: Vec<(Field, Field)>,
-    staged_nodes: Vec<SubBlock>,
     id: usize,
     reg_count: usize,
 }
 
 impl<'a> Compilation<'a> {
     pub fn new(interner: &'a mut Interner, block_name:String) -> Compilation<'a> {
-        Compilation { vars:HashMap::new(), var_values:HashMap::new(), provided_registers:HashSet::new(), interner, constraints:vec![], equalities:vec![], staged_nodes:vec![], id:0, reg_count:0, block_name }
+        Compilation { vars:HashMap::new(), var_values:HashMap::new(), provided_registers:HashSet::new(), interner, equalities:vec![], id:0, reg_count:0, block_name }
     }
 
     pub fn get_register(&mut self, name: &str) -> Field {
@@ -920,7 +917,7 @@ named!(string<Node<'a>>,
        do_parse!(
            raw: raw_string >>
            ({
-               let mut info = string_parts(raw.as_bytes());
+               let info = string_parts(raw.as_bytes());
                let mut parts = info.unwrap().1;
                match (parts.len(), parts.get(0)) {
                    (1, Some(&Node::RawString(_))) => parts.pop().unwrap(),
@@ -1046,7 +1043,7 @@ named_args!(output_attribute<'a>(output_type:OutputType) <Node<'this_is_probably
        sp!(alt_complete!(
                hashtag |
                apply!(output_attribute_equality, output_type) |
-               tag!("|") => { |v:&[u8]| Node::Pipe } |
+               tag!("|") => { |_| Node::Pipe } |
                identifier => { |v:&'this_is_probably_unique_i_hope_please str| Node::Attribute(v) })));
 
 named_args!(output_record<'a>(output_type:OutputType) <Node<'this_is_probably_unique_i_hope_please>>,
@@ -1298,7 +1295,7 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
 
 pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block> {
     let res = markdown(content.as_bytes());
-    if let IResult::Done(left, mut cur) = res {
+    if let IResult::Done(_, mut cur) = res {
         if let Node::Doc { ref mut blocks, .. } = cur {
             let interner = &mut program.state.interner;
             let mut program_blocks = vec![];

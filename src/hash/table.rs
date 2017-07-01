@@ -9,7 +9,7 @@
 // except according to those terms.
 
 extern crate alloc;
-use self::alloc::heap::{EMPTY, allocate, deallocate};
+use self::alloc::heap::{allocate, deallocate};
 
 use std::cmp;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -34,6 +34,7 @@ use self::BucketState::*;
 type HashUint = usize;
 
 const EMPTY_BUCKET: HashUint = 0;
+const EMPTY: usize = 1;
 
 /// Special `Unique<HashUint>` that uses the lower bit of the pointer
 /// to expose a boolean tag.
@@ -1115,7 +1116,7 @@ impl<'a, K, V> Iterator for Drain<'a, K, V> {
     #[inline]
     fn next(&mut self) -> Option<(SafeHash, K, V)> {
         self.iter.next().map(|raw| unsafe {
-            (*self.table.as_mut_ptr()).size -= 1;
+            (*self.table.as_ptr()).size -= 1;
             let (k, v) = ptr::read(raw.pair());
             (SafeHash { hash: ptr::replace(&mut *raw.hash(), EMPTY_BUCKET) }, k, v)
         })

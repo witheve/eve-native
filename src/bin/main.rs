@@ -1,33 +1,15 @@
 #![feature(link_args)]
-#![feature(dropck_eyepatch)]
-#![feature(generic_param_attrs)]
-#![feature(sip_hash_13)]
-#![feature(core_intrinsics)]
-#![feature(shared)]
-#![feature(unique)]
-#![feature(placement_new_protocol)]
-#![feature(fused)]
-#![feature(alloc)]
-#![feature(heap_api)]
-#![feature(oom)]
-#![feature(slice_patterns)]
 
 // #[link_args = "-s TOTAL_MEMORY=500000000 EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 // #[link_args = "-s TOTAL_MEMORY=503316480"]
 extern {}
-
-#[macro_use]
-extern crate nom;
-
-#[macro_use]
-extern crate lazy_static;
 
 extern crate eve;
 extern crate tokio_timer;
 extern crate futures;
 extern crate time;
 
-use eve::ops::{Program, Transaction, Internable, RawChange};
+use eve::ops::{Program, Transaction};
 use eve::parser::{parse_file};
 use eve::watcher::{SystemTimerWatcher};
 use std::env;
@@ -46,14 +28,14 @@ fn main() {
     }
     println!("Starting run loop.");
     loop {
-        let mut v = program.incoming.recv().unwrap();
-        let mut start_ns = time::precise_time_ns();
+        let v = program.incoming.recv().unwrap();
+        let start_ns = time::precise_time_ns();
         let mut txn = Transaction::new();
         for cur in v {
             txn.input_change(cur.to_change(&mut program.state.interner));
         };
         txn.exec(&mut program);
-        let mut end_ns = time::precise_time_ns();
+        let end_ns = time::precise_time_ns();
         println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
     }
 }

@@ -10,14 +10,12 @@ use hash::map::{DangerousKeys};
 use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
-use std::collections::btree_map::Range;
 use std::cmp;
 use std::iter::Iterator;
 use std::fmt;
 use watcher::{Watcher};
-use std::sync::mpsc::{Sender, SyncSender, Receiver};
+use std::sync::mpsc::{SyncSender, Receiver};
 use std::sync::mpsc;
-use std::ptr::{self, Unique};
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -172,7 +170,7 @@ impl Block {
                     moves.insert(ix, intermediate_moves);
                     get_rounds.push(Instruction::GetIntermediateRounds { bail: 0, constraint: ix });
                 }
-                &Constraint::IntermediateScan {ref key, ref value, ..} => {
+                &Constraint::IntermediateScan {..} => {
                 }
                 &Constraint::Function {ref output, ..} => {
                     // @TODO: ensure that all inputs are accounted for
@@ -914,7 +912,11 @@ pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut
             let resolved_v = frame.resolve(v);
             // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
             program.rounds.compute_output_rounds(program.index.distinct_iter(resolved_e, resolved_a, resolved_v));
-            1
+            if program.rounds.get_output_rounds().len() > 0 {
+                1
+            } else {
+                bail
+            }
         },
         _ => { panic!("Get rounds on non-scan") }
     }
@@ -928,15 +930,18 @@ pub fn get_intermediate_rounds(program: &mut RuntimeState, block_info:&BlockInfo
         &Constraint::AntiScan {ref key, .. } => {
             let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
             program.rounds.compute_anti_output_rounds(program.intermediates.distinct_iter(&resolved, &vec![]));
-            1
         },
         &Constraint::IntermediateScan {ref key, ref value, .. } => {
             let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
             let resolved_value:Vec<Interned> = value.iter().map(|v| frame.resolve(v)).collect();
             program.rounds.compute_output_rounds(program.intermediates.distinct_iter(&resolved, &resolved_value));
-            1
         },
         _ => { panic!("Get rounds on non-scan") }
+    };
+    if program.rounds.get_output_rounds().len() > 0 {
+        1
+    } else {
+        bail
     }
 }
 
@@ -970,7 +975,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
             let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count);
                 rounds.commit(output, ChangeType::Insert)
             }
@@ -980,7 +985,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
             let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
                 rounds.commit(output, ChangeType::Remove)
             }
@@ -990,7 +995,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:0, n, round:0, transaction: 0, count:0, };
             let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
                 rounds.commit(output, ChangeType::Remove)
             }
@@ -1000,7 +1005,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             let c = Change { e: frame.resolve(e), a: 0, v:0, n, round:0, transaction: 0, count:0, };
             let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
                 rounds.commit(output, ChangeType::Remove)
             }
@@ -1098,7 +1103,7 @@ impl Internable {
             &Internable::String(ref s) => {
                 s.to_string()
             }
-            &Internable::Number(n) => {
+            &Internable::Number(_) => {
                 Internable::to_number(self).to_string()
             }
             &Internable::Null => {
@@ -1236,7 +1241,7 @@ impl Constraint {
     pub fn get_output_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
-            &Constraint::Function {ref output, ref params, ..} => { filter_registers(&vec![output]) }
+            &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::IntermediateScan {ref value, ..} => { filter_registers(&value.iter().collect()) }
             _ => { vec![] }
         }
@@ -1667,7 +1672,7 @@ impl RoundHolder {
     }
 
 
-    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F, leftOnEqual: bool)
+    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F, left_on_equal: bool)
         where F: FnMut(RoundState, &mut Vec<(Round, Count)>, Option<(Round, Count)>, Round, Count, Option<(Round, Count)>, Round, Count)
     {
         let (neue, current) = match (self.output_rounds.len(), self.prev_output_rounds.len()) {
@@ -1722,7 +1727,7 @@ impl RoundHolder {
                         move_output_round(&left, &mut left_round, &mut left_count);
                     },
                     (Some((next_left_round, _)), Some((next_right_round, _))) => {
-                        if next_left_round < next_right_round || (leftOnEqual && next_left_round == next_right_round) {
+                        if next_left_round < next_right_round || (left_on_equal && next_left_round == next_right_round) {
                             left = next_left;
                             next_left = left_iter.next();
                             move_output_round(&left, &mut left_round, &mut left_count);
@@ -1745,7 +1750,7 @@ impl RoundHolder {
         }
     }
 
-    pub fn compute_anti_output_rounds(&mut self, mut right_iter: DistinctIter) {
+    pub fn compute_anti_output_rounds(&mut self, right_iter: DistinctIter) {
         let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
             match state {
                 RoundState::Equal => {
@@ -1757,7 +1762,6 @@ impl RoundHolder {
                 },
                 RoundState::Right => {
                     if let Some((_, count)) = left {
-                        let total = count * right_count;
                         if right_count == 0 {
                             neue.push((left_round, count));
                         }
@@ -1776,7 +1780,7 @@ impl RoundHolder {
         self._compute_output_rounds(right_iter, action, false);
     }
 
-    pub fn compute_output_rounds(&mut self, mut right_iter: DistinctIter) {
+    pub fn compute_output_rounds(&mut self, right_iter: DistinctIter) {
         let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
             match state {
                 RoundState::Equal => {
@@ -2008,7 +2012,7 @@ impl Program {
     pub fn new() -> Program {
         let index = HashIndex::new();
         let intermediates = IntermediateIndex::new();
-        let mut interner = Interner::new();
+        let interner = Interner::new();
         let rounds = RoundHolder::new();
         let block_names = HashMap::new();
         let watch_indexes = HashMap::new();
@@ -2066,7 +2070,7 @@ impl Program {
     }
 
     pub fn insert_block(&mut self, name:&str, code:&str) {
-        let mut bs = make_block(&mut self.state.interner, name, code);
+        let bs = make_block(&mut self.state.interner, name, code);
         for b in bs {
             self.register_block(b)
         }
