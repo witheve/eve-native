@@ -1,15 +1,13 @@
 hm.
 
 search
-  [#foo x]
-  z = if x > 3 then "large"
-      if x = 10 then "woah"
+  f = [#foo]
+  not([#bar f])
 bind
-  [#zomg x | z]
+  [#zomg]
 end
 
 commit
-  [#foo x:3]
-  [#foo x:10]
-  [#foo x:100]
+  [#foo]
+  [#bar f: 3]
 end

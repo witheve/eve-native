@@ -1184,7 +1184,7 @@ named!(not_form<Node<'a>>,
 named!(if_equality<Vec<Node<'a>>>,
        do_parse!(
            outputs: alt_complete!(variable => { |v| vec![v] } |
-                                  delimited!(tag!("("), many1!(variable), tag!(")"))) >>
+                                  delimited!(tag!("("), many1!(sp!(variable)), tag!(")"))) >>
            sp!(tag!("=")) >>
            (outputs)));
 

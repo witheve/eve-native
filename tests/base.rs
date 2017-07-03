@@ -491,6 +491,30 @@ test!(base_choose_no_equality, {
     end
 });
 
+test!(base_choose_multi_field, {
+    search
+        [#foo x]
+        (a,b) = if x > 3 then ("large", "> 3")
+                else ("small", "<= 3")
+    bind
+        [#zomg x a b]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:3 a:"small" b:"<= 3"]
+        [#zomg x:10 a:"large" b:"> 3"]
+        [#zomg x:100 a:"large" b:"> 3"]
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Union
 //--------------------------------------------------------------------
