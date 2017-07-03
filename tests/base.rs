@@ -404,7 +404,7 @@ test!(base_not_no_join_retraction, {
     end
 });
 
-test!(base_not_join, {
+test!(base_not_join_f, {
     search
         z = [#zomg]
         not([#foo z])

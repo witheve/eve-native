@@ -2,12 +2,14 @@ hm.
 
 search
   [#foo x]
-  z = if x > 3 then "yep"
-      else "nope"
+  z = if x > 3 then "large"
+      if x = 10 then "woah"
 bind
-  [#zomg z]
+  [#zomg x | z]
 end
 
 commit
-  [#foo]
+  [#foo x:3]
+  [#foo x:10]
+  [#foo x:100]
 end

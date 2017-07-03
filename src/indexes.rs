@@ -349,7 +349,7 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_roun
 // HashIndex
 //-------------------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RoundEntry {
     inserted: bool,
     rounds: Vec<i32>,
@@ -568,18 +568,72 @@ enum IntermediateLevel {
     KeyOnly(RoundEntry),
 }
 
-pub struct IntermediateIndex
-{
+pub struct IntermediateIndex {
     index: HashMap<Vec<Interned>, IntermediateLevel, MyHasher>,
     pub rounds: HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>,
+    round_buffer: Vec<(Vec<Interned>, Vec<Interned>, Vec<Interned>, Round, Count, bool)>,
     empty: Vec<i32>,
 }
 
-impl IntermediateIndex
-{
+// FIXME: attack of the clones.
+fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, MyHasher>,
+                         rounds:&mut HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>,
+                         full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>,
+                         round:Round, count:Count, negate:bool) {
+    let cloned = full_key.clone();
+    let insert = |round, delta| {
+        // println!("Intermediate! {:?} {:?} {:?}", cloned, round, delta);
+        match rounds.entry(round) {
+            Entry::Occupied(mut ent) => {
+                let cur = ent.get_mut();
+                let val = cur.entry(cloned.clone()).or_insert_with(|| {
+                    IntermediateChange { key:cloned.clone(), round, count:0, negate }
+                });
+                val.count += delta;
+            }
+            Entry::Vacant(ent) => {
+                let mut neue = HashMap::default();
+                neue.insert(cloned.clone(), IntermediateChange { key:cloned.clone(), round, count:delta, negate });
+                ent.insert(neue);
+            }
+        }
+    };
+    let entry = index.entry(key.clone()).or_insert_with(|| {
+        let entry = RoundEntry { inserted:false, rounds: vec![] };
+        if value.len() == 0 {
+            IntermediateLevel::KeyOnly(entry)
+        } else {
+            let mut sub = HashMap::default();
+            sub.insert(value.clone(), entry);
+            IntermediateLevel::Value(sub)
+        }
+    });
+    let counts = match entry {
+        &mut IntermediateLevel::KeyOnly(ref mut entry) => &mut entry.rounds,
+        &mut IntermediateLevel::Value(ref mut lookup) => {
+            &mut lookup.entry(value.clone())
+                .or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds
+        }
+    };
+    generic_distinct(counts, count, round, insert);
+}
+
+impl IntermediateIndex {
 
     pub fn new() -> IntermediateIndex {
-        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![] }
+        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), round_buffer:vec![], empty: vec![] }
+    }
+
+    pub fn check(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> bool {
+        match self.index.get(key) {
+            Some(level) => {
+                match level {
+                    &IntermediateLevel::KeyOnly(_) => true,
+                    &IntermediateLevel::Value(ref lookup) => lookup.contains_key(value),
+                }
+            }
+            None => false,
+        }
     }
 
     pub fn distinct_iter(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> DistinctIter {
@@ -605,7 +659,7 @@ impl IntermediateIndex
                 match self.index.get(&key) {
                     Some(&IntermediateLevel::Value(ref lookup)) => {
                         *estimate = lookup.len() as u32;
-                        *iter = lookup.get_dangerous_keys();
+                        *iter = Some(lookup.get_dangerous_keys());
                     },
                     Some(&IntermediateLevel::KeyOnly(_)) => { *estimate = 0 },
                     None => { *estimate = 0; }
@@ -616,44 +670,19 @@ impl IntermediateIndex
         }
     }
 
-    // FIXME: attack of the clones.
+    pub fn buffer(&mut self, full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>, round:Round, count:Count, negate:bool) {
+        println!("Intermediate! {:?} {:?} {:?}", full_key, round, count);
+        self.round_buffer.push((full_key, key, value, round, count, negate));
+    }
+
+    pub fn consume_round(&mut self) {
+        for (full_key, key, value, round, count, negate) in self.round_buffer.drain(..) {
+            intermediate_distinct(&mut self.index, &mut self.rounds, full_key, key, value, round, count, negate);
+        }
+    }
+
     pub fn distinct(&mut self, full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>, round:Round, count:Count, negate:bool) {
-        let cloned = full_key.clone();
-        let ref mut rounds = self.rounds;
-        let insert = |round, delta| {
-            println!("Intermediate! {:?} {:?} {:?}", cloned, round, delta);
-            match rounds.entry(round) {
-                Entry::Occupied(mut ent) => {
-                    let cur = ent.get_mut();
-                    let val = cur.entry(cloned.clone()).or_insert_with(|| {
-                        IntermediateChange { key:cloned.clone(), round, count:0, negate }
-                    });
-                    val.count += count;
-                }
-                Entry::Vacant(ent) => {
-                    let mut neue = HashMap::default();
-                    neue.insert(cloned.clone(), IntermediateChange { key:cloned.clone(), round, count, negate });
-                    ent.insert(neue);
-                }
-            }
-        };
-        let entry = self.index.entry(key.clone()).or_insert_with(|| {
-            let entry = RoundEntry { inserted:false, rounds: vec![] };
-            if value.len() == 0 {
-                IntermediateLevel::KeyOnly(entry)
-            } else {
-                let mut sub = HashMap::default();
-                sub.insert(value.clone(), entry);
-                IntermediateLevel::Value(sub)
-            }
-        });
-        let counts = match entry {
-            &mut IntermediateLevel::KeyOnly(ref mut entry) => &mut entry.rounds,
-            &mut IntermediateLevel::Value(ref mut lookup) => {
-                &mut lookup.get_mut(&value).unwrap().rounds
-            }
-        };
-        generic_distinct(counts, count, round, insert);
+        intermediate_distinct(&mut self.index, &mut self.rounds, full_key, key, value, round, count, negate);
     }
 }
 

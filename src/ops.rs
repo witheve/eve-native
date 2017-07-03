@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
 use std::cmp;
+use std::collections::HashSet;
 use std::iter::Iterator;
 use std::fmt;
 use watcher::{Watcher};
@@ -165,12 +166,33 @@ impl Block {
                         if let &Field::Register(offset) = field {
                             intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix as u32, to:offset as u32 });
                             registers = cmp::max(registers, offset + 1);
+                        } else if field_ix > 0 {
+                            if let &Field::Value(value) = field {
+                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix as u32, value, bail: 0 });
+                            }
                         }
                     }
                     moves.insert(ix, intermediate_moves);
                     get_rounds.push(Instruction::GetIntermediateRounds { bail: 0, constraint: ix });
                 }
-                &Constraint::IntermediateScan {..} => {
+                &Constraint::IntermediateScan {ref full_key, ..} => {
+                    scans.push(ix);
+                    get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0});
+                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0});
+                    get_rounds.push(Instruction::GetIntermediateRounds { bail: 0, constraint: ix });
+
+                    let mut intermediate_moves = vec![];
+                    for (field_ix, field) in full_key.iter().enumerate() {
+                        if let &Field::Register(offset) = field {
+                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix as u32, to:offset as u32 });
+                            registers = cmp::max(registers, offset + 1);
+                        } else if field_ix > 0 {
+                            if let &Field::Value(value) = field {
+                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix as u32, value, bail: 0 });
+                            }
+                        }
+                    }
+                    moves.insert(ix, intermediate_moves);
                 }
                 &Constraint::Function {ref output, ..} => {
                     // @TODO: ensure that all inputs are accounted for
@@ -220,10 +242,27 @@ impl Block {
         for scan_ix in &scans {
             let mut to_solve = registers;
             let mut pipe = vec![Instruction::StartBlock {block:0}];
+            let mut seen = HashSet::new();
             if *scan_ix != NO_INPUTS_PIPE {
                 for move_inst in &moves[scan_ix] {
-                    pipe.push(move_inst.clone());
-                    to_solve -= 1;
+                    match move_inst {
+                        &Instruction::MoveInputField {to, ..} |
+                        &Instruction::MoveIntermediateField {to, ..} => {
+                            pipe.push(move_inst.clone());
+                            if !seen.contains(&to) {
+                                to_solve -= 1;
+                                seen.insert(to);
+                            }
+                        },
+                        &Instruction::AcceptIntermediateField {..} => {
+                            let mut neue = move_inst.clone();
+                            if let Instruction::AcceptIntermediateField { ref mut bail, .. } = neue {
+                                *bail = PIPE_FINISHED;
+                            }
+                            pipe.push(neue);
+                        }
+                        _ => { panic!("invalid move instruction: {:?}", move_inst); }
+                    }
                 }
                 for accept in accepts.iter() {
                     if let &Instruction::Accept { constraint, .. } = accept {
@@ -291,7 +330,11 @@ impl Block {
                                 match neue {
                                     Instruction::GetRounds { ref mut bail, .. } |
                                     Instruction::GetIntermediateRounds { ref mut bail, .. } => {
-                                        *bail = last_iter_next;
+                                        *bail = if to_solve > 0 {
+                                            last_iter_next
+                                        } else {
+                                            PIPE_FINISHED
+                                        }
                                     }
                                     _ => panic!()
                                 }
@@ -419,6 +462,13 @@ impl Block {
                         panic!("Non value intremediate id: {:?}", scan);
                     }
                 }
+                &&Constraint::IntermediateScan { ref key, .. } => {
+                    if let Field::Value(id) = key[0] {
+                        scan_shapes.push(PipeShape::Intermediate(id));
+                    } else {
+                        panic!("Non value intremediate id: {:?}", scan);
+                    }
+                }
                 _ => { panic!("Non-scan in pipe shapes: {:?}", scan) }
             }
             shapes.push(scan_shapes);
@@ -473,12 +523,13 @@ impl Row {
 pub struct EstimateIterPool {
     available: Vec<EstimateIter>,
     available_funcs: Vec<EstimateIter>,
+    available_intermedaites: Vec<EstimateIter>,
     iters: Vec<Option<EstimateIter>>,
 }
 
 impl EstimateIterPool {
     pub fn new() -> EstimateIterPool {
-        EstimateIterPool { available: vec![], available_funcs: vec![], iters:vec![None; 64] }
+        EstimateIterPool { available: vec![], available_funcs: vec![], available_intermedaites: vec![], iters:vec![None; 64] }
     }
 
     pub fn release(&mut self, mut estimate_iter:EstimateIter) {
@@ -523,6 +574,13 @@ impl EstimateIterPool {
         }
     }
 
+    pub fn get_intermediate(&mut self) -> EstimateIter {
+        match self.available_intermedaites.pop() {
+            Some(iter) => iter,
+            None => EstimateIter::Intermediate { estimate:0, iter:None, output:None, constraint:0 },
+        }
+    }
+
     pub fn check_iter(&mut self, iter_ix:u32, iter: EstimateIter) {
         // @FIXME: it seems like there should be a better way to pull a value
         // out of a vector and potentially replace it
@@ -559,7 +617,7 @@ pub enum EstimateIter {
     Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
     Function {estimate: u32, output: u32, result: Interned, returned: bool, constraint: u32},
     MultiRowFunction {estimate: u32, output: u32, results: Vec<Interned>, returned: bool, constraint: u32},
-    Intermediate {estimate: u32, iter: DangerousKeys<Vec<Interned>, RoundEntry>, output: Vec<u32>, constraint: u32},
+    Intermediate {estimate: u32, iter: Option<DangerousKeys<Vec<Interned>, RoundEntry>>, output: Option<Vec<u32>>, constraint: u32},
 }
 
 impl EstimateIter {
@@ -593,6 +651,20 @@ impl EstimateIter {
                     false
                 }
             },
+            &mut EstimateIter::Intermediate {ref mut iter, output: Some(ref outputs), .. } => {
+                if let &mut Some(ref mut keys) = iter {
+                    if let Some(key) = keys.next() {
+                        for (out, v) in outputs.iter().zip(key) {
+                            row.set(*out, *v);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            },
             _ => panic!("Implement me"),
         }
     }
@@ -604,6 +676,11 @@ impl EstimateIter {
             },
             &EstimateIter::Function { ref output, .. } => {
                 row.clear(*output);
+            },
+            &EstimateIter::Intermediate { output: Some(ref outputs), .. } => {
+                for output in outputs.iter() {
+                    row.clear(*output);
+                }
             },
             _ => panic!("Implement me"),
         }
@@ -690,6 +767,7 @@ pub enum Instruction {
     Accept {bail: i32, constraint:u32, iterator:u32},
     MoveInputField { from:u32, to:u32, },
     MoveIntermediateField { from:u32, to:u32, },
+    AcceptIntermediateField { from:u32, value:Interned, bail:i32 },
     ClearRounds,
     GetRounds {bail: i32, constraint: u32},
     GetIntermediateRounds {bail: i32, constraint: u32},
@@ -726,8 +804,20 @@ pub fn move_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u32
     // println!("STARTING! {:?}", block);
     if let Some(ref intermediate) = frame.intermediate {
         frame.row.set(to, intermediate.key[from as usize]);
+        1
+    } else {
+        panic!("move_input_field without an intermediate in the frame?");
     }
-    1
+}
+
+#[inline(never)]
+pub fn accept_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, value:Interned, bail:i32) -> i32 {
+    // println!("STARTING! {:?}", block);
+    if let Some(ref intermediate) = frame.intermediate {
+        if intermediate.key[from as usize] == value { 1 } else { bail }
+    } else {
+        panic!("move_input_field without an intermediate in the frame?");
+    }
 }
 
 #[inline(never)]
@@ -797,6 +887,38 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                 1
             }
             // println!("get function iterator {:?}", cur);
+        },
+        &Constraint::IntermediateScan {ref key, ref value, ref register_mask, ref output_mask, ..} => {
+            // if we have already solved all of this scan's outputs or we don't have all of our
+            // inputs, we just move on
+            if !check_bits(frame.row.solved_fields, *register_mask) ||
+               check_bits(frame.row.solved_fields, *output_mask) {
+                return 1;
+            }
+
+            let resolved = key.iter().map(|param| frame.resolve(param)).collect();
+
+            // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
+            let mut iter = iter_pool.get_intermediate();
+            program.intermediates.propose(&mut iter, resolved);
+            match iter {
+                EstimateIter::Intermediate {ref mut output, ref mut constraint, ..} => {
+                    *constraint = cur_constraint;
+                    // @TODO this could be precomputed
+                    *output = Some(value.iter().map(|x| {
+                        if let &Field::Register(reg) = x {
+                            reg as u32
+                        } else {
+                            panic!("Non-register intermediate scan output")
+                        }
+                    }).collect());
+                }
+                _ => panic!("Non-intermediate iterator for IntermediateScan"),
+            }
+
+            // println!("get iter: {:?}", cur_constraint);
+            iter_pool.check_iter(iter_ix, iter);
+            1
         },
         _ => { 1 }
     }
@@ -885,6 +1007,18 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
                 1
             }
         },
+        &Constraint::IntermediateScan {ref key, ref value, ref register_mask, ref output_mask, ..} => {
+            // if we haven't solved all our inputs and outputs, just skip us
+            if !check_bits(frame.row.solved_fields, *register_mask) ||
+               !check_bits(frame.row.solved_fields, *output_mask) {
+                return 1;
+            }
+
+            let resolved = key.iter().map(|param| frame.resolve(param)).collect();
+            let resolved_value = value.iter().map(|param| frame.resolve(param)).collect();
+
+            if program.intermediates.check(&resolved, &resolved_value) { 1 } else { bail }
+        },
         _ => { 1 }
     }
 }
@@ -958,7 +1092,7 @@ pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
                 program.index.distinct(output, rounds);
-                // println!("insert {:?}", output);
+                println!("insert {:?}", output);
             }
         },
         _ => {}
@@ -1025,7 +1159,7 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                program.intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
+                program.intermediates.buffer(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
         _ => {}
@@ -1352,7 +1486,7 @@ pub fn make_register_mask(fields: Vec<&Field>) -> u64 {
     let mut mask = 0;
     for field in fields {
         match field {
-            &Field::Register(r) => mask = set_bit(mask, r as u32),
+            &Field::Register(r) => mask = set_bit(mask, (r % 64) as u32),
             _ => {},
         }
     }
@@ -1574,6 +1708,9 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
             },
             Instruction::MoveIntermediateField { from, to } => {
                 move_intermediate_field(program, frame, from, to)
+            },
+            Instruction::AcceptIntermediateField { from, value, bail } => {
+                accept_intermediate_field(program, frame, from, value, bail)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
                 get_iterator(program, block_info, &mut iter_pool, frame, iterator, constraint, bail)
@@ -2163,19 +2300,29 @@ pub struct Transaction {
 }
 
 fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round) {
+    state.intermediates.consume_round();
     if let Some(_) = state.intermediates.rounds.get(&current_round) {
         let mut remaining:Vec<(Vec<Interned>, IntermediateChange)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
+        let mut int_round = 0;
         while remaining.len() > 0 {
+            println!("-------- Intermediate Round {} ---------", int_round);
             for (_, cur) in remaining {
                 println!("LOOKIN {:?}", cur);
                 let actives = block_info.intermediate_pipe_lookup.get(&cur.key[0]).unwrap().iter();
                 frame.reset();
                 frame.intermediate = Some(cur);
                 for pipe in actives {
+                    println!("Int Execing:");
+                    for inst in pipe.iter() {
+                        println!("      {:?}", inst);
+                    }
+                    println!("");
                     frame.row.reset();
                     interpret(state, block_info, frame, pipe);
                 }
             }
+            int_round += 1;
+            state.intermediates.consume_round();
             remaining = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
         }
     }

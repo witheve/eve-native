@@ -12,15 +12,16 @@ Not
     x replace block with anti-scan
   x anti-scan impl
   x anti-rounds impl
-  - All intermediates are being negated
+  x All intermediates are being negated
 
 Choose
-  - parser
-    - generate branch blocks
-    - replace block with choose-select
-  - choose-select impl
-    - using not?
-    - using an aggregate?
+  x parser
+    x generate branch blocks
+    x replace block with choose-select
+    x fix unifier to handle multiple levels
+    - allow multiple returns
+  x choose-select impl
+    x using not?
 
 Aggregates
   - parser
@@ -51,6 +52,9 @@ Communication
   - websocket in
   - websocket out
 Permissions
+Interning
+  - Move to NaN-packing
+  - Reference count + free
 
 ----------------------------------------------------
 - Distribution
