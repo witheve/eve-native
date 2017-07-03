@@ -437,3 +437,84 @@ test!(base_not_join_retraction, {
         [#success]
     end
 });
+
+//--------------------------------------------------------------------
+// Choose
+//--------------------------------------------------------------------
+
+test!(base_choose, {
+    search
+        [#foo x]
+        z = if x = 3 then "medium"
+            else if x = 10 then "large"
+            else "too big"
+    bind
+        [#zomg x z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:3 z:"medium"]
+        [#zomg x:10 z:"large"]
+        [#zomg x:100 z:"too big"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_no_equality, {
+    search
+        [#foo x]
+        z = if x > 3 then "large"
+            else "small"
+    bind
+        [#zomg x z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:3 z:"small"]
+        [#zomg x:10 z:"large"]
+        [#zomg x:100 z:"large"]
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
+// Union
+//--------------------------------------------------------------------
+
+test!(base_union, {
+    search
+        [#foo x]
+        z = if x > 3 then "large"
+            if x = 10 then "woah"
+    bind
+        [#zomg x | z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z:("large", "woah")]
+        [#zomg x:100 z:"large"]
+        not([#zomg x:3])
+    bind
+        [#success]
+    end
+});
