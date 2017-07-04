@@ -354,6 +354,21 @@ test!(base_multi_function, {
     end
 });
 
+test!(base_multi_function_multi_field, {
+    search
+        (value, ix) = string!/split![text:"hey dude", by: " "]
+    bind
+        [#token value ix]
+    end
+
+    search
+        [#token value: "hey" ix:1]
+        [#token value: "dude" ix:2]
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Not
 //--------------------------------------------------------------------

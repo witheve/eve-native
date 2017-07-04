@@ -1056,8 +1056,10 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
                     // guaranteed that they'll run before some other provider that might do each
                     // register one by one, so the number of iterations necessary may vary.
                     passthrough = true;
+                    1
+                } else {
+                    bail
                 }
-                bail
             },
         }
     };
@@ -1793,7 +1795,7 @@ pub fn string_split(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref by)] => {
             let results = text.split(by).enumerate().map(|(ix, v)| {
-                vec![Internable::String(v.to_string()), Internable::from_number(ix as f32)]
+                vec![Internable::String(v.to_string()), Internable::from_number((ix + 1) as f32)]
             }).collect();
             Some(results)
         },
