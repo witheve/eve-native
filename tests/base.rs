@@ -17,7 +17,7 @@ macro_rules! valid (($blocks:tt) => ({
 
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#").replace("! [", "[");
+    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/");
     let blocks = parse_string(&mut program, &stringy, "test");
     for block in blocks {
         program.raw_block(block);
@@ -330,6 +330,25 @@ test!(base_interpolation_bind_expression, {
 
     search
         [#foo baz: "3"]
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
+// MultiFunction
+//--------------------------------------------------------------------
+
+test!(base_multi_function, {
+    search
+        value = string!/split![text:"hey dude", by: " "]
+    bind
+        [#token value]
+    end
+
+    search
+        [#token value: "hey"]
+        [#token value: "dude"]
     bind
         [#success]
     end

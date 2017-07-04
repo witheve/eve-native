@@ -203,6 +203,17 @@ impl Block {
                     get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
                     accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0 });
                 },
+                &Constraint::MultiFunction {ref outputs, ..} => {
+                    // @TODO: ensure that all inputs are accounted for
+                    // count the registers in the functions
+                    for output in outputs.iter() {
+                        if let &Field::Register(offset) = output {
+                            registers = cmp::max(registers, offset + 1);
+                        }
+                    }
+                    get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
+                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0 });
+                },
                 &Constraint::Filter {..} => {
                     accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0, });
                 },
@@ -298,7 +309,7 @@ impl Block {
 
                 last_iter_next -= 1;
                 let iter_bail = if ix == 0 { PIPE_FINISHED } else { last_iter_next };
-                pipe.push(Instruction::IteratorNext { bail: iter_bail, iterator: ix as u32 });
+                pipe.push(Instruction::IteratorNext { bail: iter_bail, iterator: ix as u32, finished_mask: (2u64.pow(to_solve as u32) - 1) });
                 last_iter_next = 0;
 
                 for accept in accepts.iter() {
@@ -523,13 +534,14 @@ impl Row {
 pub struct EstimateIterPool {
     available: Vec<EstimateIter>,
     available_funcs: Vec<EstimateIter>,
+    available_multi_funcs: Vec<EstimateIter>,
     available_intermedaites: Vec<EstimateIter>,
     iters: Vec<Option<EstimateIter>>,
 }
 
 impl EstimateIterPool {
     pub fn new() -> EstimateIterPool {
-        EstimateIterPool { available: vec![], available_funcs: vec![], available_intermedaites: vec![], iters:vec![None; 64] }
+        EstimateIterPool { available: vec![], available_funcs: vec![], available_multi_funcs: vec![], available_intermedaites: vec![], iters:vec![None; 64] }
     }
 
     pub fn release(&mut self, mut estimate_iter:EstimateIter) {
@@ -547,7 +559,20 @@ impl EstimateIterPool {
                 *constraint = 0;
                 *returned = false;
             },
-            _ => panic!("Releasing non-scan"),
+            EstimateIter::MultiFunction { ref mut estimate, ref mut results, ref mut outputs, ref mut ix, ref mut constraint } => {
+                *estimate = 0;
+                *results = None;
+                *outputs = None;
+                *constraint = 0;
+                *ix = 0;
+            },
+            EstimateIter::Intermediate {ref mut estimate, ref mut iter, ref mut output, ref mut constraint} => {
+                *estimate = 0;
+                *iter = None;
+                *output = None;
+                *constraint = 0;
+            },
+            EstimateIter::PassThrough => {}
         }
         match estimate_iter {
             EstimateIter::Scan {..} => {
@@ -556,7 +581,13 @@ impl EstimateIterPool {
             EstimateIter::Function {..} => {
                 self.available_funcs.push(estimate_iter);
             },
-            _ => panic!("Releasing non-scan"),
+            EstimateIter::MultiFunction {..} => {
+                self.available_multi_funcs.push(estimate_iter);
+            },
+            EstimateIter::Intermediate {..} => {
+                self.available_intermedaites.push(estimate_iter);
+            },
+            EstimateIter::PassThrough => {}
         }
     }
 
@@ -571,6 +602,13 @@ impl EstimateIterPool {
         match self.available_funcs.pop() {
             Some(iter) => iter,
             None => EstimateIter::Function { estimate:0, result:0, output:0, returned: false, constraint:0 },
+        }
+    }
+
+    pub fn get_multi_func(&mut self) -> EstimateIter {
+        match self.available_funcs.pop() {
+            Some(iter) => iter,
+            None => EstimateIter::MultiFunction { estimate:0, results:None, outputs:None, ix: 0, constraint:0 },
         }
     }
 
@@ -614,9 +652,10 @@ impl EstimateIterPool {
 
 #[derive(Clone)]
 pub enum EstimateIter {
+    PassThrough,
     Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
     Function {estimate: u32, output: u32, result: Interned, returned: bool, constraint: u32},
-    MultiRowFunction {estimate: u32, output: u32, results: Vec<Interned>, returned: bool, constraint: u32},
+    MultiFunction {estimate: u32, outputs: Option<Vec<u32>>, ix:usize, results: Option<Vec<Vec<Interned>>>, constraint: u32},
     Intermediate {estimate: u32, iter: Option<DangerousKeys<Vec<Interned>, RoundEntry>>, output: Option<Vec<u32>>, constraint: u32},
 }
 
@@ -626,9 +665,10 @@ impl EstimateIter {
             &EstimateIter::Scan {ref estimate, .. } |
             &EstimateIter::Function {ref estimate, .. } |
             &EstimateIter::Intermediate {ref estimate, .. } |
-            &EstimateIter::MultiRowFunction {ref estimate, .. } => {
+            &EstimateIter::MultiFunction {ref estimate, .. } => {
                 *estimate
             },
+            &EstimateIter::PassThrough => 1
         }
     }
 
@@ -651,6 +691,21 @@ impl EstimateIter {
                     false
                 }
             },
+            &mut EstimateIter::MultiFunction {ref results, ref mut ix, outputs: Some(ref outputs), .. } => {
+                if let &Some(ref rows) = results {
+                    if *ix < rows.len() {
+                        for (out, v) in outputs.iter().zip(rows[*ix].iter()) {
+                            row.set(*out, *v);
+                        }
+                        *ix += 1;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            },
             &mut EstimateIter::Intermediate {ref mut iter, output: Some(ref outputs), .. } => {
                 if let &mut Some(ref mut keys) = iter {
                     if let Some(key) = keys.next() {
@@ -665,6 +720,7 @@ impl EstimateIter {
                     false
                 }
             },
+            &mut EstimateIter::PassThrough => { false }
             _ => panic!("Implement me"),
         }
     }
@@ -677,11 +733,17 @@ impl EstimateIter {
             &EstimateIter::Function { ref output, .. } => {
                 row.clear(*output);
             },
+            &EstimateIter::MultiFunction { outputs: Some(ref outputs), .. } => {
+                for output in outputs.iter() {
+                    row.clear(*output);
+                }
+            },
             &EstimateIter::Intermediate { output: Some(ref outputs), .. } => {
                 for output in outputs.iter() {
                     row.clear(*output);
                 }
             },
+            &EstimateIter::PassThrough => { }
             _ => panic!("Implement me"),
         }
     }
@@ -763,7 +825,7 @@ impl Frame {
 pub enum Instruction {
     StartBlock { block: usize },
     GetIterator {iterator: u32, bail: i32, constraint: u32},
-    IteratorNext {iterator: u32, bail: i32},
+    IteratorNext {iterator: u32, bail: i32, finished_mask: u64},
     Accept {bail: i32, constraint:u32, iterator:u32},
     MoveInputField { from:u32, to:u32, },
     MoveIntermediateField { from:u32, to:u32, },
@@ -888,6 +950,43 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
             }
             // println!("get function iterator {:?}", cur);
         },
+        &Constraint::MultiFunction {ref func, outputs:ref output_fields, ref params, param_mask, output_mask, ..} => {
+            let solved = frame.row.solved_fields;
+            if check_bits(solved, param_mask) && !check_bits(solved, output_mask) {
+                let result = {
+                    let mut resolved = vec![];
+                    for param in params {
+                        resolved.push(program.interner.get_value(frame.resolve(param)));
+                    }
+                    func(resolved)
+                };
+                let mut iter = iter_pool.get_multi_func();
+                match result {
+                    Some(mut result_values) => {
+                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ..} = iter {
+                            *estimate = 1;
+                            *results = Some(result_values.drain(..).map(|mut row| {
+                                row.drain(..).map(|field| program.interner.internable_to_id(field)).collect()
+                            }).collect());
+                            // @TODO this could be precomputed
+                            *outputs = Some(output_fields.iter().map(|x| {
+                                if let &Field::Register(reg) = x {
+                                    reg as u32
+                                } else {
+                                    panic!("Non-register multi-function output")
+                                }
+                            }).collect());
+                        }
+                        iter_pool.check_iter(iter_ix, iter);
+                        1
+                    }
+                    _ => bail,
+                }
+            } else {
+                1
+            }
+            // println!("get function iterator {:?}", cur);
+        },
         &Constraint::IntermediateScan {ref key, ref value, ref register_mask, ref output_mask, ..} => {
             // if we have already solved all of this scan's outputs or we don't have all of our
             // inputs, we just move on
@@ -925,7 +1024,9 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
 }
 
 #[inline(never)]
-pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:u32, bail:i32) -> i32 {
+pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:u32, bail:i32, finished_mask:u64) -> i32 {
+    let prev_solved = frame.row.solved_fields;
+    let mut passthrough = false;
     let go = {
         let mut iter = iter_pool.iters[iterator as usize].as_mut();
         // println!("Iter Next: {:?}", iter);
@@ -942,16 +1043,33 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
                     },
                 }
             },
-            None => bail,
+            None => {
+                if prev_solved == finished_mask {
+                    // if we were solved when we came into here, and there were no
+                    // iterators set, that means we've completely solved for all the variables
+                    // and we just need to passthrough to the end, by setting the current iter
+                    // to the PassThrough iterator, when we come back into this instruction,
+                    // we'll go through the other branch and bail out appropriately. Effectively
+                    // setting the passthrough iterator allows you to proceed through the pipe
+                    // exactly once without needing to iterate normally. This is necessary because
+                    // some instructions can solve for multiple registers at once, but it's not
+                    // guaranteed that they'll run before some other provider that might do each
+                    // register one by one, so the number of iterations necessary may vary.
+                    passthrough = true;
+                }
+                bail
+            },
         }
     };
-    if go == bail {
-
-        if let Some(ref cur) = iter_pool.iters[iterator as usize] {
+    if passthrough {
+        iter_pool.iters[iterator as usize] = Some(EstimateIter::PassThrough);
+    } else if go == bail {
+        let old = iter_pool.iters[iterator as usize].take();
+        if let Some(cur) = old {
             let est = cur.estimate();
             frame.counters.considered += est as u64;
+            iter_pool.release(cur);
         }
-        iter_pool.iters[iterator as usize] = None;
     }
     // println!("Row: {:?}", &frame.row.fields[0..3]);
     go
@@ -967,6 +1085,8 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
                 // frame.counters.accept_bail += 1;
                 return 1;
             }
+        } else if let Some(EstimateIter::PassThrough) = iter_pool.iters[(cur_iterator - 1) as usize] {
+            return 1;
         }
     }
     match cur {
@@ -1312,6 +1432,7 @@ impl Interner {
 
 type FilterFunction = fn(&Internable, &Internable) -> bool;
 type Function = fn(Vec<&Internable>) -> Option<Internable>;
+type MultiFunction = fn(Vec<&Internable>) -> Option<Vec<Vec<Internable>>>;
 
 // #[derive(Clone)]
 #[allow(dead_code)]
@@ -1320,6 +1441,7 @@ pub enum Constraint {
     AntiScan {key: Vec<Field>, register_mask: u64},
     IntermediateScan {full_key:Vec<Field>, key: Vec<Field>, value: Vec<Field>, register_mask: u64, output_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
+    MultiFunction {op: String, outputs: Vec<Field>, func: MultiFunction, params: Vec<Field>, param_mask: u64, output_mask: u64},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
     InsertIntermediate {key:Vec<Field>, value:Vec<Field>, negate:bool},
@@ -1355,6 +1477,12 @@ impl Constraint {
                 vs.extend(params);
                 filter_registers(&vs)
             }
+            &Constraint::MultiFunction {ref outputs, ref params, ..} => {
+                let mut vs = vec![];
+                vs.extend(outputs);
+                vs.extend(params);
+                filter_registers(&vs)
+            }
             &Constraint::Filter {ref left, ref right, ..} => {
                 filter_registers(&vec![left, right])
             }
@@ -1376,6 +1504,7 @@ impl Constraint {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
             &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
+            &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::IntermediateScan {ref value, ..} => { filter_registers(&value.iter().collect()) }
             _ => { vec![] }
         }
@@ -1407,6 +1536,16 @@ impl Constraint {
                 *param_mask = make_register_mask(params.iter().collect());
                 *output = *lookup.get(output).unwrap();
                 *output_mask = make_register_mask(vec![output]);
+            }
+            &mut Constraint::MultiFunction {ref mut outputs, ref mut params, ref mut param_mask, ref mut output_mask, ..} => {
+                {
+                    let mut vs = vec![];
+                    vs.extend(outputs.iter_mut());
+                    vs.extend(params.iter_mut());
+                    replace_registers(&mut vs, lookup);
+                }
+                *param_mask = make_register_mask(params.iter().collect());
+                *output_mask = make_register_mask(outputs.iter().collect());
             }
             &mut Constraint::Filter {ref mut left, ref mut right, ref mut param_mask, ..} => {
                 replace_registers(&mut vec![left, right], lookup);
@@ -1449,6 +1588,9 @@ impl Clone for Constraint {
             &Constraint::Function {ref op, ref output, ref func, ref params, ref param_mask, ref output_mask} => {
                 Constraint::Function{ op:op.clone(), output:output.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
             }
+            &Constraint::MultiFunction {ref op, ref outputs, ref func, ref params, ref param_mask, ref output_mask} => {
+                Constraint::MultiFunction{ op:op.clone(), outputs:outputs.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
+            }
             &Constraint::Filter {ref op, ref func, ref left, ref right, ref param_mask} => {
                 Constraint::Filter{ op:op.clone(), func:*func, left:left.clone(), right:right.clone(), param_mask:*param_mask }
             }
@@ -1473,6 +1615,7 @@ impl fmt::Debug for Constraint {
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::InsertIntermediate { ref key, ref value, negate } => { write!(f, "InsertIntermediate ({:?}, {:?}, negate? {:?})", key, value, negate) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
+            &Constraint::MultiFunction { ref op, ref params, ref outputs, .. } => { write!(f, "{:?} = {}({:?})", outputs, op, params) }
             &Constraint::Filter { ref op, ref left, ref right, .. } => { write!(f, "Filter ( {:?} {} {:?} )", left, op, right) }
             &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
             &Constraint::Watch { ref name, ref registers } => { write!(f, "Watch {}{:?}", name, registers) }
@@ -1530,6 +1673,16 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         _ => panic!("Unknown function: {:?}", op)
     };
     Constraint::Function {op: op.to_string(), func, params, output, param_mask, output_mask }
+}
+
+pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) -> Constraint {
+    let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
+    let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
+    let func = match op {
+        "string/split" => string_split,
+        _ => panic!("Unknown multi function: {:?}", op)
+    };
+    Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
 }
 
 pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
@@ -1636,6 +1789,18 @@ pub fn math_cos(params: Vec<&Internable>) -> Option<Internable> {
     }
 }
 
+pub fn string_split(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref by)] => {
+            let results = text.split(by).enumerate().map(|(ix, v)| {
+                vec![Internable::String(v.to_string()), Internable::from_number(ix as f32)]
+            }).collect();
+            Some(results)
+        },
+        _ => { None }
+    }
+}
+
 pub fn concat(params: Vec<&Internable>) -> Option<Internable> {
     let mut result = String::new();
     for param in params {
@@ -1715,8 +1880,8 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
             Instruction::GetIterator { iterator, constraint, bail } => {
                 get_iterator(program, block_info, &mut iter_pool, frame, iterator, constraint, bail)
             },
-            Instruction::IteratorNext { iterator, bail } => {
-                iterator_next(program, &mut iter_pool, frame, iterator, bail)
+            Instruction::IteratorNext { iterator, bail, finished_mask } => {
+                iterator_next(program, &mut iter_pool, frame, iterator, bail, finished_mask)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();

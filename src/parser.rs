@@ -4,19 +4,55 @@ use nom::{digit, anychar, IResult, Err};
 use std::str::{self, FromStr};
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan, make_intermediate_insert, make_intermediate_scan, make_filter, make_function, Block};
+use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan,
+          make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
+          make_multi_function, Block};
 use std::io::prelude::*;
 use std::fs::File;
 
+struct FunctionInfo {
+    is_multi: bool,
+    params: Vec<String>,
+    outputs: Vec<String>,
+}
+
+enum ParamType {
+    Param(usize),
+    Output(usize),
+    Invalid,
+}
+
+impl FunctionInfo {
+    pub fn new(raw_params:Vec<&str>) -> FunctionInfo {
+        let params = raw_params.iter().map(|s| s.to_string()).collect();
+        FunctionInfo { is_multi:false, params, outputs: vec![] }
+    }
+
+    pub fn multi(raw_params:Vec<&str>, raw_outputs:Vec<&str>) -> FunctionInfo {
+        let params = raw_params.iter().map(|s| s.to_string()).collect();
+        let outputs = raw_outputs.iter().map(|s| s.to_string()).collect();
+        FunctionInfo { is_multi:true, params, outputs }
+    }
+
+    pub fn get_index(&self, param:&str) -> ParamType {
+        if let Some(v) = self.params.iter().enumerate().find(|&(_, t)| t == param) {
+            ParamType::Param(v.0)
+        } else if let Some(v) = self.outputs.iter().enumerate().find(|&(_, t)| t == param) {
+            ParamType::Output(v.0)
+        } else {
+            ParamType::Invalid
+        }
+    }
+}
+
 lazy_static! {
-    static ref FUNCTION_INFO: HashMap<String, HashMap<String, usize>> = {
+    static ref FUNCTION_INFO: HashMap<String, FunctionInfo> = {
         let mut m = HashMap::new();
         let mut info = HashMap::new();
         info.insert("degrees".to_string(), 0);
-        m.insert("math/sin".to_string(), info);
-        let mut info2 = HashMap::new();
-        info2.insert("degrees".to_string(), 0);
-        m.insert("math/cos".to_string(), info2);
+        m.insert("math/sin".to_string(), FunctionInfo::new(vec!["degrees"]));
+        m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
+        m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m
     };
 }
@@ -39,6 +75,7 @@ pub enum Node<'a> {
     NoneValue,
     Tag(&'a str),
     Variable(&'a str),
+    GeneratedVariable(String),
     Attribute(&'a str),
     AttributeEquality(&'a str, Box<Node<'a>>),
     AttributeInequality {attribute:&'a str, right:Box<Node<'a>>, op:&'a str},
@@ -49,7 +86,7 @@ pub enum Node<'a> {
     Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Record(Option<String>, Vec<Node<'a>>),
     RecordSet(Vec<Node<'a>>),
-    RecordFunction {result:Option<String>, op:&'a str, params:Vec<Node<'a>>},
+    RecordFunction { op:&'a str, params:Vec<Node<'a>>, outputs:Vec<Node<'a>> },
     OutputRecord(Option<String>, Vec<Node<'a>>, OutputType),
     RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str, output_type:OutputType},
     Not(usize, Vec<Node<'a>>),
@@ -177,6 +214,7 @@ impl<'a> Node<'a> {
             &mut Node::Float(v) => { Some(interner.number(v)) },
             &mut Node::RawString(v) => { Some(interner.string(v)) },
             &mut Node::Variable(v) => { Some(cur_block.get_register(v)) },
+            &mut Node::GeneratedVariable(ref v) => { Some(cur_block.get_register(v)) },
             &mut Node::NoneValue => { None },
             &mut Node::Attribute(a) => { Some(cur_block.get_register(a)) },
             &mut Node::AttributeInequality {ref mut right, ..} => { right.gather_equalities(interner, cur_block) },
@@ -222,15 +260,17 @@ impl<'a> Node<'a> {
                 *result = Some(result_name);
                 Some(reg)
             },
-            &mut Node::RecordFunction {ref mut result, ref mut params, ..} => {
-                for param in params {
+            &mut Node::RecordFunction {ref mut params, ref mut outputs, ..} => {
+                for param in params.iter_mut() {
                     param.gather_equalities(interner, cur_block);
                 }
-                let result_name = format!("__eve_infix{}", cur_block.id);
-                cur_block.id += 1;
-                let reg = cur_block.get_register(&result_name);
-                *result = Some(result_name);
-                Some(reg)
+                if outputs.len() == 0 {
+                    let result_name = format!("__eve_infix{}", cur_block.id);
+                    outputs.push(Node::GeneratedVariable(result_name));
+                    cur_block.id += 1;
+                }
+                let outs:Vec<Option<Field>> = outputs.iter_mut().map(|output| output.gather_equalities(interner, cur_block)).collect();
+                *outs.get(0).unwrap()
             },
             &mut Node::RecordSet(ref mut records) => {
                 for record in records {
@@ -360,6 +400,7 @@ impl<'a> Node<'a> {
             &Node::Float(v) => { Some(interner.number(v)) },
             &Node::RawString(v) => { Some(interner.string(v)) },
             &Node::Variable(v) => { Some(cur_block.get_unified_register(v)) },
+            &Node::GeneratedVariable(ref v) => { Some(cur_block.get_unified_register(v)) },
             // &Node::AttributeEquality(a, ref v) => { v.compile(interner, comp, cur_block) },
             &Node::Equality {ref left, ref right} => {
                 left.compile(interner, cur_block);
@@ -437,34 +478,77 @@ impl<'a> Node<'a> {
                     panic!("Infix without a result assigned {:?}", self);
                 }
             },
-            &Node::RecordFunction { ref op, ref result, ref params} => {
-                if let &Some(ref name) = result {
-                    let mut out_reg = cur_block.get_register(name);
-                    let out_value = cur_block.get_value(name);
-                    if let Field::Register(_) = out_value {
-                        out_reg = out_value;
-                    } else {
-                        cur_block.constraints.push(make_filter("=", out_reg, out_value));
+            &Node::RecordFunction { ref op, ref params, ref outputs} => {
+                let info = FUNCTION_INFO.get(*op).unwrap();
+                let mut cur_outputs = vec![Field::Value(0); info.outputs.len()];
+                let mut cur_params = vec![Field::Value(0); info.params.len()];
+                for param in params {
+                    let (a, v) = match param {
+                        &Node::Attribute(a) => {
+                            (a, cur_block.get_value(a))
+                        }
+                        &Node::AttributeEquality(a, ref v) => {
+                            (a, v.compile(interner, cur_block).unwrap())
+                        }
+                        _ => { panic!("invalid function param: {:?}", param) }
+                    };
+                    match info.get_index(a) {
+                        ParamType::Param(ix) => { cur_params[ix] = v; }
+                        ParamType::Output(ix) => { cur_outputs[ix] = v; }
+                        ParamType::Invalid => { panic!("Invalid parameter for function: {:?} - {:?}", op, a) }
                     }
-                    let info = FUNCTION_INFO.get(*op).unwrap();
-                    let mut cur_params = vec![Field::Value(0); info.len() - 1];
-                    for param in params {
-                        let (a, v) = match param {
-                            &Node::Attribute(a) => {
-                                (a, cur_block.get_value(a))
-                            }
-                            &Node::AttributeEquality(a, ref v) => {
-                                (a, v.compile(interner, cur_block).unwrap())
-                            }
-                            _ => { panic!("invalid function param: {:?}", param) }
-                        };
-                        cur_params.insert(info[a], v);
-                    }
-                    cur_block.constraints.push(make_function(op, cur_params, out_reg));
-                    Some(out_reg)
-                } else {
-                    panic!("Function without a result assigned {:?}", self);
                 }
+                let compiled_outputs:Vec<Option<Field>> = outputs.iter().map(|output| output.compile(interner, cur_block)).collect();
+                for (out_ix, mut attr_output) in cur_outputs.iter_mut().enumerate() {
+                    let maybe_output = compiled_outputs.get(out_ix).map(|x| x.unwrap());
+                    match (&attr_output, maybe_output) {
+                        (&&mut Field::Value(0), Some(Field::Register(_))) => {
+                            *attr_output = maybe_output.unwrap();
+                        },
+                        (&&mut Field::Value(0), Some(Field::Value(_))) => {
+                            let result_name = format!("__eve_record_function_output{}", cur_block.id);
+                            let out_reg = cur_block.get_register(&result_name);
+                            cur_block.id += 1;
+                            cur_block.constraints.push(make_filter("=", out_reg, maybe_output.unwrap()));
+                            *attr_output = out_reg;
+                        },
+                        (&&mut Field::Value(_), Some(Field::Register(_))) => {
+                            cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
+                            *attr_output = maybe_output.unwrap();
+                        },
+                        (&&mut Field::Register(_), Some(Field::Value(_))) |
+                        (&&mut Field::Register(_), Some(Field::Register(_))) => {
+                            cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
+                        },
+                        (&&mut Field::Value(x), None) => {
+                            let result_name = format!("__eve_record_function_output{}", cur_block.id);
+                            let out_reg = cur_block.get_register(&result_name);
+                            cur_block.id += 1;
+                            if x > 0 {
+                                cur_block.constraints.push(make_filter("=", *attr_output, out_reg));
+                            }
+                            *attr_output = out_reg;
+                        },
+                        (&&mut Field::Value(x), Some(Field::Value(z))) => {
+                            if x != z { panic!("Invalid constant equality in record function: {:?} != {:?}", x, z) }
+                            let result_name = format!("__eve_record_function_output{}", cur_block.id);
+                            let out_reg = cur_block.get_register(&result_name);
+                            cur_block.id += 1;
+                            if x > 0 {
+                                cur_block.constraints.push(make_filter("=", *attr_output, out_reg));
+                            }
+                            *attr_output = out_reg;
+                        },
+                        _ => { }
+                    }
+                }
+                let final_result = Some(cur_outputs[0].clone());
+                if info.is_multi {
+                    cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
+                } else {
+                    cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
+                }
+                final_result
             },
             &Node::Record(ref var, ref attrs) => {
                 let reg = if let &Some(ref name) = var {
@@ -1076,11 +1160,25 @@ named!(record_function<Node<'a>>,
        do_parse!(
           op: identifier >>
           tag!("[") >>
-          params: many0!(alt_complete!(
+          params: sp!(many0!(alt_complete!(
                     attribute_equality |
-                    identifier => { |v:&'a str| Node::Attribute(v) })) >>
+                    identifier => { |v:&'a str| Node::Attribute(v) }))) >>
           tag!("]") >>
-          (Node::RecordFunction {result: None, op, params})));
+          (Node::RecordFunction { op, params, outputs:vec![]})));
+
+named!(multi_function_equality<Node<'a>>,
+       do_parse!(
+           outputs: alt_complete!(variable => { |v| vec![v] } |
+                                  delimited!(tag!("("), many1!(sp!(variable)), tag!(")"))) >>
+           sp!(tag!("=")) >>
+           func: record_function >>
+           ({
+               if let Node::RecordFunction { op, params, .. } = func {
+                   Node::RecordFunction { outputs, op, params}
+               } else {
+                   panic!("Non function return from record_function parser")
+               }
+           })));
 
 named!(equality<Node<'a>>,
        do_parse!(
@@ -1174,6 +1272,7 @@ named!(not_form<Node<'a>>,
            sp!(tag!("not")) >>
            items: delimited!(tag!("("),
                              many0!(sp!(alt_complete!(
+                                         multi_function_equality |
                                          inequality |
                                          record |
                                          equality
@@ -1211,6 +1310,7 @@ named!(if_branch<Node<'a>>,
        do_parse!(
            sp!(tag!("if")) >>
            body: many0!(sp!(alt_complete!(
+                       multi_function_equality |
                        inequality |
                        record |
                        equality
@@ -1244,6 +1344,7 @@ named!(search_section<Node<'a>>,
            sp!(tag!("search")) >>
            items: many0!(sp!(alt_complete!(
                             not_form |
+                            multi_function_equality |
                             if_expression |
                             inequality |
                             record |
@@ -1364,7 +1465,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
             let mut ix = 0;
             for block in blocks {
                 // println!("\n\nBLOCK!");
-                // println!("{:?}\n", block);
+                // println!("  {:?}\n", block);
                 ix += 1;
                 let block_name = format!("{}|block|{}", path, ix);
                 let mut comp = Compilation::new(block_name.to_string());
