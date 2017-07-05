@@ -2470,7 +2470,6 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
     state.intermediates.consume_round();
     if let Some(_) = state.intermediates.rounds.get(&current_round) {
         let mut remaining:Vec<(Vec<Interned>, IntermediateChange)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
-        let mut int_round = 0;
         while remaining.len() > 0 {
             for (_, cur) in remaining {
                 if let Some(ref actives) = block_info.intermediate_pipe_lookup.get(&cur.key[0]) {
@@ -2482,7 +2481,6 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
                     }
                 }
             }
-            int_round += 1;
             state.intermediates.consume_round();
             remaining = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
         }

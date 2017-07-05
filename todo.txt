@@ -20,8 +20,8 @@ Choose
     x replace block with choose-select
     x fix unifier to handle multiple levels
     x allow multiple returns
+    x allow embedded nots
     - handle return constants
-    - allow embedded nots
   x choose-select impl
     x using not?
 
