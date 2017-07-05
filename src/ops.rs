@@ -2472,20 +2472,14 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
         let mut remaining:Vec<(Vec<Interned>, IntermediateChange)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
         let mut int_round = 0;
         while remaining.len() > 0 {
-            println!("-------- Intermediate Round {} ---------", int_round);
             for (_, cur) in remaining {
-                println!("LOOKIN {:?}", cur);
-                let actives = block_info.intermediate_pipe_lookup.get(&cur.key[0]).unwrap().iter();
-                frame.reset();
-                frame.intermediate = Some(cur);
-                for pipe in actives {
-                    println!("Int Execing:");
-                    for inst in pipe.iter() {
-                        println!("      {:?}", inst);
+                if let Some(ref actives) = block_info.intermediate_pipe_lookup.get(&cur.key[0]) {
+                    frame.reset();
+                    frame.intermediate = Some(cur);
+                    for pipe in actives.iter() {
+                        frame.row.reset();
+                        interpret(state, block_info, frame, pipe);
                     }
-                    println!("");
-                    frame.row.reset();
-                    interpret(state, block_info, frame, pipe);
                 }
             }
             int_round += 1;

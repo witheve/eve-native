@@ -549,6 +549,47 @@ test!(base_choose_multi_field, {
     end
 });
 
+test!(base_choose_not_joinless, {
+    search
+        [#foo]
+        a = if not([#app]) then "no app"
+            else "with app"
+    bind
+        [#zomg a]
+    end
+
+    commit
+        [#foo]
+    end
+
+    search
+        [#zomg a:"no app"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_not_joinless_failure, {
+    search
+        [#foo]
+        a = if not([#app]) then "no app"
+            else "with app"
+    bind
+        [#zomg a]
+    end
+
+    commit
+        [#foo]
+        [#app]
+    end
+
+    search
+        [#zomg a:"with app"]
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Union
 //--------------------------------------------------------------------

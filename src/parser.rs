@@ -108,6 +108,16 @@ pub enum SubBlock {
     If(Compilation, Vec<Field>, bool),
 }
 
+impl SubBlock {
+    pub fn get_mut_compilation(&mut self) -> &mut Compilation {
+        match self {
+            &mut SubBlock::Not(ref mut comp) => comp,
+            &mut SubBlock::IfBranch(ref mut comp, ..) => comp,
+            &mut SubBlock::If(ref mut comp, ..) => comp,
+        }
+    }
+}
+
 impl<'a> Node<'a> {
 
     pub fn unify(&self, comp:&mut Compilation) {
@@ -788,7 +798,8 @@ impl<'a> Node<'a> {
                 };
                 update.compile(interner, cur_block);
                 for (ix, mut sub) in cur_block.sub_blocks.iter_mut().enumerate() {
-                    self.sub_block(interner, &mut cur_block.constraints, ix, sub);
+                    let ancestors = cur_block.constraints.clone();
+                    self.sub_block(interner, sub, ix, &mut cur_block.constraints, &ancestors);
                 }
                 None
             },
@@ -796,58 +807,55 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn sub_block(&self, interner:&mut Interner, parent_constraints: &mut Vec<Constraint>, ix:usize, block:&mut SubBlock) {
-        println!("SUB");
+    pub fn sub_block(&self, interner:&mut Interner, block:&mut SubBlock, ix:usize, parent_constraints: &mut Vec<Constraint>, ancestor_constraints: &Vec<Constraint>) -> HashSet<Field> {
         match block {
             &mut SubBlock::Not(ref mut cur_block) => {
-                let (mut related, inputs) = get_related_constraints(&cur_block.constraints, parent_constraints);
+                let mut inputs = cur_block.get_inputs(parent_constraints);
+                if cur_block.sub_blocks.len() > 0 {
+                    let mut next_ancestors = ancestor_constraints.clone();
+                    next_ancestors.extend(cur_block.constraints.iter().cloned());
+                    for sub in cur_block.sub_blocks.iter_mut() {
+                        let sub_inputs = self.sub_block(interner, sub, ix, &mut cur_block.constraints, &mut next_ancestors);
+                        inputs.extend(sub_inputs);
+                    }
+                }
+                let mut related = get_input_constraints(&inputs, ancestor_constraints);
+                related.extend(cur_block.constraints.iter().cloned());
                 let block_name = cur_block.block_name.to_string();
                 let tag_value = interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
                 let mut key_attrs = vec![tag_value];
-                key_attrs.extend(inputs);
+                key_attrs.extend(inputs.iter());
                 parent_constraints.push(make_anti_scan(key_attrs.clone()));
                 related.push(make_intermediate_insert(key_attrs, vec![], true));
-                for c in related.iter() {
-                    println!("    {:?}", c);
-                }
                 cur_block.constraints = related;
+                inputs
             }
-            &mut SubBlock::IfBranch(..) => { }
+            &mut SubBlock::IfBranch(..) => { panic!("Tried directly compiling an if branch") }
             &mut SubBlock::If(ref mut cur_block, ref output_registers, exclusive) => {
-                println!("Let's compile an If!");
                 // find the inputs for all of the branches
                 let mut all_inputs = HashSet::new();
-                for sub in cur_block.sub_blocks.iter() {
-                    if let &SubBlock::IfBranch(ref branch_block, ..) = sub {
-                        println!("------------ BRANCH CONSTRAINTS");
-                        for rel in branch_block.constraints.iter() {
-                            println!("        {:?}", rel);
+                for sub in cur_block.sub_blocks.iter_mut() {
+                    let branch_block = sub.get_mut_compilation();
+                    let mut inputs = branch_block.get_inputs(parent_constraints);
+                    if branch_block.sub_blocks.len() > 0 {
+                        let mut next_ancestors = ancestor_constraints.clone();
+                        next_ancestors.extend(branch_block.constraints.iter().cloned());
+                        for sub in branch_block.sub_blocks.iter_mut() {
+                            let sub_inputs = self.sub_block(interner, sub, ix, &mut branch_block.constraints, &mut next_ancestors);
+                            inputs.extend(sub_inputs);
                         }
-                        println!("------------ ");
-                        let (_, inputs) = get_related_constraints(&branch_block.constraints, parent_constraints);
-                        all_inputs.extend(inputs);
-                        all_inputs.extend(branch_block.required_fields.iter());
                     }
+                    all_inputs.extend(inputs);
+                    all_inputs.extend(branch_block.required_fields.iter());
                 }
                 // get related constraints for all the inputs
-                let related = get_input_constraints(&all_inputs, parent_constraints);
-                println!("    Inputs: {:?}", all_inputs);
-                println!("    Outputs: {:?}", output_registers);
-                println!("    RELATED: ");
-                for rel in related.iter() {
-                   println!("        {:?}", rel);
-                }
+                let related = get_input_constraints(&all_inputs, ancestor_constraints);
                 let block_name = cur_block.block_name.to_string();
                 let if_id = interner.string(&format!("{}|sub_block|if|{}", block_name, ix));
 
                 // add an intermediate scan to the parent for the results of the branches
                 let mut parent_if_key = vec![if_id];
                 parent_if_key.extend(all_inputs.iter());
-                println!("    parent key: {:?}", parent_if_key);
-                println!("    parent scans:");
-                for constraint in parent_constraints.iter() {
-                    println!("           {:?}", constraint);
-                }
                 parent_constraints.push(make_intermediate_scan(parent_if_key, output_registers.clone()));
 
                 // fix up the blocks for each branch
@@ -878,6 +886,7 @@ impl<'a> Node<'a> {
                         branch_block.constraints.push(make_intermediate_insert(if_key, output_fields.clone(), false));
                     }
                 }
+                all_inputs
             }
         }
     }
@@ -964,6 +973,25 @@ impl Compilation {
             Some(&Field::Register(cur)) => Field::Register(cur),
             _ => reg.clone()
         }
+    }
+
+    pub fn get_inputs(&self, haystack: &Vec<Constraint>) -> HashSet<Field> {
+        let mut regs = HashSet::new();
+        let mut input_regs = HashSet::new();
+        for needle in self.constraints.iter() {
+            for reg in needle.get_registers() {
+                regs.insert(reg);
+            }
+        }
+        regs.extend(self.required_fields.iter());
+        for hay in haystack {
+            for out in hay.get_output_registers() {
+                if regs.contains(&out) {
+                    input_regs.insert(out);
+                }
+            }
+        }
+        input_regs
     }
 
     pub fn reassign_registers(&mut self) {
@@ -1310,6 +1338,7 @@ named!(if_branch<Node<'a>>,
            sp!(tag!("if")) >>
            body: many0!(sp!(alt_complete!(
                        multi_function_equality |
+                       not_form |
                        inequality |
                        record |
                        equality
