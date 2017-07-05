@@ -812,14 +812,13 @@ impl<'a> Node<'a> {
                 }
                 cur_block.constraints = related;
             }
-            &mut SubBlock::IfBranch(..) => {
-            }
+            &mut SubBlock::IfBranch(..) => { }
             &mut SubBlock::If(ref mut cur_block, ref output_registers, exclusive) => {
                 println!("Let's compile an If!");
                 // find the inputs for all of the branches
                 let mut all_inputs = HashSet::new();
-                for sub in cur_block.sub_blocks.iter_mut() {
-                    if let &mut SubBlock::IfBranch(ref mut branch_block, ..) = sub {
+                for sub in cur_block.sub_blocks.iter() {
+                    if let &SubBlock::IfBranch(ref branch_block, ..) = sub {
                         println!("------------ BRANCH CONSTRAINTS");
                         for rel in branch_block.constraints.iter() {
                             println!("        {:?}", rel);

@@ -5,7 +5,7 @@
 x Pipe combinations
 
 Not
-  - parser
+  x parser
     x track variable level (don't need this)
     x multi-block parses
     x generate not block
@@ -19,9 +19,16 @@ Choose
     x generate branch blocks
     x replace block with choose-select
     x fix unifier to handle multiple levels
-    - allow multiple returns
+    x allow multiple returns
+    - handle return constants
+    - allow embedded nots
   x choose-select impl
     x using not?
+
+MultiFunction
+  x parser
+  x instruction impls
+  x handle early finishes in the pipeline
 
 Aggregates
   - parser
