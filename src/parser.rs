@@ -740,16 +740,40 @@ impl<'a> Node<'a> {
                 None
             },
             &Node::If { sub_block_id, ref branches, ref outputs, ..} => {
+                let compiled_outputs = if let &Some(ref outs) = outputs {
+                    outs.iter().map(|cur| {
+                        match cur.compile(interner, cur_block) {
+                            Some(val @ Field::Value(_)) => {
+                                let result_name = format!("__eve_if_output{}", cur_block.id);
+                                let out_reg = cur_block.get_register(&result_name);
+                                cur_block.id += 1;
+                                cur_block.constraints.push(make_filter("=", out_reg, val));
+                                out_reg
+                            },
+                            Some(reg @ Field::Register(_)) => {
+                                let cur_value = if let Some(val @ &Field::Value(_)) = cur_block.var_values.get(&reg) {
+                                    *val
+                                } else {
+                                    reg
+                                };
+                                if let Field::Value(_) = cur_value {
+                                    let result_name = format!("__eve_if_output{}", cur_block.id);
+                                    let out_reg = cur_block.get_register(&result_name);
+                                    cur_block.id += 1;
+                                    cur_block.constraints.push(make_filter("=", out_reg, cur_value));
+                                    out_reg
+                                } else {
+                                    reg
+                                }
+                            },
+                            _ => { panic!("Non-value, non-register if output") }
+                        }
+                    }).collect()
+                } else {
+                    vec![]
+                };
                 if let SubBlock::If(ref mut sub_block, ref mut out_registers, ..) = cur_block.sub_blocks[sub_block_id] {
-                    if let &Some(ref outs) = outputs {
-                        out_registers.extend(outs.iter().map(|cur| {
-                            if let &Node::Variable(v) = cur {
-                                sub_block.get_unified_register(v)
-                            } else {
-                                panic!("Invalid output for If");
-                            }
-                        }));
-                    }
+                    out_registers.extend(compiled_outputs);
                     for branch in branches {
                         branch.compile(interner, sub_block);
                     }
@@ -1309,8 +1333,8 @@ named!(not_form<Node<'a>>,
 
 named!(if_equality<Vec<Node<'a>>>,
        do_parse!(
-           outputs: alt_complete!(variable => { |v| vec![v] } |
-                                  delimited!(tag!("("), many1!(sp!(variable)), tag!(")"))) >>
+           outputs: alt_complete!(expr => { |v| vec![v] } |
+                                  delimited!(tag!("("), many1!(sp!(expr)), tag!(")"))) >>
            sp!(tag!("=")) >>
            (outputs)));
 

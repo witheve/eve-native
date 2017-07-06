@@ -501,7 +501,7 @@ test!(base_choose, {
     end
 });
 
-test!(base_choose_no_equality, {
+test!(base_choose_inequality, {
     search
         [#foo x]
         z = if x > 3 then "large"
@@ -520,6 +520,102 @@ test!(base_choose_no_equality, {
         [#zomg x:3 z:"small"]
         [#zomg x:10 z:"large"]
         [#zomg x:100 z:"large"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_filtered, {
+    search
+        [#foo x]
+        "large" = if x > 3 then "large"
+                  else "small"
+    bind
+        [#zomg x]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10]
+        [#zomg x:100]
+        not([#zomg x:3])
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_filtered_multi_some, {
+    search
+        [#foo x]
+        (10, z) = if x > 3 then (x, "large")
+                  else ("unknown", "small")
+    bind
+        [#zomg x z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z:"large"]
+        not([#zomg x:3])
+        not([#zomg x:100])
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_filtered_multi_all, {
+    search
+        [#foo x]
+        (10, "large") = if x > 3 then (x, "large")
+                  else ("unknown", "small")
+    bind
+        [#zomg x]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10]
+        not([#zomg x:3])
+        not([#zomg x:100])
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_filtered_multi_expression, {
+    search
+        [#foo x]
+        (5 + 5, "large") = if x > 3 then (x, "large")
+                  else ("unknown", "small")
+    bind
+        [#zomg x]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10]
+        not([#zomg x:3])
+        not([#zomg x:100])
     bind
         [#success]
     end

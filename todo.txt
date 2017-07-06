@@ -21,7 +21,7 @@ Choose
     x fix unifier to handle multiple levels
     x allow multiple returns
     x allow embedded nots
-    - handle return constants
+    x handle return constants
   x choose-select impl
     x using not?
 

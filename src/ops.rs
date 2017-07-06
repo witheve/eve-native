@@ -498,17 +498,47 @@ pub struct Row {
     fields: Vec<Interned>,
     solved_fields: u64,
     solving_for:u64,
+    solved_stack: Vec<u64>,
 }
 
 impl Row {
     pub fn new(size:usize) -> Row {
-        Row { fields: vec![0; size], solved_fields: 0, solving_for: 0 }
+        Row { fields: vec![0; size], solved_fields: 0, solving_for: 0, solved_stack:vec![] }
+    }
+
+    pub fn push_solved(&mut self) {
+        if self.peek_solved() != self.solved_fields {
+            self.solved_stack.push(self.solved_fields);
+        }
+    }
+
+    pub fn pop_solved(&mut self) {
+        self.solved_stack.push(self.solved_fields);
+    }
+
+    pub fn peek_solved(&self) -> u64 {
+        self.solved_stack.last().cloned().unwrap_or(0)
+    }
+
+    pub fn check(&self, field_index:u32, value:Interned) -> bool {
+        let cur = self.fields[field_index as usize];
+        cur == 0 || cur == value
     }
 
     pub fn set(&mut self, field_index:u32, value:Interned) {
         self.fields[field_index as usize] = value;
         self.solving_for = set_bit(0, field_index);
         self.solved_fields = set_bit(self.solved_fields, field_index);
+    }
+
+    pub fn set_multi(&mut self, field_index:u32, value:Interned) {
+        self.fields[field_index as usize] = value;
+        self.solving_for = set_bit(self.solving_for, field_index);
+        self.solved_fields = set_bit(self.solved_fields, field_index);
+    }
+
+    pub fn clear_solving_for(&mut self) {
+        self.solving_for = 0;
     }
 
     pub fn clear(&mut self, field_index:u32) {
@@ -693,14 +723,26 @@ impl EstimateIter {
             },
             &mut EstimateIter::MultiFunction {ref results, ref mut ix, outputs: Some(ref outputs), .. } => {
                 if let &Some(ref rows) = results {
-                    if *ix < rows.len() {
-                        for (out, v) in outputs.iter().zip(rows[*ix].iter()) {
-                            row.set(*out, *v);
+                    loop {
+                        if *ix < rows.len() {
+                            let mut valid = true;
+                            row.clear_solving_for();
+                            for (out, v) in outputs.iter().zip(rows[*ix].iter()) {
+                                if row.check(*out, *v) {
+                                    row.set_multi(*out, *v);
+                                } else {
+                                    println!("BAILING {:?} {:?} {:?}", out, v, row.fields[*out as usize]);
+                                    valid = false;
+                                    break;
+                                }
+                            }
+                            *ix += 1;
+                            if valid {
+                                return true;
+                            }
+                        } else {
+                            return false
                         }
-                        *ix += 1;
-                        true
-                    } else {
-                        false
                     }
                 } else {
                     false
@@ -708,13 +750,24 @@ impl EstimateIter {
             },
             &mut EstimateIter::Intermediate {ref mut iter, output: Some(ref outputs), .. } => {
                 if let &mut Some(ref mut keys) = iter {
-                    if let Some(key) = keys.next() {
-                        for (out, v) in outputs.iter().zip(key) {
-                            row.set(*out, *v);
+                    loop {
+                        if let Some(key) = keys.next() {
+                            let mut valid = true;
+                            row.clear_solving_for();
+                            for (out, v) in outputs.iter().zip(key) {
+                                if row.check(*out, *v) {
+                                    row.set_multi(*out, *v);
+                                } else {
+                                    valid = false;
+                                    break;
+                                }
+                            }
+                            if valid {
+                                return true;
+                            }
+                        } else {
+                            return false;
                         }
-                        true
-                    } else {
-                        false
                     }
                 } else {
                     false
@@ -852,9 +905,9 @@ pub fn move_input_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u3
     // println!("STARTING! {:?}", block);
     if let Some(change) = frame.input {
         match from {
-            0 => { frame.row.set(to, change.e); }
-            1 => { frame.row.set(to, change.a); }
-            2 => { frame.row.set(to, change.v); }
+            0 => { frame.row.set_multi(to, change.e); }
+            1 => { frame.row.set_multi(to, change.a); }
+            2 => { frame.row.set_multi(to, change.v); }
             _ => { panic!("Unknown move: {:?}", from); },
         }
     }
@@ -865,7 +918,7 @@ pub fn move_input_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u3
 pub fn move_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u32) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(ref intermediate) = frame.intermediate {
-        frame.row.set(to, intermediate.key[from as usize]);
+        frame.row.set_multi(to, intermediate.key[from as usize]);
         1
     } else {
         panic!("move_input_field without an intermediate in the frame?");
@@ -1025,7 +1078,6 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
 
 #[inline(never)]
 pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:u32, bail:i32, finished_mask:u64) -> i32 {
-    let prev_solved = frame.row.solved_fields;
     let mut passthrough = false;
     let go = {
         let mut iter = iter_pool.iters[iterator as usize].as_mut();
@@ -1034,17 +1086,19 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
             Some(ref mut cur) => {
                 match cur.next(&mut frame.row) {
                     false => {
+                        frame.row.pop_solved();
                         cur.clear(&mut frame.row);
                         bail
                     },
                     true => {
                         // frame.counters.iter_next += 1;
+                        frame.row.push_solved();
                         1
                     },
                 }
             },
             None => {
-                if prev_solved == finished_mask {
+                if frame.row.peek_solved() == finished_mask {
                     // if we were solved when we came into here, and there were no
                     // iterators set, that means we've completely solved for all the variables
                     // and we just need to passthrough to the end, by setting the current iter
@@ -1095,7 +1149,7 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
             // if we aren't solving for something this scan cares about, then we
             // automatically accept it.
-            if !check_bits(*register_mask, frame.row.solving_for) {
+            if !has_any_bits(*register_mask, frame.row.solving_for) {
                 // println!("auto accept {:?} {:?}", cur, frame.row.solving_for);
                return 1;
             }
@@ -1106,15 +1160,29 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             // println!("scan accept {:?} {:?}", cur_constraint, checked);
             if checked { 1 } else { bail }
         },
-        &Constraint::Function {/* ref op, ref outputs, ref params, */ ref param_mask, ref output_mask, .. } => {
+        &Constraint::Function {ref func, ref output, ref params, ref param_mask, ref output_mask, .. } => {
             let solved = frame.row.solved_fields;
-            if check_bits(solved, *param_mask) && check_bits(solved, *output_mask) {
-
+            if !check_bits(solved, *param_mask) || !has_any_bits(frame.row.solving_for, *output_mask) {
+                return 1
             }
-            1
+
+            let result = {
+                let mut resolved = vec![];
+                for param in params {
+                    resolved.push(program.interner.get_value(frame.resolve(param)));
+                }
+                func(resolved)
+            };
+            match result {
+                Some(v) => {
+                    let id = program.interner.internable_to_id(v);
+                    if id == frame.resolve(output) { 1 } else { bail }
+                }
+                _ => bail,
+            }
         },
         &Constraint::Filter {ref left, ref right, ref func, ref param_mask, .. } => {
-            if !check_bits(*param_mask, frame.row.solving_for) {
+            if !has_any_bits(*param_mask, frame.row.solving_for) {
                return 1;
             }
             if check_bits(frame.row.solved_fields, *param_mask) {
@@ -1843,6 +1911,10 @@ pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
 
 pub fn check_bits(solved:u64, checking:u64) -> bool {
     solved & checking == checking
+}
+
+pub fn has_any_bits(solved:u64, checking:u64) -> bool {
+    solved & checking != 0
 }
 
 pub fn set_bit(solved:u64, bit:u32) -> u64 {
