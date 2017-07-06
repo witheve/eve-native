@@ -29,6 +29,7 @@ MultiFunction
   x parser
   x instruction impls
   x handle early finishes in the pipeline
+  x handle return constants
 
 Aggregates
   - parser

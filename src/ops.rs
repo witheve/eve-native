@@ -503,21 +503,23 @@ pub struct Row {
 
 impl Row {
     pub fn new(size:usize) -> Row {
-        Row { fields: vec![0; size], solved_fields: 0, solving_for: 0, solved_stack:vec![] }
+        Row { fields: vec![0; size], solved_fields: 0, solving_for: 0, solved_stack:vec![0; size] }
     }
 
-    pub fn push_solved(&mut self) {
-        if self.peek_solved() != self.solved_fields {
-            self.solved_stack.push(self.solved_fields);
+    pub fn put_solved(&mut self, ix:u32) {
+        self.solved_stack[ix as usize] = self.solved_fields;
+    }
+
+    pub fn clear_solved(&mut self, ix:u32) {
+        self.solved_stack[ix as usize] = 0;
+    }
+
+    pub fn get_solved(&self, ix:i32) -> u64 {
+        if ix >= 0 {
+            self.solved_stack[ix as usize]
+        } else {
+            0
         }
-    }
-
-    pub fn pop_solved(&mut self) {
-        self.solved_stack.push(self.solved_fields);
-    }
-
-    pub fn peek_solved(&self) -> u64 {
-        self.solved_stack.last().cloned().unwrap_or(0)
     }
 
     pub fn check(&self, field_index:u32, value:Interned) -> bool {
@@ -702,7 +704,7 @@ impl EstimateIter {
         }
     }
 
-    pub fn next(&mut self, row:&mut Row) -> bool {
+    pub fn next(&mut self, row:&mut Row, iterator: u32) -> bool {
         match self {
             &mut EstimateIter::Scan {ref mut iter, ref output, .. } => {
                 if let Some(v) = iter.next() {
@@ -725,15 +727,17 @@ impl EstimateIter {
                 if let &Some(ref rows) = results {
                     loop {
                         if *ix < rows.len() {
+                            let prev_solved = row.get_solved(iterator as i32 - 1);
                             let mut valid = true;
                             row.clear_solving_for();
                             for (out, v) in outputs.iter().zip(rows[*ix].iter()) {
-                                if row.check(*out, *v) {
-                                    row.set_multi(*out, *v);
+                                if check_bit(prev_solved, *out) {
+                                    if !row.check(*out, *v) {
+                                        valid = false;
+                                        break;
+                                    }
                                 } else {
-                                    println!("BAILING {:?} {:?} {:?}", out, v, row.fields[*out as usize]);
-                                    valid = false;
-                                    break;
+                                    row.set_multi(*out, *v);
                                 }
                             }
                             *ix += 1;
@@ -752,14 +756,17 @@ impl EstimateIter {
                 if let &mut Some(ref mut keys) = iter {
                     loop {
                         if let Some(key) = keys.next() {
+                            let prev_solved = row.get_solved(iterator as i32 - 1);
                             let mut valid = true;
                             row.clear_solving_for();
                             for (out, v) in outputs.iter().zip(key) {
-                                if row.check(*out, *v) {
-                                    row.set_multi(*out, *v);
+                                if check_bit(prev_solved, *out) {
+                                    if !row.check(*out, *v) {
+                                        valid = false;
+                                        break;
+                                    }
                                 } else {
-                                    valid = false;
-                                    break;
+                                    row.set_multi(*out, *v);
                                 }
                             }
                             if valid {
@@ -778,7 +785,7 @@ impl EstimateIter {
         }
     }
 
-    pub fn clear(&self, row:&mut Row) {
+    pub fn clear(&self, row:&mut Row, iterator: u32) {
         match self {
             &EstimateIter::Scan {ref output, .. } => {
                 row.clear(*output);
@@ -787,13 +794,19 @@ impl EstimateIter {
                 row.clear(*output);
             },
             &EstimateIter::MultiFunction { outputs: Some(ref outputs), .. } => {
+                let prev_solved = row.get_solved(iterator as i32 - 1);
                 for output in outputs.iter() {
-                    row.clear(*output);
+                    if !check_bit(prev_solved, *output) {
+                        row.clear(*output);
+                    }
                 }
             },
             &EstimateIter::Intermediate { output: Some(ref outputs), .. } => {
+                let prev_solved = row.get_solved(iterator as i32 - 1);
                 for output in outputs.iter() {
-                    row.clear(*output);
+                    if !check_bit(prev_solved, *output) {
+                        row.clear(*output);
+                    }
                 }
             },
             &EstimateIter::PassThrough => { }
@@ -1084,21 +1097,21 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
         // println!("Iter Next: {:?}", iter);
         match iter {
             Some(ref mut cur) => {
-                match cur.next(&mut frame.row) {
+                match cur.next(&mut frame.row, iterator) {
                     false => {
-                        frame.row.pop_solved();
-                        cur.clear(&mut frame.row);
+                        frame.row.clear_solved(iterator);
+                        cur.clear(&mut frame.row, iterator);
                         bail
                     },
                     true => {
                         // frame.counters.iter_next += 1;
-                        frame.row.push_solved();
+                        frame.row.put_solved(iterator);
                         1
                     },
                 }
             },
             None => {
-                if frame.row.peek_solved() == finished_mask {
+                if frame.row.get_solved(iterator as i32 - 1) == finished_mask {
                     // if we were solved when we came into here, and there were no
                     // iterators set, that means we've completely solved for all the variables
                     // and we just need to passthrough to the end, by setting the current iter
@@ -1923,6 +1936,10 @@ pub fn set_bit(solved:u64, bit:u32) -> u64 {
 
 pub fn clear_bit(solved:u64, bit:u32) -> u64 {
     solved & !(1 << bit)
+}
+
+pub fn check_bit(solved:u64, bit:u32) -> bool {
+   solved & (1 << bit) != 0
 }
 
 //-------------------------------------------------------------------------

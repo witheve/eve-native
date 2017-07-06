@@ -1219,8 +1219,8 @@ named!(record_function<Node<'a>>,
 
 named!(multi_function_equality<Node<'a>>,
        do_parse!(
-           outputs: alt_complete!(variable => { |v| vec![v] } |
-                                  delimited!(tag!("("), many1!(sp!(variable)), tag!(")"))) >>
+           outputs: alt_complete!(expr => { |v| vec![v] } |
+                                  delimited!(tag!("("), many1!(sp!(expr)), tag!(")"))) >>
            sp!(tag!("=")) >>
            func: record_function >>
            ({

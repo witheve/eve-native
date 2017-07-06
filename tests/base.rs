@@ -369,6 +369,37 @@ test!(base_multi_function_multi_field, {
     end
 });
 
+test!(base_multi_function_multi_field_filtered, {
+    search
+        (value, 1) = string!/split![text:"hey dude", by: " "]
+    bind
+        [#token value]
+    end
+
+    search
+        [#token value: "hey"]
+        not([#token value: "dude"])
+    bind
+        [#success]
+    end
+});
+
+test!(base_multi_function_multi_field_filtered_expression, {
+    search
+        (value, ix) = string!/split![text:"hey dude", by: " "]
+        ix = 3 - 2
+    bind
+        [#token value]
+    end
+
+    search
+        [#token value: "hey"]
+        not([#token value: "dude"])
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Not
 //--------------------------------------------------------------------
