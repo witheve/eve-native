@@ -567,7 +567,7 @@ impl<'a> Iterator for DistinctIter<'a> {
 enum IntermediateLevel {
     Value(HashMap<Vec<Interned>, RoundEntry, MyHasher>),
     KeyOnly(RoundEntry),
-    SumAggregate(HashMap<Vec<Interned>, BTreeMap<Round, f32>, MyHasher>),
+    SumAggregate(BTreeMap<Round, f32>),
 }
 
 pub struct IntermediateIndex {
@@ -664,9 +664,35 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn aggregate<F>(&mut self, group:Vec<Interned>, value:Vec<Interned>, round:Round, action:F)
-        where F: Fn(&mut f32, Vec<Interned>) {
-
+    pub fn aggregate<F>(&mut self, interner:&mut Interner, group:Vec<Interned>, value:Vec<Internable>, round:Round, action:F, out:Vec<Interned>)
+        where F: Fn(&mut f32, Vec<Internable>) -> f32
+    {
+        let cur = self.index.entry(group).or_insert_with(|| IntermediateLevel::SumAggregate(BTreeMap::new()));
+        if let IntermediateLevel::SumAggregate(rounds) = cur {
+            match rounds.entry(round) {
+                Entry::Occupied(mut ent) => {
+                    let cur_aggregate = ent.get_mut();
+                    let prev = *cur_aggregate;
+                    *cur_aggregate = action(cur_aggregate, value);
+                    if *cur_aggregate != prev {
+                        // add a remove for the previous value
+                        // add an add for the new value
+                    }
+                }
+                Entry::Vacant(ent) => {
+                    ent.insert(action(0, value));
+                    // add an add for the new value
+                }
+            }
+            for (k, v) in rounds.range_mut(round+1..) {
+                let prev = *v;
+                *v = action(v, value);
+                if *v != prev {
+                    // add a remove for the previous value
+                    // add an add for the new value
+                }
+            }
+        }
     }
 
     pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>) {
