@@ -3,13 +3,14 @@
 //-------------------------------------------------------------------------
 
 // use std::collections::HashMap;
-use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange};
+use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange, Internable, Interner};
 use std::cmp;
 
 extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault};
 use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
+use std::collections::btree_map;
 use std::iter::{Iterator};
 use std::collections::BTreeMap;
 
@@ -623,6 +624,23 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
     generic_distinct(counts, count, round, insert);
 }
 
+pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>, mut change: IntermediateChange) {
+    match rounds.entry(change.round) {
+        Entry::Occupied(mut ent) => {
+            let cur = ent.get_mut();
+            let delta = change.count;
+            change.count = 0;
+            let val = cur.entry(change.key.clone()).or_insert(change);
+            val.count += delta;
+        }
+        Entry::Vacant(ent) => {
+            let mut neue = HashMap::default();
+            neue.insert(change.key.clone(), change);
+            ent.insert(neue);
+        }
+    }
+}
+
 impl IntermediateIndex {
 
     pub fn new() -> IntermediateIndex {
@@ -668,28 +686,44 @@ impl IntermediateIndex {
         where F: Fn(&mut f32, Vec<Internable>) -> f32
     {
         let cur = self.index.entry(group).or_insert_with(|| IntermediateLevel::SumAggregate(BTreeMap::new()));
-        if let IntermediateLevel::SumAggregate(rounds) = cur {
+        if let &mut IntermediateLevel::SumAggregate(ref mut rounds) = cur {
             match rounds.entry(round) {
-                Entry::Occupied(mut ent) => {
+                btree_map::Entry::Occupied(mut ent) => {
                     let cur_aggregate = ent.get_mut();
                     let prev = *cur_aggregate;
-                    *cur_aggregate = action(cur_aggregate, value);
+                    *cur_aggregate = action(cur_aggregate, value.clone());
                     if *cur_aggregate != prev {
                         // add a remove for the previous value
+                        let mut to_remove = out.clone();
+                        to_remove.push(interner.number_id(prev));
+                        insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round, count:1, negate:false });
                         // add an add for the new value
+                        let mut to_add = out.clone();
+                        to_add.push(interner.number_id(*cur_aggregate));
+                        insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:-1, negate:false });
                     }
                 }
-                Entry::Vacant(ent) => {
-                    ent.insert(action(0, value));
+                btree_map::Entry::Vacant(ent) => {
+                    let cur_aggregate = action(&mut 0.0, value.clone());
+                    ent.insert(cur_aggregate);
                     // add an add for the new value
+                    let mut to_add = out.clone();
+                    to_add.push(interner.number_id(cur_aggregate));
+                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:-1, negate:false });
                 }
             }
             for (k, v) in rounds.range_mut(round+1..) {
                 let prev = *v;
-                *v = action(v, value);
+                *v = action(v, value.clone());
                 if *v != prev {
                     // add a remove for the previous value
+                    let mut to_remove = out.clone();
+                    to_remove.push(interner.number_id(prev));
+                    insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round:*k, count:1, negate:false });
                     // add an add for the new value
+                    let mut to_add = out.clone();
+                    to_add.push(interner.number_id(*v));
+                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round:*k, count:-1, negate:false });
                 }
             }
         }
