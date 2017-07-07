@@ -11,6 +11,7 @@ use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault};
 use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
 use std::iter::{Iterator};
+use std::collections::BTreeMap;
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -566,6 +567,7 @@ impl<'a> Iterator for DistinctIter<'a> {
 enum IntermediateLevel {
     Value(HashMap<Vec<Interned>, RoundEntry, MyHasher>),
     KeyOnly(RoundEntry),
+    SumAggregate(HashMap<Vec<Interned>, BTreeMap<Round, f32>, MyHasher>),
 }
 
 pub struct IntermediateIndex {
@@ -614,6 +616,9 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
             &mut lookup.entry(value.clone())
                 .or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds
         }
+        &mut IntermediateLevel::SumAggregate(..) => {
+            unimplemented!();
+        }
     };
     generic_distinct(counts, count, round, insert);
 }
@@ -630,6 +635,9 @@ impl IntermediateIndex {
                 match level {
                     &IntermediateLevel::KeyOnly(_) => true,
                     &IntermediateLevel::Value(ref lookup) => lookup.contains_key(value),
+                    &IntermediateLevel::SumAggregate(..) => {
+                        unimplemented!();
+                    }
                 }
             }
             None => false,
@@ -647,10 +655,18 @@ impl IntermediateIndex {
                             None => DistinctIter::new(&self.empty),
                         }
                     }
+                    &IntermediateLevel::SumAggregate(..) => {
+                        unimplemented!();
+                    }
                 }
             }
             None => DistinctIter::new(&self.empty),
         }
+    }
+
+    pub fn aggregate<F>(&mut self, group:Vec<Interned>, value:Vec<Interned>, round:Round, action:F)
+        where F: Fn(&mut f32, Vec<Interned>) {
+
     }
 
     pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>) {
@@ -662,6 +678,9 @@ impl IntermediateIndex {
                         *iter = Some(lookup.get_dangerous_keys());
                     },
                     Some(&IntermediateLevel::KeyOnly(_)) => { *estimate = 0 },
+                    Some(&IntermediateLevel::SumAggregate(_)) => {
+                        unimplemented!();
+                    },
                     None => { *estimate = 0; }
 
                 }
