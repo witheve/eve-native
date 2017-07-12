@@ -797,3 +797,100 @@ test!(base_aggregate_sum_removal, {
     end
 });
 
+test!(base_aggregate_count, {
+    search
+        foo = [#foo]
+        total = gather!/count![for:foo]
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        [#total total:2]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_count_remove, {
+    search
+        foo = [#foo]
+        total = gather!/count![for:foo]
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        [#total total: 2]
+        foo = [#foo value: 2]
+    commit
+        foo := none
+    end
+
+    search
+        [#total total:1]
+        not([#total total:2])
+    bind
+        [#success]
+    end
+});
+
+
+test!(base_aggregate_average, {
+    search
+        foo = [#foo value]
+        total = gather!/average![value, for:foo]
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        [#total total:1.5]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_average_remove, {
+    search
+        foo = [#foo value]
+        total = gather!/average![value, for:foo]
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        [#total total: 1.5]
+        foo = [#foo value: 2]
+    commit
+        foo := none
+    end
+
+    search
+        [#total total:1]
+        not([#total total:1.5])
+    bind
+        [#success]
+    end
+});
+

@@ -1814,8 +1814,10 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
 pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Field) -> Constraint {
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
     let output_mask = make_register_mask(vec![&output]);
-    let (add, remove) = match op {
+    let (add, remove):(AggregateFunction, AggregateFunction) = match op {
         "gather/sum" => (aggregate_sum_add, aggregate_sum_remove),
+        "gather/count" => (aggregate_count_add, aggregate_count_remove),
+        "gather/average" => (aggregate_avg_add, aggregate_avg_remove),
         _ => panic!("Unknown function: {:?}", op)
     };
     Constraint::Aggregate {op: op.to_string(), add, remove, group, projection, params, output, param_mask, output_mask, output_key:vec![], }
@@ -1995,6 +1997,58 @@ pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: Vec<Internable
             match current {
                 &mut AggregateEntry::Result(ref mut res) => { *res = *res - value; }
                 _ => { *current = AggregateEntry::Result(-1.0 * value); }
+            }
+        }
+        _ => {}
+    };
+}
+
+pub fn aggregate_count_add(current: &mut AggregateEntry, params: Vec<Internable>) {
+    match current {
+        &mut AggregateEntry::Result(ref mut res) => { *res = *res + 1.0; }
+        _ => { *current = AggregateEntry::Result(1.0); }
+    }
+}
+
+pub fn aggregate_count_remove(current: &mut AggregateEntry, params: Vec<Internable>) {
+    match current {
+        &mut AggregateEntry::Result(ref mut res) => { *res = *res - 1.0; }
+        _ => { *current = AggregateEntry::Result(-1.0); }
+    }
+}
+
+pub fn aggregate_avg_add(current: &mut AggregateEntry, params: Vec<Internable>) {
+    match params.as_slice() {
+        &[ref param @ Internable::Number(_)] => {
+            let value = Internable::to_number(param);
+            match current {
+                &mut AggregateEntry::Counted {ref mut count, ref mut sum, ref mut result } => {
+                    *sum += value;
+                    *count += 1.0;
+                    *result = *sum / *count;
+                }
+                _ => { *current = AggregateEntry::Counted { count:1.0, sum: value, result:value }; }
+            }
+        }
+        _ => {}
+    };
+}
+
+pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: Vec<Internable>) {
+    match params.as_slice() {
+        &[ref param @ Internable::Number(_)] => {
+            let value = Internable::to_number(param);
+            match current {
+                &mut AggregateEntry::Counted {ref mut count, ref mut sum, ref mut result, } => {
+                    *sum -= value;
+                    *count -= 1.0;
+                    if *count > 0.0 {
+                        *result = *sum / *count;
+                    } else {
+                        *result = 0.0;
+                    }
+                }
+                _ => { *current = AggregateEntry::Counted { count:0.0, sum: 0.0, result:0.0 }; }
             }
         }
         _ => {}
@@ -2644,6 +2698,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
         let mut remaining:Vec<(Vec<Interned>, IntermediateChange)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
         while remaining.len() > 0 {
             for (_, cur) in remaining {
+                if cur.count == 0 { continue; }
                 state.intermediates.update_active_rounds(&cur);
                 if let Some(ref actives) = block_info.intermediate_pipe_lookup.get(&cur.key[0]) {
                     frame.reset();

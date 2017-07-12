@@ -581,6 +581,7 @@ impl<'a> Iterator for DistinctIter<'a> {
 // Intermediate Index
 //-------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub enum AggregateEntry {
     Empty,
     Result(f32),

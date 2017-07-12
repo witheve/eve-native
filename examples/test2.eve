@@ -1,6 +1,6 @@
     search
-        foo = [#foo value]
-        total = gather/sum[value, for:foo]
+        foo = [#foo]
+        total = gather/count[for:foo]
     bind
         [#total total]
     end
@@ -11,16 +11,7 @@
     end
 
     search
-        [#total total: 3]
-        foo = [#foo value: 2]
-    commit
-        foo := none
-    end
-
-    search
-        [#total total: 1]
-        not([#total total: 3])
+        [#total total:2]
     bind
         [#success]
     end
-

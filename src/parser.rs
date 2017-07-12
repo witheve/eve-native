@@ -62,6 +62,8 @@ lazy_static! {
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"]));
+        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"]));
+        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![]));
         m
     };
 }
