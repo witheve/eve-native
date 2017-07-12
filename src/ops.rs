@@ -215,7 +215,7 @@ impl Block {
                     get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
                     accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0 });
                 },
-                &Constraint::Aggregate {ref output, ..} => {
+                &Constraint::Aggregate {..} => {
                     outputs.push(Instruction::InsertIntermediate { next: 1, constraint: ix });
                 },
                 &Constraint::Filter {..} => {
@@ -1583,7 +1583,7 @@ impl Constraint {
                 vs.extend(params);
                 filter_registers(&vs)
             }
-            &Constraint::Aggregate {ref output, ref group, ref projection, ref params, ..} => {
+            &Constraint::Aggregate {ref group, ref projection, ref params, ..} => {
                 let mut vs = vec![];
                 vs.extend(params);
                 vs.extend(group);
@@ -1655,7 +1655,7 @@ impl Constraint {
                 *param_mask = make_register_mask(params.iter().collect());
                 *output_mask = make_register_mask(outputs.iter().collect());
             }
-            &mut Constraint::Aggregate {ref mut params, ref mut group, ref mut projection, ref mut param_mask, ref mut output_mask, ..} => {
+            &mut Constraint::Aggregate {ref mut params, ref mut group, ref mut projection, ref mut param_mask, ..} => {
                 {
                     let mut vs = vec![];
                     vs.extend(params.iter_mut());
@@ -1714,7 +1714,7 @@ impl Clone for Constraint {
                 Constraint::MultiFunction{ op:op.clone(), outputs:outputs.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
             }
             &Constraint::Aggregate {ref op, ref output, ref add, ref remove, ref group, ref projection, ref params, ref param_mask, ref output_mask, ref output_key} => {
-                Constraint::Aggregate { op:op.clone(), output:output.clone(), add:*add, remove:*remove, group:group.clone(), projection:params.clone(), params:params.clone(), param_mask:*param_mask, output_mask:*output_mask, output_key:output_key.clone() }
+                Constraint::Aggregate { op:op.clone(), output:output.clone(), add:*add, remove:*remove, group:group.clone(), projection:projection.clone(), params:params.clone(), param_mask:*param_mask, output_mask:*output_mask, output_key:output_key.clone() }
             }
             &Constraint::Filter {ref op, ref func, ref left, ref right, ref param_mask} => {
                 Constraint::Filter{ op:op.clone(), func:*func, left:left.clone(), right:right.clone(), param_mask:*param_mask }
@@ -2003,14 +2003,14 @@ pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: Vec<Internable
     };
 }
 
-pub fn aggregate_count_add(current: &mut AggregateEntry, params: Vec<Internable>) {
+pub fn aggregate_count_add(current: &mut AggregateEntry, _: Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res + 1.0; }
         _ => { *current = AggregateEntry::Result(1.0); }
     }
 }
 
-pub fn aggregate_count_remove(current: &mut AggregateEntry, params: Vec<Internable>) {
+pub fn aggregate_count_remove(current: &mut AggregateEntry, _: Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res - 1.0; }
         _ => { *current = AggregateEntry::Result(-1.0); }

@@ -991,31 +991,6 @@ impl<'a> Node<'a> {
     }
 }
 
-pub fn get_related_constraints(needles:&Vec<Constraint>, haystack:&Vec<Constraint>) -> (Vec<Constraint>, HashSet<Field>) {
-    let mut regs = HashSet::new();
-    let mut input_regs = HashSet::new();
-    let mut related = needles.clone();
-    for needle in needles.iter() {
-        for reg in needle.get_registers() {
-            regs.insert(reg);
-        }
-    }
-    for hay in haystack {
-        let mut found = false;
-        let outs = hay.get_output_registers();
-        for out in outs.iter() {
-            if regs.contains(out) {
-                found = true;
-                input_regs.insert(*out);
-            }
-        }
-        if found {
-            related.push(hay.clone());
-        }
-    }
-    (related, input_regs)
-}
-
 pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
     let mut related = vec![];
     for hay in haystack {
