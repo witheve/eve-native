@@ -17,7 +17,7 @@ macro_rules! valid (($blocks:tt) => ({
 
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/");
+    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=");
     let blocks = parse_string(&mut program, &stringy, "test");
     for block in blocks {
         program.raw_block(block);
@@ -744,3 +744,56 @@ test!(base_union, {
         [#success]
     end
 });
+
+//--------------------------------------------------------------------
+// Aggregates
+//--------------------------------------------------------------------
+
+test!(base_aggregate_sum, {
+    search
+        foo = [#foo value]
+        total = gather!/sum![value, for:foo]
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        [#total total: 3]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_sum_removal, {
+    search
+        foo = [#foo value]
+        total = gather!/sum![value, for:foo]
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        [#total total: 3]
+        foo = [#foo value: 2]
+    commit
+        foo := none
+    end
+
+    search
+        [#total total: 1]
+        not([#total total: 3])
+    bind
+        [#success]
+    end
+});
+

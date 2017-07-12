@@ -581,10 +581,26 @@ impl<'a> Iterator for DistinctIter<'a> {
 // Intermediate Index
 //-------------------------------------------------------------------------
 
+pub enum AggregateEntry {
+    Empty,
+    Result(f32),
+    Counted { sum: f32, count: f32, result: f32 },
+}
+
+impl AggregateEntry {
+    pub fn get_result(&self) -> f32 {
+        match self {
+            &AggregateEntry::Result(res) => res,
+            &AggregateEntry::Counted { result, .. } => result,
+            &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
+        }
+    }
+}
+
 enum IntermediateLevel {
     Value(HashMap<Vec<Interned>, RoundEntry, MyHasher>),
     KeyOnly(RoundEntry),
-    SumAggregate(BTreeMap<Round, f32>),
+    SumAggregate(BTreeMap<Round, AggregateEntry>),
 }
 
 pub struct IntermediateIndex {
@@ -705,9 +721,10 @@ impl IntermediateIndex {
             match rounds.entry(round) {
                 btree_map::Entry::Occupied(mut ent) => {
                     let cur_aggregate = ent.get_mut();
-                    let prev = *cur_aggregate;
-                    *cur_aggregate = Internable::to_number(&action(prev, value.clone()));
-                    if *cur_aggregate != prev {
+                    let prev = cur_aggregate.get_result();
+                    action(cur_aggregate, value.clone());
+                    let neue = cur_aggregate.get_result();
+                    if neue != prev {
                         // add a remove for the previous value
                         let mut to_remove = out.clone();
                         let prev_interned = interner.number_id(prev);
@@ -715,35 +732,37 @@ impl IntermediateIndex {
                         self.round_buffer.push((to_remove, out.clone(), vec![prev_interned], round, -1, false));
                         // add an add for the new value
                         let mut to_add = out.clone();
-                        let cur_interned = interner.number_id(*cur_aggregate);
+                        let cur_interned = interner.number_id(neue);
                         to_add.push(cur_interned);
                         self.round_buffer.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
                     }
                 }
                 btree_map::Entry::Vacant(ent) => {
-                    let cur_aggregate = Internable::to_number(&action(0.0, value.clone()));
-                    ent.insert(cur_aggregate);
+                    let mut cur_aggregate = AggregateEntry::Empty;
+                    action(&mut cur_aggregate, value.clone());
                     // add an add for the new value
                     let mut to_add = out.clone();
-                    let cur_interned = interner.number_id(cur_aggregate);
+                    let cur_interned = interner.number_id(cur_aggregate.get_result());
                     to_add.push(cur_interned);
                     self.round_buffer.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
+                    ent.insert(cur_aggregate);
                 }
             }
             for (k, v) in rounds.range_mut(round+1..) {
-                let prev = *v;
-                *v = Internable::to_number(&action(*v, value.clone()));
-                if *v != prev {
+                let prev = v.get_result();
+                action(v, value.clone());
+                let neue = v.get_result();
+                if neue != prev {
                     // add a remove for the previous value
                     let mut to_remove = out.clone();
                     let prev_interned = interner.number_id(prev);
                     to_remove.push(prev_interned);
-                    self.round_buffer.push((to_remove, out.clone(), vec![prev_interned], round, -1, false));
+                    self.round_buffer.push((to_remove, out.clone(), vec![prev_interned], *k, -1, false));
                     // add an add for the new value
                     let mut to_add = out.clone();
-                    let cur_interned = interner.number_id(*v);
+                    let cur_interned = interner.number_id(neue);
                     to_add.push(cur_interned);
-                    self.round_buffer.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
+                    self.round_buffer.push((to_add, out.clone(), vec![cur_interned], *k, 1, false));
                 }
             }
         }

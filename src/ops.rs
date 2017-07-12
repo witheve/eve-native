@@ -4,7 +4,7 @@
 
 extern crate time;
 
-use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry};
+use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry};
 use parser::{make_block};
 use hash::map::{DangerousKeys};
 use std::collections::HashMap;
@@ -1531,7 +1531,7 @@ impl Interner {
 type FilterFunction = fn(&Internable, &Internable) -> bool;
 type Function = fn(Vec<&Internable>) -> Option<Internable>;
 type MultiFunction = fn(Vec<&Internable>) -> Option<Vec<Vec<Internable>>>;
-pub type AggregateFunction = fn(f32, Vec<Internable>) -> Internable;
+pub type AggregateFunction = fn(&mut AggregateEntry, Vec<Internable>);
 
 // #[derive(Clone)]
 #[allow(dead_code)]
@@ -1975,22 +1975,30 @@ pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
 // Aggregates
 //-------------------------------------------------------------------------
 
-pub fn aggregate_sum_add(current: f32, params: Vec<Internable>) -> Internable {
-    let value = current;
-    let result = match params.as_slice() {
-        &[ref param @ Internable::Number(_)] => { value + Internable::to_number(param) }
-        _ => value
+pub fn aggregate_sum_add(current: &mut AggregateEntry, params: Vec<Internable>) {
+    match params.as_slice() {
+        &[ref param @ Internable::Number(_)] => {
+            let value = Internable::to_number(param);
+            match current {
+                &mut AggregateEntry::Result(ref mut res) => { *res = *res + value; }
+                _ => { *current = AggregateEntry::Result(value); }
+            }
+        }
+        _ => {}
     };
-    Internable::from_number(result)
 }
 
-pub fn aggregate_sum_remove(current: f32, params: Vec<Internable>) -> Internable {
-    let value = current;
-    let result = match params.as_slice() {
-        &[ref param @ Internable::Number(_)] => { value - Internable::to_number(param) }
-        _ => value
+pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: Vec<Internable>) {
+    match params.as_slice() {
+        &[ref param @ Internable::Number(_)] => {
+            let value = Internable::to_number(param);
+            match current {
+                &mut AggregateEntry::Result(ref mut res) => { *res = *res - value; }
+                _ => { *current = AggregateEntry::Result(-1.0 * value); }
+            }
+        }
+        _ => {}
     };
-    Internable::from_number(result)
 }
 
 //-------------------------------------------------------------------------
