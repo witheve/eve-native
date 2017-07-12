@@ -6,12 +6,14 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
 use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
-          make_multi_function, Block};
+          make_multi_function, make_aggregate, Block};
 use std::io::prelude::*;
 use std::fs::File;
+use std::cmp::{self};
 
 struct FunctionInfo {
     is_multi: bool,
+    is_aggregate: bool,
     params: Vec<String>,
     outputs: Vec<String>,
 }
@@ -25,14 +27,20 @@ enum ParamType {
 impl FunctionInfo {
     pub fn new(raw_params:Vec<&str>) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:false, params, outputs: vec![] }
+        FunctionInfo { is_multi:false, is_aggregate:false, params, outputs: vec![] }
     }
 
     pub fn multi(raw_params:Vec<&str>, raw_outputs:Vec<&str>) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
         let outputs = raw_outputs.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:true, params, outputs }
+        FunctionInfo { is_multi:true, is_aggregate:false, params, outputs }
     }
+
+    pub fn aggregate(raw_params:Vec<&str>) -> FunctionInfo {
+        let params = raw_params.iter().map(|s| s.to_string()).collect();
+        FunctionInfo { is_multi:false, is_aggregate:true, params, outputs: vec![] }
+    }
+
 
     pub fn get_index(&self, param:&str) -> ParamType {
         if let Some(v) = self.params.iter().enumerate().find(|&(_, t)| t == param) {
@@ -53,6 +61,7 @@ lazy_static! {
         m.insert("math/sin".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
+        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"]));
         m
     };
 }
@@ -104,6 +113,8 @@ pub enum Node<'a> {
 #[derive(Debug, Clone)]
 pub enum SubBlock {
     Not(Compilation),
+    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Field),
+    AggregateScan(Compilation),
     IfBranch(Compilation, Vec<Field>),
     If(Compilation, Vec<Field>, bool),
 }
@@ -112,6 +123,8 @@ impl SubBlock {
     pub fn get_mut_compilation(&mut self) -> &mut Compilation {
         match self {
             &mut SubBlock::Not(ref mut comp) => comp,
+            &mut SubBlock::Aggregate(ref mut comp, ..) => comp,
+            &mut SubBlock::AggregateScan(ref mut comp) => comp,
             &mut SubBlock::IfBranch(ref mut comp, ..) => comp,
             &mut SubBlock::If(ref mut comp, ..) => comp,
         }
@@ -190,29 +203,24 @@ impl<'a> Node<'a> {
 
 
         for sub_block in comp.sub_blocks.iter_mut() {
-            match sub_block {
-                &mut SubBlock::Not(ref mut sub_comp) |
-                &mut SubBlock::IfBranch(ref mut sub_comp, ..) |
-                &mut SubBlock::If(ref mut sub_comp, ..) => {
-                    println!("   VARS {:?}", comp.vars);
-                    println!("   SUB_VARS {:?}", sub_comp.vars);
-                    // transfer values
-                    for (k, v) in comp.vars.iter() {
-                        match sub_comp.vars.entry(k.to_string()) {
-                            Entry::Occupied(o) => {
-                                let reg = o.get();
-                                sub_comp.equalities.push((Field::Register(*v), Field::Register(*reg)));
-                                println!("SETTING EQUAL: {:?}", (Field::Register(*v), Field::Register(*reg)));
-                            }
-                            Entry::Vacant(o) => {
-                                o.insert(*v);
-                            }
-                        }
+            let sub_comp = sub_block.get_mut_compilation();
+            println!("   VARS {:?}", comp.vars);
+            println!("   SUB_VARS {:?}", sub_comp.vars);
+            // transfer values
+            for (k, v) in comp.vars.iter() {
+                match sub_comp.vars.entry(k.to_string()) {
+                    Entry::Occupied(o) => {
+                        let reg = o.get();
+                        sub_comp.equalities.push((Field::Register(*v), Field::Register(*reg)));
+                        println!("SETTING EQUAL: {:?}", (Field::Register(*v), Field::Register(*reg)));
                     }
-                    sub_comp.var_values = comp.var_values.clone();
-                    self.unify(sub_comp);
+                    Entry::Vacant(o) => {
+                        o.insert(*v);
+                    }
                 }
             }
+            sub_comp.var_values = comp.var_values.clone();
+            self.unify(sub_comp);
         }
     }
 
@@ -331,7 +339,6 @@ impl<'a> Node<'a> {
             },
             &mut Node::Not(ref mut sub_id, ref mut items) => {
                 let mut sub_block = Compilation::new_child(cur_block);
-                sub_block.id = cur_block.id + 10000;
                 for item in items {
                     item.gather_equalities(interner, &mut sub_block);
                 };
@@ -489,23 +496,41 @@ impl<'a> Node<'a> {
                 }
             },
             &Node::RecordFunction { ref op, ref params, ref outputs} => {
+                println!("COMPILING: {:?}", self);
                 let info = FUNCTION_INFO.get(*op).unwrap();
-                let mut cur_outputs = vec![Field::Value(0); info.outputs.len()];
+                let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
                 let mut cur_params = vec![Field::Value(0); info.params.len()];
+                let mut group = vec![];
+                let mut projection = vec![];
                 for param in params {
-                    let (a, v) = match param {
+                    let mut compiled_params = vec![];
+                    match param {
                         &Node::Attribute(a) => {
-                            (a, cur_block.get_value(a))
+                            compiled_params.push((a, cur_block.get_value(a)))
                         }
                         &Node::AttributeEquality(a, ref v) => {
-                            (a, v.compile(interner, cur_block).unwrap())
+                            if let Node::ExprSet(ref items) = **v {
+                                for item in items {
+                                    compiled_params.push((a, item.compile(interner, cur_block).unwrap()))
+                                }
+                            } else {
+                                compiled_params.push((a, v.compile(interner, cur_block).unwrap()))
+                            }
                         }
                         _ => { panic!("invalid function param: {:?}", param) }
                     };
-                    match info.get_index(a) {
-                        ParamType::Param(ix) => { cur_params[ix] = v; }
-                        ParamType::Output(ix) => { cur_outputs[ix] = v; }
-                        ParamType::Invalid => { panic!("Invalid parameter for function: {:?} - {:?}", op, a) }
+                    for (a, v) in compiled_params {
+                        match info.get_index(a) {
+                            ParamType::Param(ix) => { cur_params[ix] = v; }
+                            ParamType::Output(ix) => { cur_outputs[ix] = v; }
+                            ParamType::Invalid => {
+                                match (info.is_aggregate, a) {
+                                    (true, "per") => { group.push(v) }
+                                    (true, "for") => { projection.push(v) }
+                                    _ => panic!("Invalid parameter for function: {:?} - {:?}", op, a)
+                                }
+                            }
+                        }
                     }
                 }
                 let compiled_outputs:Vec<Option<Field>> = outputs.iter().map(|output| output.compile(interner, cur_block)).collect();
@@ -552,9 +577,14 @@ impl<'a> Node<'a> {
                         _ => { }
                     }
                 }
+                println!("CUR OUTPUTS {:?}", cur_outputs);
                 let final_result = Some(cur_outputs[0].clone());
                 if info.is_multi {
                     cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
+                } else if info.is_aggregate {
+                    let mut sub_block = Compilation::new_child(cur_block);
+                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), cur_outputs[0]));
+                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, cur_outputs[0]));
                 } else {
                     cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
                 }
@@ -854,8 +884,49 @@ impl<'a> Node<'a> {
                 cur_block.constraints = related;
                 inputs
             }
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, ref output) => {
+                // TODO: Aggregates that rely on chooses probably aren't going to do the right
+                // thing here
+                let inputs = cur_block.get_inputs(parent_constraints);
+                let block_name = cur_block.block_name.to_string();
+
+                // generate the scan block
+                let mut scan_block = Compilation::new_child(cur_block);
+                // TODO: This needs to be fully transitive, anything that affects any of the inputs
+                // needs to be included too
+                let mut related = get_input_constraints(&inputs, ancestor_constraints);
+                let scan_id = interner.string(&format!("{}|sub_block|aggregate_scan|{}", block_name, ix));
+                let mut key_attrs = vec![scan_id.clone()];
+                key_attrs.extend(group.iter());
+                let mut value_attrs = projection.clone();
+                value_attrs.extend(params.iter());
+                related.push(make_intermediate_insert(key_attrs, value_attrs, false));
+                scan_block.constraints = related;
+                cur_block.sub_blocks.push(SubBlock::AggregateScan(scan_block));
+
+                // add the lookup for the intermediates generated by the scan block
+                let aggregate_id = interner.string(&format!("{}|sub_block|aggregate|{}", block_name, ix));
+                let mut agg_key = vec![aggregate_id];
+                agg_key.extend(group.iter());
+                let mut scan_key = vec![scan_id];
+                scan_key.extend(group.iter());
+                scan_key.extend(projection.iter());
+                scan_key.extend(params.iter());
+                if let Constraint::Aggregate {ref mut output_key, ..} = cur_block.constraints[0] {
+                   output_key.extend(agg_key.iter());
+                } else { panic!("Aggregate block with a non-aggregate constraint") }
+                cur_block.constraints.push(make_intermediate_scan(scan_key, vec![]));
+
+                // have the parent look for the aggregate's value
+                parent_constraints.push(make_intermediate_scan(agg_key, vec![output.clone()]));
+                inputs
+            }
+            &mut SubBlock::AggregateScan(..) => { panic!("Tried directly compiling an aggregate scan") }
             &mut SubBlock::IfBranch(..) => { panic!("Tried directly compiling an if branch") }
             &mut SubBlock::If(ref mut cur_block, ref output_registers, exclusive) => {
+                // TODO: Ifs that rely on other ifs probably aren't going to do the right
+                // thing here
+
                 // find the inputs for all of the branches
                 let mut all_inputs = HashSet::new();
                 for sub in cur_block.sub_blocks.iter_mut() {
@@ -1485,23 +1556,19 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
         println!("{:?}", c);
     }
     let sub_ix = 0;
-    let mut subs = comp.sub_blocks.clone();
+    let mut subs:Vec<&mut SubBlock> = comp.sub_blocks.iter_mut().collect();
     while subs.len() > 0 {
-        let cur = subs.pop().unwrap();
-        let mut sub_comp = match cur {
-            SubBlock::Not(comp) => comp,
-            SubBlock::IfBranch(comp,..) => comp,
-            SubBlock::If(comp,..) => comp,
-        };
+        let mut cur = subs.pop().unwrap();
+        let mut sub_comp = cur.get_mut_compilation();
         if sub_comp.constraints.len() > 0 {
             sub_comp.reassign_registers();
             println!("    SubBlock");
             for c in sub_comp.constraints.iter() {
                 println!("        {:?}", c);
             }
-            blocks.push(Block::new(&format!("block|{}|sub_block|{}", name, sub_ix), sub_comp.constraints));
+            blocks.push(Block::new(&format!("block|{}|sub_block|{}", name, sub_ix), sub_comp.constraints.clone()));
         }
-        subs.extend(sub_comp.sub_blocks);
+        subs.extend(sub_comp.sub_blocks.iter_mut());
     }
 
     blocks.push(Block::new(name, comp.constraints));
@@ -1530,23 +1597,19 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                     println!("{:?}", c);
                 }
                 let sub_ix = 0;
-                let mut subs = comp.sub_blocks.clone();
+                let mut subs:Vec<&mut SubBlock> = comp.sub_blocks.iter_mut().collect();
                 while subs.len() > 0 {
-                    let cur = subs.pop().unwrap();
-                    let mut sub_comp = match cur {
-                        SubBlock::Not(comp) => comp,
-                        SubBlock::IfBranch(comp,..) => comp,
-                        SubBlock::If(comp,..) => comp,
-                    };
+                    let mut cur = subs.pop().unwrap();
+                    let mut sub_comp = cur.get_mut_compilation();
                     if sub_comp.constraints.len() > 0 {
                         sub_comp.reassign_registers();
                         println!("    SubBlock");
                         for c in sub_comp.constraints.iter() {
                             println!("        {:?}", c);
                         }
-                        program_blocks.push(Block::new(&format!("{}|sub_block|{}", block_name, sub_ix), sub_comp.constraints));
+                        program_blocks.push(Block::new(&format!("{}|sub_block|{}", block_name, sub_ix), sub_comp.constraints.clone()));
                     }
-                    subs.extend(sub_comp.sub_blocks);
+                    subs.extend(sub_comp.sub_blocks.iter_mut());
                 }
                 println!("");
                 program_blocks.push(Block::new(&block_name, comp.constraints));

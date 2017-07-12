@@ -3,7 +3,7 @@
 //-------------------------------------------------------------------------
 
 // use std::collections::HashMap;
-use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange, Internable, Interner};
+use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange, Internable, Interner, AggregateFunction};
 use std::cmp;
 
 extern crate fnv;
@@ -682,48 +682,46 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn aggregate<F>(&mut self, interner:&mut Interner, group:Vec<Interned>, value:Vec<Internable>, round:Round, action:F, out:Vec<Interned>)
-        where F: Fn(&mut f32, Vec<Internable>) -> f32
-    {
+    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, value:Vec<Internable>, round:Round, action:AggregateFunction, out:Vec<Interned>) {
         let cur = self.index.entry(group).or_insert_with(|| IntermediateLevel::SumAggregate(BTreeMap::new()));
         if let &mut IntermediateLevel::SumAggregate(ref mut rounds) = cur {
             match rounds.entry(round) {
                 btree_map::Entry::Occupied(mut ent) => {
                     let cur_aggregate = ent.get_mut();
                     let prev = *cur_aggregate;
-                    *cur_aggregate = action(cur_aggregate, value.clone());
+                    *cur_aggregate = Internable::to_number(&action(prev, value.clone()));
                     if *cur_aggregate != prev {
                         // add a remove for the previous value
                         let mut to_remove = out.clone();
                         to_remove.push(interner.number_id(prev));
-                        insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round, count:1, negate:false });
+                        insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round, count:-1, negate:false });
                         // add an add for the new value
                         let mut to_add = out.clone();
                         to_add.push(interner.number_id(*cur_aggregate));
-                        insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:-1, negate:false });
+                        insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:1, negate:false });
                     }
                 }
                 btree_map::Entry::Vacant(ent) => {
-                    let cur_aggregate = action(&mut 0.0, value.clone());
+                    let cur_aggregate = Internable::to_number(&action(0.0, value.clone()));
                     ent.insert(cur_aggregate);
                     // add an add for the new value
                     let mut to_add = out.clone();
                     to_add.push(interner.number_id(cur_aggregate));
-                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:-1, negate:false });
+                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:1, negate:false });
                 }
             }
             for (k, v) in rounds.range_mut(round+1..) {
                 let prev = *v;
-                *v = action(v, value.clone());
+                *v = Internable::to_number(&action(*v, value.clone()));
                 if *v != prev {
                     // add a remove for the previous value
                     let mut to_remove = out.clone();
                     to_remove.push(interner.number_id(prev));
-                    insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round:*k, count:1, negate:false });
+                    insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round:*k, count:-1, negate:false });
                     // add an add for the new value
                     let mut to_add = out.clone();
                     to_add.push(interner.number_id(*v));
-                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round:*k, count:-1, negate:false });
+                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round:*k, count:1, negate:false });
                 }
             }
         }

@@ -214,6 +214,9 @@ impl Block {
                     get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
                     accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0 });
                 },
+                &Constraint::Aggregate {ref output, ..} => {
+                    outputs.push(Instruction::InsertIntermediate { next: 1, constraint: ix });
+                },
                 &Constraint::Filter {..} => {
                     accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0, });
                 },
@@ -1365,6 +1368,17 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
                 program.intermediates.buffer(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
+        &Constraint::Aggregate {ref group, ref params, ref output_key, ref add, ref remove, ..} => {
+            let ref mut interner = program.interner;
+            let resolved_group:Vec<Interned> = group.iter().map(|v| frame.resolve(v)).collect();
+            let resolved_params:Vec<Internable> = { params.iter().map(|v| interner.get_value(frame.resolve(v)).clone()).collect() };
+            let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
+            for &(round, count) in program.rounds.get_output_rounds().iter() {
+                // @TODO: do aggregates need to be buffered as well?
+                let action = if count < 0 { remove } else { add };
+                program.intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
+            }
+        },
         _ => {}
     };
     next
@@ -1516,6 +1530,7 @@ impl Interner {
 type FilterFunction = fn(&Internable, &Internable) -> bool;
 type Function = fn(Vec<&Internable>) -> Option<Internable>;
 type MultiFunction = fn(Vec<&Internable>) -> Option<Vec<Vec<Internable>>>;
+pub type AggregateFunction = fn(f32, Vec<Internable>) -> Internable;
 
 // #[derive(Clone)]
 #[allow(dead_code)]
@@ -1525,6 +1540,7 @@ pub enum Constraint {
     IntermediateScan {full_key:Vec<Field>, key: Vec<Field>, value: Vec<Field>, register_mask: u64, output_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     MultiFunction {op: String, outputs: Vec<Field>, func: MultiFunction, params: Vec<Field>, param_mask: u64, output_mask: u64},
+    Aggregate {op: String, output: Field, add: AggregateFunction, remove:AggregateFunction, group:Vec<Field>, projection:Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64, output_key:Vec<Field>},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
     InsertIntermediate {key:Vec<Field>, value:Vec<Field>, negate:bool},
@@ -1566,6 +1582,13 @@ impl Constraint {
                 vs.extend(params);
                 filter_registers(&vs)
             }
+            &Constraint::Aggregate {ref output, ref group, ref projection, ref params, ..} => {
+                let mut vs = vec![];
+                vs.extend(params);
+                vs.extend(group);
+                vs.extend(projection);
+                filter_registers(&vs)
+            }
             &Constraint::Filter {ref left, ref right, ..} => {
                 filter_registers(&vec![left, right])
             }
@@ -1588,6 +1611,7 @@ impl Constraint {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
             &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
+            &Constraint::Aggregate {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::IntermediateScan {ref value, ..} => { filter_registers(&value.iter().collect()) }
             _ => { vec![] }
         }
@@ -1629,6 +1653,20 @@ impl Constraint {
                 }
                 *param_mask = make_register_mask(params.iter().collect());
                 *output_mask = make_register_mask(outputs.iter().collect());
+            }
+            &mut Constraint::Aggregate {ref mut params, ref mut group, ref mut projection, ref mut param_mask, ref mut output_mask, ..} => {
+                {
+                    let mut vs = vec![];
+                    vs.extend(params.iter_mut());
+                    vs.extend(group.iter_mut());
+                    vs.extend(projection.iter_mut());
+                    replace_registers(&mut vs, lookup);
+                }
+                let mut vs2 = vec![];
+                vs2.extend(params.iter());
+                vs2.extend(group.iter());
+                vs2.extend(projection.iter());
+                *param_mask = make_register_mask(vs2);
             }
             &mut Constraint::Filter {ref mut left, ref mut right, ref mut param_mask, ..} => {
                 replace_registers(&mut vec![left, right], lookup);
@@ -1674,6 +1712,9 @@ impl Clone for Constraint {
             &Constraint::MultiFunction {ref op, ref outputs, ref func, ref params, ref param_mask, ref output_mask} => {
                 Constraint::MultiFunction{ op:op.clone(), outputs:outputs.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
             }
+            &Constraint::Aggregate {ref op, ref output, ref add, ref remove, ref group, ref projection, ref params, ref param_mask, ref output_mask, ref output_key} => {
+                Constraint::Aggregate { op:op.clone(), output:output.clone(), add:*add, remove:*remove, group:group.clone(), projection:params.clone(), params:params.clone(), param_mask:*param_mask, output_mask:*output_mask, output_key:output_key.clone() }
+            }
             &Constraint::Filter {ref op, ref func, ref left, ref right, ref param_mask} => {
                 Constraint::Filter{ op:op.clone(), func:*func, left:left.clone(), right:right.clone(), param_mask:*param_mask }
             }
@@ -1699,6 +1740,7 @@ impl fmt::Debug for Constraint {
             &Constraint::InsertIntermediate { ref key, ref value, negate } => { write!(f, "InsertIntermediate ({:?}, {:?}, negate? {:?})", key, value, negate) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
             &Constraint::MultiFunction { ref op, ref params, ref outputs, .. } => { write!(f, "{:?} = {}({:?})", outputs, op, params) }
+            &Constraint::Aggregate { ref op, ref group, ref projection, ref params, ref output_key, .. } => { write!(f, "{:?} = {}(per: {:?}, for: {:?}, {:?})", output_key, op, group, projection, params) }
             &Constraint::Filter { ref op, ref left, ref right, .. } => { write!(f, "Filter ( {:?} {} {:?} )", left, op, right) }
             &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
             &Constraint::Watch { ref name, ref registers } => { write!(f, "Watch {}{:?}", name, registers) }
@@ -1766,6 +1808,16 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
         _ => panic!("Unknown multi function: {:?}", op)
     };
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
+}
+
+pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Field) -> Constraint {
+    let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
+    let output_mask = make_register_mask(vec![&output]);
+    let (add, remove) = match op {
+        "gather/sum" => (aggregate_sum_add, aggregate_sum_remove),
+        _ => panic!("Unknown function: {:?}", op)
+    };
+    Constraint::Aggregate {op: op.to_string(), add, remove, group, projection, params, output, param_mask, output_mask, output_key:vec![], }
 }
 
 pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
@@ -1916,6 +1968,28 @@ pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
         }
     }
     Some(Internable::String(result))
+}
+
+//-------------------------------------------------------------------------
+// Aggregates
+//-------------------------------------------------------------------------
+
+pub fn aggregate_sum_add(current: f32, params: Vec<Internable>) -> Internable {
+    let value = current;
+    let result = match params.as_slice() {
+        &[ref param @ Internable::Number(_)] => { value + Internable::to_number(param) }
+        _ => value
+    };
+    Internable::from_number(result)
+}
+
+pub fn aggregate_sum_remove(current: f32, params: Vec<Internable>) -> Internable {
+    let value = current;
+    let result = match params.as_slice() {
+        &[ref param @ Internable::Number(_)] => { value - Internable::to_number(param) }
+        _ => value
+    };
+    Internable::from_number(result)
 }
 
 //-------------------------------------------------------------------------
