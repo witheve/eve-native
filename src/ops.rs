@@ -93,6 +93,7 @@ pub struct IntermediateChange {
     pub key: Vec<Interned>,
     pub count: Count,
     pub round: Round,
+    pub value_pos: usize,
     pub negate: bool,
 }
 
@@ -2635,6 +2636,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
         let mut remaining:Vec<(Vec<Interned>, IntermediateChange)> = state.intermediates.rounds.get_mut(&current_round).unwrap().drain().collect();
         while remaining.len() > 0 {
             for (_, cur) in remaining {
+                state.intermediates.update_active_rounds(&cur);
                 if let Some(ref actives) = block_info.intermediate_pipe_lookup.get(&cur.key[0]) {
                     frame.reset();
                     frame.intermediate = Some(cur);
@@ -2672,7 +2674,7 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
                 // want to do a real remove until *after* the pipes have run. Hence, the
                 // separation of insert and remove.
                 if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v);
+                    program.state.index.insert(change.e, change.a, change.v, change.round);
                 }
                 pipes.clear();
                 program.get_pipes(&program.block_info, change, &mut pipes);
@@ -2685,7 +2687,7 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
                 // as stated above, we want to do removes after so that when we look
                 // for AB and BA, they find the same values as when they were added.
                 if change.count < 0 {
-                    program.state.index.remove(change.e, change.a, change.v);
+                    program.state.index.remove(change.e, change.a, change.v, change.round);
                 }
             }
             intermediate_flow(frame, &mut program.state, &program.block_info, current_round);

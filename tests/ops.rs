@@ -1,7 +1,7 @@
 extern crate eve;
 
 use eve::ops::*;
-use eve::indexes::{DistinctIter};
+use eve::indexes::{DistinctIter, get_delta};
 
 #[test]
 fn test_check_bits() {
@@ -20,7 +20,16 @@ fn test_set_bit() {
 
 fn check_output_rounds(existing: Vec<(u32, i32)>, neue_rounds: Vec<i32>, expected: Vec<(u32, i32)>) {
     let mut holder = RoundHolder::new();
-    let iter = DistinctIter::new(&neue_rounds);
+    let mut active_rounds = vec![];
+    let mut total = 0;
+    for (round, count) in neue_rounds.iter().enumerate() {
+        let delta = get_delta(total, total + count);
+        if delta != 0 {
+            active_rounds.push(round as i32 * delta);
+        }
+        total += *count;
+    }
+    let iter = DistinctIter::new(&active_rounds);
     holder.output_rounds = existing;
     holder.compute_output_rounds(iter);
     assert_eq!(holder.get_output_rounds(), &expected);

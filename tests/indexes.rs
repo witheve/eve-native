@@ -6,10 +6,10 @@ use std::collections::HashMap;
 #[test]
 fn index_insert_check() {
     let mut index = HashIndex::new();
-    index.insert(1,1,1);
-    index.insert(1,2,1);
-    index.insert(2,3,1);
-    index.insert(1,3,100);
+    index.insert(1,1,1,0);
+    index.insert(1,2,1,0);
+    index.insert(2,3,1,0);
+    index.insert(1,3,100,0);
     assert!(index.check(1,1,1));
     assert!(index.check(1,2,1));
     assert!(index.check(2,3,1));
@@ -20,8 +20,8 @@ fn index_insert_check() {
 #[test]
 fn index_insert_check2() {
     let mut index = HashIndex::new();
-    index.insert(5,3,8);
-    index.insert(9,3,8);
+    index.insert(5,3,8,0);
+    index.insert(9,3,8,0);
     assert!(index.check(5,3,8));
     assert!(index.check(9,3,8));
     assert!(!index.check(100,300,100));
@@ -57,14 +57,14 @@ fn index_level_remove() {
 #[test]
 fn index_remove() {
     let mut index = HashIndex::new();
-    index.insert(1,1,1);
-    index.insert(2,1,1);
+    index.insert(1,1,1,0);
+    index.insert(2,1,1,0);
     assert!(index.check(1,1,1));
     assert!(index.check(2,1,1));
     assert!(!index.check(3,3,3));
-    index.remove(1,1,1);
+    index.remove(1,1,1,0);
     assert!(!index.check(1,1,1));
-    index.remove(2,1,1);
+    index.remove(2,1,1,0);
     assert!(!index.check(2,1,1));
 }
 
@@ -92,12 +92,12 @@ fn index_find_values() {
 fn index_propose() {
     let mut index = HashIndex::new();
     let mut pool = EstimateIterPool::new();
-    index.insert(1,1,1);
-    index.insert(2,1,1);
-    index.insert(2,1,7);
-    index.insert(3,1,1);
-    index.insert(2,3,1);
-    index.insert(1,3,100);
+    index.insert(1,1,1,0);
+    index.insert(2,1,1,0);
+    index.insert(2,1,7,0);
+    index.insert(3,1,1,0);
+    index.insert(2,3,1,0);
+    index.insert(1,3,100,0);
     let mut proposal1 = pool.get();
     index.propose(&mut proposal1, 0,1,1);
     assert_eq!(proposal1.estimate(), 3);
@@ -134,6 +134,11 @@ fn test_distinct(counts: Vec<(u32, i32)>, expected: Vec<(u32, i32)>) {
         println!("distinct: {:?}", distinct);
         let cur = if final_results.contains_key(&distinct.round) { final_results[&distinct.round] } else { 0 };
         final_results.insert(distinct.round, cur + distinct.count);
+        if distinct.count > 0 {
+            index.insert(distinct.e, distinct.a, distinct.v, distinct.round);
+        } else {
+            index.remove(distinct.e, distinct.a, distinct.v, distinct.round);
+        }
     }
 
     for (round, count) in index.distinct_iter(changes[0].e, changes[0].a, changes[0].v) {
@@ -531,7 +536,16 @@ fn round_counts_to_distinct_counts(input: &Vec<(usize, i32)>) -> Vec<i32> {
         }
         counts[round] += count;
     }
-    counts
+    let mut active_rounds = vec![];
+    let mut total = 0;
+    for (round, count) in counts.iter().enumerate() {
+        let delta = get_delta(total, total + count);
+        if delta != 0 {
+            active_rounds.push(round as i32 * delta);
+        }
+        total += *count;
+    }
+    active_rounds
 }
 
 fn test_anti_distinct(left: Vec<(usize, i32)>, right: Vec<(usize, i32)>, expected: Vec<(u32, i32)>) {

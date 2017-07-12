@@ -355,6 +355,29 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_roun
 pub struct RoundEntry {
     inserted: bool,
     rounds: Vec<i32>,
+    active_rounds: Vec<i32>,
+}
+
+impl RoundEntry {
+    pub fn update_active(&mut self, round:Round, count:Count) {
+        if count > 0 {
+            let pos = match self.active_rounds.binary_search(&(round as i32)) {
+                Ok(_) => panic!("Adding a round that is already in the index: {:?}", round),
+                Err(pos) => pos,
+            };
+            self.active_rounds.insert(pos, round as i32);
+        } else {
+            let (pos, remove) = match self.active_rounds.binary_search(&(round as i32)) {
+                Ok(pos) => (pos, true),
+                Err(pos) => (pos, false),
+            };
+            if remove {
+                self.active_rounds.remove(pos);
+            } else {
+                self.active_rounds.insert(pos, (round as i32) * -1);
+            }
+        }
+    }
 }
 
 pub struct HashIndex {
@@ -369,16 +392,17 @@ impl HashIndex {
         HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, empty: vec![] }
     }
 
-    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
         let added = match self.eavs.entry((e,a,v)) {
             Entry::Occupied(mut entry) => {
                 let info = entry.get_mut();
                 let needs_insert = info.inserted;
                 info.inserted = true;
+                info.update_active(round, 1);
                 !needs_insert
             }
             Entry::Vacant(o) => {
-                o.insert(RoundEntry { inserted: true, rounds: vec![] });
+                o.insert(RoundEntry { inserted: true, rounds: vec![], active_rounds:vec![round as i32] });
                 true
             },
 
@@ -401,10 +425,15 @@ impl HashIndex {
         added
     }
 
-    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
         let removed = match self.eavs.entry((e,a,v)) {
-            Entry::Occupied(entry) => {
-                if !entry.get().rounds.iter().any(|x| *x != 0) {
+            Entry::Occupied(mut entry) => {
+                let len = {
+                    let info = entry.get_mut();
+                    info.update_active(round, -1);
+                    info.active_rounds.len()
+                };
+                if len == 0 {
                     entry.remove_entry();
                     true
                 } else {
@@ -485,7 +514,7 @@ impl HashIndex {
     pub fn insert_distinct(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
         let key = (e, a, v);
         let needs_insert = {
-            let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] });
+            let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
             let ref mut counts = info.rounds;
             ensure_len(counts, (round + 1) as usize);
             counts[round as usize] += count;
@@ -495,9 +524,9 @@ impl HashIndex {
         };
         if needs_insert {
             if count > 0 {
-                self.insert(e,a,v);
+                self.insert(e,a,v,round);
             } else if count < 0 {
-                self.remove(e,a,v);
+                self.remove(e,a,v,round);
             }
         }
     }
@@ -505,7 +534,7 @@ impl HashIndex {
     pub fn distinct_iter(&self, e:Interned, a:Interned, v:Interned) -> DistinctIter {
         let key = (e, a, v);
         match self.eavs.get(&key) {
-            Some(&RoundEntry { ref rounds, .. }) => DistinctIter::new(rounds),
+            Some(&RoundEntry { ref active_rounds, .. }) => DistinctIter::new(active_rounds),
             None => DistinctIter::new(&self.empty),
         }
     }
@@ -515,7 +544,7 @@ impl HashIndex {
         let insert = |round, delta| {
             rounds.insert(input.with_round_count(round, delta));
         };
-        let ref mut counts = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds;
+        let ref mut counts = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] }).rounds;
         generic_distinct(counts, input.count, input.round, insert);
     }
 }
@@ -526,14 +555,13 @@ impl HashIndex {
 
 pub struct DistinctIter<'a> {
     ix: usize,
-    total: i32,
     len: usize,
     rounds: &'a Vec<i32>,
 }
 
 impl<'a> DistinctIter<'a> {
     pub fn new(rounds:&'a Vec<i32>) -> DistinctIter<'a> {
-        DistinctIter { rounds, ix: 0, total: 0, len: rounds.len() }
+        DistinctIter { rounds, ix: 0, len: rounds.len() }
     }
 }
 
@@ -541,23 +569,11 @@ impl<'a> Iterator for DistinctIter<'a> {
     type Item = (Round, Count);
 
     fn next(&mut self) -> Option<(Round, Count)> {
-        let mut ix = self.ix;
-        let mut total = self.total;
-        let ref mut rounds = self.rounds;
-        let mut delta = 0;
-        while ix < self.len && delta == 0 {
-            let next = rounds[ix];
-            delta = get_delta(total, total + next);
-            total += next;
-            ix += 1;
-        }
-        self.ix = ix;
-        self.total = total;
-        if delta == 0 {
-            None
-        } else {
-            Some(((ix - 1) as Round, delta))
-        }
+        if self.ix >= self.len { return None; }
+        let cur = self.rounds[self.ix];
+        self.ix += 1;
+        let count = if cur < 0 { -1 } else { 1 };
+        Some((cur.abs() as u32, count))
     }
 }
 
@@ -584,25 +600,26 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
                          full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>,
                          round:Round, count:Count, negate:bool) {
     let cloned = full_key.clone();
+    let value_pos = key.len();
     let insert = |round, delta| {
         // println!("Intermediate! {:?} {:?} {:?}", cloned, round, delta);
         match rounds.entry(round) {
             Entry::Occupied(mut ent) => {
                 let cur = ent.get_mut();
                 let val = cur.entry(cloned.clone()).or_insert_with(|| {
-                    IntermediateChange { key:cloned.clone(), round, count:0, negate }
+                    IntermediateChange { key:cloned.clone(), round, count:0, negate, value_pos }
                 });
                 val.count += delta;
             }
             Entry::Vacant(ent) => {
                 let mut neue = HashMap::default();
-                neue.insert(cloned.clone(), IntermediateChange { key:cloned.clone(), round, count:delta, negate });
+                neue.insert(cloned.clone(), IntermediateChange { key:cloned.clone(), round, count:delta, negate, value_pos });
                 ent.insert(neue);
             }
         }
     };
     let entry = index.entry(key.clone()).or_insert_with(|| {
-        let entry = RoundEntry { inserted:false, rounds: vec![] };
+        let entry = RoundEntry { inserted:false, rounds: vec![], active_rounds: vec![] };
         if value.len() == 0 {
             IntermediateLevel::KeyOnly(entry)
         } else {
@@ -615,7 +632,7 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
         &mut IntermediateLevel::KeyOnly(ref mut entry) => &mut entry.rounds,
         &mut IntermediateLevel::Value(ref mut lookup) => {
             &mut lookup.entry(value.clone())
-                .or_insert_with(|| RoundEntry { inserted:false, rounds: vec![] }).rounds
+                .or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] }).rounds
         }
         &mut IntermediateLevel::SumAggregate(..) => {
             unimplemented!();
@@ -666,10 +683,10 @@ impl IntermediateIndex {
         match self.index.get(key) {
             Some(level) => {
                 match level {
-                    &IntermediateLevel::KeyOnly(ref entry) => DistinctIter::new(&entry.rounds),
+                    &IntermediateLevel::KeyOnly(ref entry) => DistinctIter::new(&entry.active_rounds),
                     &IntermediateLevel::Value(ref lookup) => {
                         match lookup.get(value) {
-                            Some(ref entry) => DistinctIter::new(&entry.rounds),
+                            Some(ref entry) => DistinctIter::new(&entry.active_rounds),
                             None => DistinctIter::new(&self.empty),
                         }
                     }
@@ -693,12 +710,14 @@ impl IntermediateIndex {
                     if *cur_aggregate != prev {
                         // add a remove for the previous value
                         let mut to_remove = out.clone();
-                        to_remove.push(interner.number_id(prev));
-                        insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round, count:-1, negate:false });
+                        let prev_interned = interner.number_id(prev);
+                        to_remove.push(prev_interned);
+                        self.round_buffer.push((to_remove, out.clone(), vec![prev_interned], round, -1, false));
                         // add an add for the new value
                         let mut to_add = out.clone();
-                        to_add.push(interner.number_id(*cur_aggregate));
-                        insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:1, negate:false });
+                        let cur_interned = interner.number_id(*cur_aggregate);
+                        to_add.push(cur_interned);
+                        self.round_buffer.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
                     }
                 }
                 btree_map::Entry::Vacant(ent) => {
@@ -706,8 +725,9 @@ impl IntermediateIndex {
                     ent.insert(cur_aggregate);
                     // add an add for the new value
                     let mut to_add = out.clone();
-                    to_add.push(interner.number_id(cur_aggregate));
-                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round, count:1, negate:false });
+                    let cur_interned = interner.number_id(cur_aggregate);
+                    to_add.push(cur_interned);
+                    self.round_buffer.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
                 }
             }
             for (k, v) in rounds.range_mut(round+1..) {
@@ -716,12 +736,14 @@ impl IntermediateIndex {
                 if *v != prev {
                     // add a remove for the previous value
                     let mut to_remove = out.clone();
-                    to_remove.push(interner.number_id(prev));
-                    insert_change(&mut self.rounds, IntermediateChange { key:to_remove, round:*k, count:-1, negate:false });
+                    let prev_interned = interner.number_id(prev);
+                    to_remove.push(prev_interned);
+                    self.round_buffer.push((to_remove, out.clone(), vec![prev_interned], round, -1, false));
                     // add an add for the new value
                     let mut to_add = out.clone();
-                    to_add.push(interner.number_id(*v));
-                    insert_change(&mut self.rounds, IntermediateChange { key:to_add, round:*k, count:1, negate:false });
+                    let cur_interned = interner.number_id(*v);
+                    to_add.push(cur_interned);
+                    self.round_buffer.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
                 }
             }
         }
@@ -744,6 +766,35 @@ impl IntermediateIndex {
                 }
             }
             _ => panic!("Non intermediate iterator passed to intermediate propose")
+        }
+    }
+
+    pub fn update_active_rounds(&mut self, change: &IntermediateChange) {
+        let (key, value) = change.key.split_at(change.value_pos);
+        let count = change.count;
+        let should_remove = match self.index.get_mut(key) {
+            Some(&mut IntermediateLevel::KeyOnly(ref mut info)) => {
+                info.update_active(change.round, count);
+                info.active_rounds.len() == 0
+            }
+            Some(&mut IntermediateLevel::Value(ref mut lookup)) => {
+                let remove = match lookup.get_mut(value) {
+                    Some(ref mut info) => {
+                        info.update_active(change.round, count);
+                        info.active_rounds.len() == 0
+                    },
+                    None => panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change)
+                };
+                if remove {
+                    lookup.remove(value);
+                }
+                lookup.len() == 0
+            }
+            Some(&mut IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
+            None => { panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change) }
+        };
+        if should_remove {
+            self.index.remove(key);
         }
     }
 
