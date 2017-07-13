@@ -22,6 +22,7 @@ ws = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
+walkdir = "1"
 
 [dependencies.nom]
 version = "^3.1"

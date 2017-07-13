@@ -1,4 +1,5 @@
 extern crate time;
+extern crate walkdir;
 
 use nom::{digit, anychar, IResult, Err};
 use std::str::{self, FromStr};
@@ -8,8 +9,9 @@ use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_s
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
           make_multi_function, make_aggregate, Block};
 use std::io::prelude::*;
-use std::fs::File;
+use std::fs::{self, File};
 use std::cmp::{self};
+use self::walkdir::WalkDir;
 
 struct FunctionInfo {
     is_multi: bool,
@@ -217,21 +219,17 @@ impl<'a> Node<'a> {
             }
             comp.provided_registers = provided;
             comp.required_fields = comp.required_fields.iter().map(|v| unified_registers.get(v).unwrap().clone()).collect();
-            println!("REQUIRED: {:?}", comp.required_fields);
         }
 
 
         for sub_block in comp.sub_blocks.iter_mut() {
             let sub_comp = sub_block.get_mut_compilation();
-            println!("   VARS {:?}", comp.vars);
-            println!("   SUB_VARS {:?}", sub_comp.vars);
             // transfer values
             for (k, v) in comp.vars.iter() {
                 match sub_comp.vars.entry(k.to_string()) {
                     Entry::Occupied(o) => {
                         let reg = o.get();
                         sub_comp.equalities.push((Field::Register(*v), Field::Register(*reg)));
-                        println!("SETTING EQUAL: {:?}", (Field::Register(*v), Field::Register(*reg)));
                     }
                     Entry::Vacant(o) => {
                         o.insert(*v);
@@ -517,7 +515,6 @@ impl<'a> Node<'a> {
                 }
             },
             &Node::RecordFunction { ref op, ref params, ref outputs} => {
-                println!("COMPILING: {:?}", self);
                 let info = FUNCTION_INFO.get(*op).unwrap();
                 let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
                 let mut cur_params = vec![Field::Value(0); info.params.len()];
@@ -598,7 +595,6 @@ impl<'a> Node<'a> {
                         _ => { }
                     }
                 }
-                println!("CUR OUTPUTS {:?}", cur_outputs);
                 let final_result = Some(cur_outputs[0].clone());
                 if info.is_multi {
                     cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
@@ -1164,8 +1160,6 @@ impl Compilation {
                 });
             }
         }
-        println!("REG MATCHUP: {:?}", regs);
-        println!("VAR LOOKUP: {:?}", self.vars);
         for c in self.constraints.iter_mut() {
             c.replace_registers(&regs);
         }
@@ -1689,10 +1683,31 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
 }
 
 pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
-    let mut file = File::open(path).expect("Unable to open the file");
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).expect("Unable to read the file");
-    parse_string(program, &contents, path)
+    let metadata = fs::metadata(path).expect(&format!("Invalid path: {:?}", path));
+    let mut paths = vec![];
+    if metadata.is_file() {
+        paths.push(path.to_string());
+    } else if metadata.is_dir() {
+       for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+           if entry.file_type().is_file() {
+               let ext = entry.path().extension().map(|x| x.to_str().unwrap());
+               match ext {
+                   Some("eve") | Some("md") => {
+                       paths.push(entry.path().to_str().unwrap().to_string());
+                   },
+                   _ => {}
+               }
+           }
+       }
+    }
+    let mut blocks = vec![];
+    for cur_path in paths {
+        let mut file = File::open(&cur_path).expect("Unable to open the file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).expect("Unable to read the file");
+        blocks.extend(parse_string(program, &contents, &cur_path).into_iter());
+    }
+    blocks
 }
 
 #[test]

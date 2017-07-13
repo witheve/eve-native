@@ -16,15 +16,14 @@ use std::env;
 
 fn main() {
     let mut program = Program::new();
-    let mut file = "examples/test.eve".to_string();
-    if let Some(arg1) = env::args().nth(1) {
-        file = arg1;
-    }
-    let blocks = parse_file(&mut program, &file);
     let outgoing = program.outgoing.clone();
     program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
-    for block in blocks {
-        program.raw_block(block);
+
+    for file in env::args().skip(1) {
+        let blocks = parse_file(&mut program, &file);
+        for block in blocks {
+            program.raw_block(block);
+        }
     }
     println!("Starting run loop.");
     loop {
