@@ -8,9 +8,8 @@
 #![feature(placement_new_protocol)]
 #![feature(fused)]
 #![feature(alloc)]
-#![feature(heap_api)]
-#![feature(oom)]
 #![feature(slice_patterns)]
+#![feature(allocator_api)]
 
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 extern {}
