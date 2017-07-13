@@ -1,0 +1,15 @@
+search
+  t = [#system/timer resolution]
+watch system/timer
+  (t, resolution)
+end
+
+search
+  t = [#system/timer/change for hours minutes seconds]
+commit
+  for.minutes := minutes
+  for.seconds := seconds
+  for.hours := hours
+  t := none
+end
+

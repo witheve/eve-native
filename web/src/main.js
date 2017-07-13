@@ -9,5 +9,4 @@ socket.onopen = () => {
 function send(socket, type, content) {
   let thing = {};
   thing[type] = content;
-  socket.send(JSON.stringify(thing));
-}
+  socket.send(JSON.stringify(thing))}

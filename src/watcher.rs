@@ -9,9 +9,8 @@ use futures::*;
 use std::time::*;
 use indexes::{WatchDiff};
 use ops::{Internable, Interner, RawChange};
-use std::sync::mpsc::{SyncSender};
+use std::sync::mpsc::{self, SyncSender};
 use std::thread::{self};
-use std::sync::mpsc;
 
 pub trait Watcher {
     fn on_diff(&self, interner:&Interner, diff:WatchDiff);

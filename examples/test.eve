@@ -27,18 +27,3 @@ Draw a clock using SVG. We find the angle for each hand using time and let the `
         [#clock-hand #minute-hand | sort: 3, degrees: 6 * minutes, length: 40, stroke: "#023963"]
         [#clock-hand #second-hand | sort: 4, degrees: 6 * seconds, length: 40, stroke: "#ce0b46"]]
     end
-
-    search
-      t = [#system/timer resolution]
-    watch system/timer
-      (t, resolution)
-    end
-
-    search
-      t = [#system/timer/change for hours minutes seconds]
-    commit
-      for.minutes := minutes
-      for.seconds := seconds
-      for.hours := hours
-      t := none
-    end
