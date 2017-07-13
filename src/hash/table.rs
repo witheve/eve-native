@@ -9,7 +9,7 @@
 // except according to those terms.
 
 extern crate alloc;
-use self::alloc::heap::{allocate, deallocate};
+use self::alloc::heap::{Heap, Alloc, Layout};
 
 use std::cmp;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -783,10 +783,8 @@ impl<K, V> RawTable<K, V> {
                     .expect("capacity overflow"),
                 "capacity overflow");
 
-        let buffer = allocate(size, alignment);
-        if buffer.is_null() {
-            self::alloc::oom()
-        }
+        let buffer = Heap.alloc(Layout::from_size_align(size, alignment).unwrap())
+            .unwrap_or_else(|e| Heap.oom(e));
 
         let hashes = buffer.offset(hash_offset as isize) as *mut HashUint;
 
@@ -1193,7 +1191,8 @@ unsafe impl<#[may_dangle] K, #[may_dangle] V> Drop for RawTable<K, V> {
         debug_assert!(!oflo, "should be impossible");
 
         unsafe {
-            deallocate(self.hashes.ptr() as *mut u8, size, align);
+            Heap.dealloc(self.hashes.ptr() as *mut u8,
+                         Layout::from_size_align(size, align).unwrap());
             // Remember how everything was allocated out of one buffer
             // during initialization? We only need one call to free here.
         }
