@@ -131,6 +131,23 @@ impl SubBlock {
             &mut SubBlock::If(ref mut comp, ..) => comp,
         }
     }
+    pub fn get_output_registers(&self) -> Vec<Field> {
+        match self {
+            &SubBlock::Aggregate(_, ref outs, ..) => outs.clone(),
+            &SubBlock::If(_, ref outs, ..) => outs.clone(),
+            _ => vec![],
+        }
+    }
+
+    pub fn get_all_registers(&self) -> Vec<Field> {
+        match self {
+            &SubBlock::Not(ref comp) => comp.get_all_registers(),
+            &SubBlock::Aggregate(ref comp, ..) => comp.get_all_registers(),
+            &SubBlock::AggregateScan(ref comp) => comp.get_all_registers(),
+            &SubBlock::IfBranch(ref comp, ..) => comp.get_all_registers(),
+            &SubBlock::If(ref comp, ..) => comp.get_all_registers(),
+        }
+    }
 }
 
 impl<'a> Node<'a> {
@@ -429,6 +446,8 @@ impl<'a> Node<'a> {
             &Node::AttributeAccess(ref items) => {
                 let mut final_var = "attr_access".to_string();
                 let mut parent = cur_block.get_unified_register(items[0]);
+                final_var.push_str("|");
+                final_var.push_str(items[0]);
                 for item in items[1..].iter() {
                     final_var.push_str("|");
                     final_var.push_str(item);
@@ -853,50 +872,95 @@ impl<'a> Node<'a> {
                     s.compile(interner, cur_block);
                 };
                 update.compile(interner, cur_block);
-                for (ix, mut sub) in cur_block.sub_blocks.iter_mut().enumerate() {
-                    let ancestors = cur_block.constraints.clone();
-                    self.sub_block(interner, sub, ix, &mut cur_block.constraints, &ancestors);
-                }
+
+                self.sub_blocks(interner, cur_block);
                 None
             },
             _ => panic!("Trying to compile something we don't know how to compile {:?}", self)
         }
     }
 
-    pub fn sub_block(&self, interner:&mut Interner, block:&mut SubBlock, ix:usize, parent_constraints: &mut Vec<Constraint>, ancestor_constraints: &Vec<Constraint>) -> HashSet<Field> {
+    pub fn sub_blocks(&self, interner:&mut Interner, parent:&mut Compilation) {
+        // gather all the registers that we know about at the root
+        let mut parent_registers = HashSet::new();
+        for constraint in parent.constraints.iter() {
+            parent_registers.extend(constraint.get_registers().iter());
+        }
+        for sub_block in parent.sub_blocks.iter() {
+            parent_registers.extend(sub_block.get_output_registers().iter());
+        }
+
+        let ref mut ancestor_constraints = parent.constraints;
+
+        // go through the sub blocks to determine what their inputs are and generate their
+        // outputs
+        for (ix, sub_block) in parent.sub_blocks.iter_mut().enumerate() {
+            let mut sub_registers = HashSet::new();
+            sub_registers.extend(sub_block.get_all_registers().iter());
+            let inputs = parent_registers.intersection(&sub_registers).cloned().collect();
+            ancestor_constraints.push(self.sub_block_output(interner, sub_block, ix, &inputs));
+        }
+        // now do it again, but this time compile
+        for (ix, sub_block) in parent.sub_blocks.iter_mut().enumerate() {
+            let mut sub_registers = HashSet::new();
+            sub_registers.extend(sub_block.get_all_registers().iter());
+            let inputs = parent_registers.intersection(&sub_registers).cloned().collect();
+            self.compile_sub_block(interner, sub_block, ix, &inputs, &ancestor_constraints);
+        }
+
+    }
+
+    pub fn sub_block_output(&self, interner:&mut Interner, block:&mut SubBlock, ix:usize, inputs:&HashSet<Field>) -> Constraint {
         match block {
             &mut SubBlock::Not(ref mut cur_block) => {
-                let mut inputs = cur_block.get_inputs(parent_constraints);
-                if cur_block.sub_blocks.len() > 0 {
-                    let mut next_ancestors = ancestor_constraints.clone();
-                    next_ancestors.extend(cur_block.constraints.iter().cloned());
-                    for sub in cur_block.sub_blocks.iter_mut() {
-                        let sub_inputs = self.sub_block(interner, sub, ix, &mut cur_block.constraints, &mut next_ancestors);
-                        inputs.extend(sub_inputs);
-                    }
-                }
-                let mut related = get_input_constraints(&inputs, ancestor_constraints);
+                let block_name = cur_block.block_name.to_string();
+                let tag_value = interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
+                let mut key_attrs = vec![tag_value];
+                key_attrs.extend(inputs.iter());
+                make_anti_scan(key_attrs)
+            }
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, _, _, ref output) => {
+                let block_name = cur_block.block_name.to_string();
+                let result_id = interner.string(&format!("{}|sub_block|aggregate_result|{}", block_name, ix));
+                let mut result_key = vec![result_id];
+                result_key.extend(group.iter());
+                make_intermediate_scan(result_key, vec![output.clone()])
+            }
+            &mut SubBlock::AggregateScan(..) => { panic!("Tried directly compiling an aggregate scan") }
+            &mut SubBlock::IfBranch(..) => { panic!("Tried directly compiling an if branch") }
+            &mut SubBlock::If(ref mut cur_block, ref output_registers, ..) => {
+                let block_name = cur_block.block_name.to_string();
+                let if_id = interner.string(&format!("{}|sub_block|if|{}", block_name, ix));
+                let mut parent_if_key = vec![if_id];
+                parent_if_key.extend(inputs.iter());
+                make_intermediate_scan(parent_if_key, output_registers.clone())
+            }
+        }
+
+    }
+
+    pub fn compile_sub_block(&self, interner:&mut Interner, block:&mut SubBlock, ix:usize, inputs:&HashSet<Field>, ancestor_constraints: &Vec<Constraint>) {
+        let output_constraint = self.sub_block_output(interner, block, ix, inputs);
+        match block {
+            &mut SubBlock::Not(ref mut cur_block) => {
+                self.sub_blocks(interner, cur_block);
+                let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
+                let mut related = get_input_constraints(&inputs, &valid_ancestors);
                 related.extend(cur_block.constraints.iter().cloned());
                 let block_name = cur_block.block_name.to_string();
                 let tag_value = interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
                 let mut key_attrs = vec![tag_value];
                 key_attrs.extend(inputs.iter());
-                parent_constraints.push(make_anti_scan(key_attrs.clone()));
                 related.push(make_intermediate_insert(key_attrs, vec![], true));
                 cur_block.constraints = related;
-                inputs
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, ref output) => {
-                // TODO: Aggregates that rely on chooses probably aren't going to do the right
-                // thing here
-                let inputs = cur_block.get_inputs(parent_constraints);
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, ..) => {
                 let block_name = cur_block.block_name.to_string();
 
                 // generate the scan block
                 let mut scan_block = Compilation::new_child(cur_block);
-                // TODO: This needs to be fully transitive, anything that affects any of the inputs
-                // needs to be included too
-                let mut related = get_input_constraints_transitive(&inputs, ancestor_constraints);
+                let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
+                let mut related = get_input_constraints_transitive(&inputs, &valid_ancestors);
                 let scan_id = interner.string(&format!("{}|sub_block|aggregate_scan|{}", block_name, ix));
                 let mut key_attrs = vec![scan_id.clone()];
                 key_attrs.extend(group.iter());
@@ -920,42 +984,15 @@ impl<'a> Node<'a> {
                    output_key.extend(result_key.iter());
                 } else { panic!("Aggregate block with a non-aggregate constraint") }
                 cur_block.constraints.push(make_intermediate_scan(scan_key, vec![]));
-
-                // have the parent look for the aggregate's value
-                parent_constraints.push(make_intermediate_scan(result_key, vec![output.clone()]));
-                inputs
             }
             &mut SubBlock::AggregateScan(..) => { panic!("Tried directly compiling an aggregate scan") }
             &mut SubBlock::IfBranch(..) => { panic!("Tried directly compiling an if branch") }
-            &mut SubBlock::If(ref mut cur_block, ref output_registers, exclusive) => {
-                // TODO: Ifs that rely on other ifs probably aren't going to do the right
-                // thing here
-
-                // find the inputs for all of the branches
-                let mut all_inputs = HashSet::new();
-                for sub in cur_block.sub_blocks.iter_mut() {
-                    let branch_block = sub.get_mut_compilation();
-                    let mut inputs = branch_block.get_inputs(parent_constraints);
-                    if branch_block.sub_blocks.len() > 0 {
-                        let mut next_ancestors = ancestor_constraints.clone();
-                        next_ancestors.extend(branch_block.constraints.iter().cloned());
-                        for sub in branch_block.sub_blocks.iter_mut() {
-                            let sub_inputs = self.sub_block(interner, sub, ix, &mut branch_block.constraints, &mut next_ancestors);
-                            inputs.extend(sub_inputs);
-                        }
-                    }
-                    all_inputs.extend(inputs);
-                    all_inputs.extend(branch_block.required_fields.iter());
-                }
+            &mut SubBlock::If(ref mut cur_block, _, exclusive) => {
                 // get related constraints for all the inputs
-                let related = get_input_constraints(&all_inputs, ancestor_constraints);
+                let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
+                let related = get_input_constraints(&inputs, &valid_ancestors);
                 let block_name = cur_block.block_name.to_string();
                 let if_id = interner.string(&format!("{}|sub_block|if|{}", block_name, ix));
-
-                // add an intermediate scan to the parent for the results of the branches
-                let mut parent_if_key = vec![if_id];
-                parent_if_key.extend(all_inputs.iter());
-                parent_constraints.push(make_intermediate_scan(parent_if_key, output_registers.clone()));
 
                 // fix up the blocks for each branch
                 let num_branches = cur_block.sub_blocks.len();
@@ -966,26 +1003,26 @@ impl<'a> Node<'a> {
                     if let &mut SubBlock::IfBranch(ref mut branch_block, ref output_fields) = sub {
                         // add the related constraints to each branch
                         branch_block.constraints.extend(related.iter().map(|v| v.clone()));
+                        self.sub_blocks(interner, branch_block);
                         if exclusive {
                             // Add an intermediate
                             if branch_ix + 1 < num_branches {
                                 let mut branch_key = vec![branch_ids[branch_ix]];
-                                branch_key.extend(all_inputs.iter());
+                                branch_key.extend(inputs.iter());
                                 branch_block.constraints.push(make_intermediate_insert(branch_key, vec![], true));
                             }
 
                             for prev_branch in 0..branch_ix {
                                 let mut key_attrs = vec![branch_ids[prev_branch]];
-                                key_attrs.extend(all_inputs.iter());
+                                key_attrs.extend(inputs.iter());
                                 branch_block.constraints.push(make_anti_scan(key_attrs));
                             }
                         }
                         let mut if_key = vec![if_id];
-                        if_key.extend(all_inputs.iter());
+                        if_key.extend(inputs.iter());
                         branch_block.constraints.push(make_intermediate_insert(if_key, output_fields.clone(), false));
                     }
                 }
-                all_inputs
             }
         }
     }
@@ -1060,7 +1097,7 @@ impl Compilation {
 
     pub fn new_child(parent:&Compilation) -> Compilation {
         let mut child = Compilation::new(parent.block_name.to_string());
-        child.id = parent.id + 10000;
+        child.id = parent.id + 10000 + (1000 * parent.sub_blocks.len());
         child.is_child = true;
         child
     }
@@ -1077,6 +1114,17 @@ impl Compilation {
             Some(&Field::Register(cur)) => Field::Register(cur),
             _ => reg.clone()
         }
+    }
+
+    pub fn get_all_registers(&self) -> Vec<Field> {
+        let mut results = self.required_fields.clone();
+        for constraint in self.constraints.iter() {
+            results.extend(constraint.get_registers().iter());
+        }
+        for sub_block in self.sub_blocks.iter() {
+            results.extend(sub_block.get_all_registers().iter());
+        }
+        results
     }
 
     pub fn get_inputs(&self, haystack: &Vec<Constraint>) -> HashSet<Field> {
@@ -1116,6 +1164,8 @@ impl Compilation {
                 });
             }
         }
+        println!("REG MATCHUP: {:?}", regs);
+        println!("VAR LOOKUP: {:?}", self.vars);
         for c in self.constraints.iter_mut() {
             c.replace_registers(&regs);
         }
@@ -1445,7 +1495,8 @@ named!(if_branch<Node<'a>>,
                        not_form |
                        inequality |
                        record |
-                       equality
+                       equality |
+                       attribute_access
                        ))) >>
            sp!(tag!("then")) >>
            result: alt_complete!(expr | expr_set) >>
@@ -1480,7 +1531,8 @@ named!(search_section<Node<'a>>,
                             if_expression |
                             inequality |
                             record |
-                            equality
+                            equality |
+                            attribute_access
                         ))) >>
            (Node::Search(items))));
 

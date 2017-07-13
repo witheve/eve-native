@@ -17,7 +17,7 @@ macro_rules! valid (($blocks:tt) => ({
 
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=");
+    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=").replace(" . ", ".");
     let blocks = parse_string(&mut program, &stringy, "test");
     for block in blocks {
         program.raw_block(block);
@@ -910,6 +910,28 @@ test!(base_aggregate_transitive_dependencies, {
 
     search
         [#total total:1]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_transitive_choose, {
+    search
+        foo = [#foo]
+        total = gather!/sum![value, for:foo]
+        value = if foo.value then foo.value
+                else 10
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo]
+        [#foo value: 8]
+    end
+
+    search
+        [#total total:18]
     bind
         [#success]
     end
