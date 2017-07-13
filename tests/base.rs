@@ -894,3 +894,24 @@ test!(base_aggregate_average_remove, {
     end
 });
 
+test!(base_aggregate_transitive_dependencies, {
+    search
+        foo = [#foo value]
+        value > 4
+        total = gather!/count![for:foo]
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 8]
+    end
+
+    search
+        [#total total:1]
+    bind
+        [#success]
+    end
+});
+

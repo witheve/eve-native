@@ -896,7 +896,7 @@ impl<'a> Node<'a> {
                 let mut scan_block = Compilation::new_child(cur_block);
                 // TODO: This needs to be fully transitive, anything that affects any of the inputs
                 // needs to be included too
-                let mut related = get_input_constraints(&inputs, ancestor_constraints);
+                let mut related = get_input_constraints_transitive(&inputs, ancestor_constraints);
                 let scan_id = interner.string(&format!("{}|sub_block|aggregate_scan|{}", block_name, ix));
                 let mut key_attrs = vec![scan_id.clone()];
                 key_attrs.extend(group.iter());
@@ -1006,6 +1006,36 @@ pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>)
         }
     }
     related
+}
+
+pub fn get_input_constraints_transitive(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
+    let mut transitive_needles = needles.clone();
+    let mut related = HashSet::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let start_size = related.len();
+        for hay in haystack {
+            let mut found = false;
+            let outs = hay.get_filtering_registers();
+            for out in outs.iter() {
+                if transitive_needles.contains(out) {
+                    found = true;
+                }
+            }
+            if found {
+                for filtering in hay.get_filtering_registers() {
+                    transitive_needles.insert(filtering);
+                }
+                related.insert(hay.clone());
+            }
+        }
+        if related.len() > start_size {
+            changed = true;
+        }
+    }
+    let results = related.drain().collect::<Vec<Constraint>>();
+    results
 }
 
 #[derive(Debug, Clone)]

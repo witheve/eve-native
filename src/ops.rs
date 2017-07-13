@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
 use std::cmp;
+use std::hash::{Hash, Hasher};
+use std::cmp::Eq;
 use std::collections::HashSet;
 use std::iter::Iterator;
 use std::fmt;
@@ -1533,8 +1535,6 @@ type Function = fn(Vec<&Internable>) -> Option<Internable>;
 type MultiFunction = fn(Vec<&Internable>) -> Option<Vec<Vec<Internable>>>;
 pub type AggregateFunction = fn(&mut AggregateEntry, Vec<Internable>);
 
-// #[derive(Clone)]
-#[allow(dead_code)]
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
     AntiScan {key: Vec<Field>, register_mask: u64},
@@ -1614,6 +1614,18 @@ impl Constraint {
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::Aggregate {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::IntermediateScan {ref value, ..} => { filter_registers(&value.iter().collect()) }
+            _ => { vec![] }
+        }
+    }
+
+    pub fn get_filtering_registers(&self) -> Vec<Field> {
+        match self {
+            &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
+            &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
+            &Constraint::Filter {ref left, ref right, ..} => { filter_registers(&vec![left, right]) }
+            &Constraint::AntiScan {ref key, ..} => { filter_registers(&key.iter().collect()) }
+            &Constraint::IntermediateScan {ref full_key, ..} => { filter_registers(&full_key.iter().collect()) }
             _ => { vec![] }
         }
     }
@@ -1730,6 +1742,55 @@ impl Clone for Constraint {
         }
     }
 }
+
+// @FIXME it's ridiculous that I have to do this just because there's a function pointer in the
+// enum
+impl PartialEq for Constraint {
+    fn eq(&self, other:&Constraint) -> bool {
+        match (self, other) {
+            (&Constraint::Scan { e, a, v, ..}, &Constraint::Scan {e:e2, a:a2, v:v2, ..} ) => { e == e2 && a == a2 && v == v2 },
+            (&Constraint::AntiScan { ref key, ..}, &Constraint::AntiScan { key:ref key2, ..})  => { key == key2 }
+            (&Constraint::IntermediateScan { ref full_key, ..}, &Constraint::IntermediateScan { full_key:ref full_key2, ..}) => { full_key == full_key2 }
+            (&Constraint::Function {ref op, ref output, ref params, ..}, &Constraint::Function {op:ref op2, output:ref output2, params:ref params2, ..}) => { op == op2 && output == output2 && params == params2 }
+            (&Constraint::MultiFunction {ref op, ref outputs, ref params, ..}, &Constraint::MultiFunction {op:ref op2, outputs:ref outputs2, params:ref params2, ..}) => { op == op2 && outputs == outputs2 && params == params2 }
+            (&Constraint::Aggregate {ref op, ref output, ref group, ref projection, ref params, ..}, &Constraint::Aggregate {op:ref op2, output:ref output2, group:ref group2, projection:ref projection2, params:ref params2, ..}) => { op == op2 && output == output2 && params == params2 && group == group2 && projection == projection2 }
+            (&Constraint::Filter {ref op, ref left, ref right, ..}, &Constraint::Filter {op:ref op2, left:ref left2, right:ref right2, ..}) => { op == op2 && left == left2 && right == right2 }
+            (&Constraint::Insert { e,a,v,commit }, &Constraint::Insert { e:e2, a:a2, v:v2, commit:commit2 }) => {  e == e2 && a == a2 && v == v2 && commit == commit2 },
+            (&Constraint::InsertIntermediate { ref key, ref value, negate }, &Constraint::InsertIntermediate { key:ref key2, value:ref value2, negate:negate2 }) => { key == key2 && value == value2 && negate == negate2 }
+            (&Constraint::Remove { e,a,v }, &Constraint::Remove { e:e2, a:a2, v:v2 }) => {  e == e2 && a == a2 && v == v2 },
+            (&Constraint::RemoveAttribute { e,a }, &Constraint::RemoveAttribute { e:e2, a:a2 }) => {  e == e2 && a == a2 },
+            (&Constraint::RemoveEntity { e }, &Constraint::RemoveEntity { e:e2 }) => {  e == e2 },
+            (&Constraint::Project { ref registers }, &Constraint::Project { registers:ref registers2 }) => {  registers == registers2 },
+            (&Constraint::Watch { ref name, ref registers }, &Constraint::Watch { name:ref name2, registers:ref registers2 }) => { name == name2 && registers == registers2 },
+            _ => false
+
+        }
+    }
+}
+impl Eq for Constraint {}
+
+impl Hash for Constraint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            &Constraint::Scan { e, a, v, ..} => { e.hash(state); a.hash(state); v.hash(state); },
+            &Constraint::AntiScan { ref key, ..}  => { key.hash(state); }
+            &Constraint::IntermediateScan { ref full_key, ..} => { full_key.hash(state) }
+            &Constraint::Function {ref op, ref output, ref params, ..} => { op.hash(state); output.hash(state); params.hash(state); }
+            &Constraint::MultiFunction {ref op, ref outputs, ref params, ..} => { op.hash(state); outputs.hash(state); params.hash(state); }
+            &Constraint::Aggregate {ref op, ref output, ref group, ref projection, ref params, ..} => { op.hash(state); output.hash(state); group.hash(state); projection.hash(state); params.hash(state); }
+            &Constraint::Filter {ref op, ref left, ref right, ..} => { op.hash(state); left.hash(state); right.hash(state); }
+            &Constraint::Insert { e,a,v,commit } => { e.hash(state); a.hash(state); v.hash(state); commit.hash(state); },
+            &Constraint::InsertIntermediate { ref key, ref value, negate } => { key.hash(state); value.hash(state); negate.hash(state); }
+            &Constraint::Remove { e,a,v } => { e.hash(state); a.hash(state); v.hash(state); },
+            &Constraint::RemoveAttribute { e,a } => { e.hash(state); a.hash(state); },
+            &Constraint::RemoveEntity { e } => { e.hash(state); },
+            &Constraint::Project { ref registers } => { registers.hash(state); },
+            &Constraint::Watch { ref name, ref registers } => { name.hash(state); registers.hash(state); },
+        }
+    }
+}
+
+
 
 impl fmt::Debug for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
