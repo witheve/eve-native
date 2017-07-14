@@ -30,3 +30,4 @@ pub mod indexes;
 pub mod hash;
 pub mod parser;
 pub mod watcher;
+pub mod numerics;
