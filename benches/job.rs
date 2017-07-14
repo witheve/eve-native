@@ -11,8 +11,8 @@ use test::Bencher;
 
 pub fn load(program:&mut Program) {
     let mut eavs = vec![];
-    macro_rules! n (($i:expr) => ({ program.interner.number_id($i as f32) }));
-    macro_rules! s (($i:expr) => ({ program.interner.string_id(&$i) }));
+    macro_rules! n (($i:expr) => ({ program.state.interner.number_id($i as f32) }));
+    macro_rules! s (($i:expr) => ({ program.state.interner.string_id(&$i) }));
     macro_rules! eav (($e:expr,$a:expr,$v:expr) => ({ eavs.push(($e,$a,$v)) }));
     macro_rules! csv_eav (($rec:ident, $e:ident, $attr:expr, $idx:tt, String) => { if let Some(v) = $rec.$idx { eav!(s!($e), s!($attr), s!(v)); } };
                           ($rec:ident, $e:ident, $attr:expr, $idx:tt, f32) => { if let Some(v) = $rec.$idx { eav!(s!($e), s!($attr), n!(v)); } };
@@ -243,7 +243,7 @@ pub fn job_4b(b: &mut Bencher) {
     let end_ns = time::precise_time_ns();
     println!("Run took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
     println!("results: {:?}", all_results[0].len());
-    // println!("results: {:?}", all_results[0].iter().map(|v| program.interner.get_value(*v)).collect::<Vec<&Internable>>());
+    // println!("results: {:?}", all_results[0].iter().map(|v| program.state.interner.get_value(*v)).collect::<Vec<&Internable>>());
 }
 
 // function q1b()
@@ -299,5 +299,5 @@ pub fn job_1b(b: &mut Bencher) {
     let end_ns = time::precise_time_ns();
     println!("Run took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
     println!("results: {:?}", all_results[0].len());
-    // println!("results: {:?}", all_results[0].iter().map(|v| program.interner.get_value(*v)).collect::<Vec<&Internable>>());
+    // println!("results: {:?}", all_results[0].iter().map(|v| program.state.interner.get_value(*v)).collect::<Vec<&Internable>>());
 }

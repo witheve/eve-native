@@ -52,7 +52,7 @@ fn rand_between(rseed:&mut u32, from:u32, to:u32) -> u32 {
 }
 
 fn eav(program:&mut Program, eavs:&mut Vec<(u32,u32,u32)>, e:&str, a:&str, v:&str) {
-    eavs.push((program.interner.string_id(&e), program.interner.string_id(&a), program.interner.string_id(&v)))
+    eavs.push((program.state.interner.string_id(&e), program.state.interner.string_id(&a), program.state.interner.string_id(&v)))
 }
 
 fn make_faculty(program:&mut Program, eavs:&mut Vec<(u32,u32,u32)>, university_count:usize, department:&str, cur_type:&str, ix:u32, publications:u32, course_ix: &mut u32, grad_course_ix: &mut u32, mut seed: &mut u32, prof_to_pubs: &mut HashMap<String, u32>) {
@@ -223,7 +223,7 @@ fn generate(program: &mut Program, university_count:usize) -> Vec<(u32,u32,u32)>
                 eav(program, &mut eavs, &grad, "email", &format!("{}@foo.edu", grad));
                 eav(program, &mut eavs, &grad, "telephone", "123-123-1234");
                 // if department_ix == 0 {
-                //     println!("grad student: {:?}, {:?} == {:?}", &grad, program.interner.string_id(&grad), program.interner.string_id(&grad));
+                //     println!("grad student: {:?}, {:?} == {:?}", &grad, program.state.interner.string_id(&grad), program.state.interner.string_id(&grad));
                 // }
                 // every Student is memberOf the Department
                 eav(program, &mut eavs, &grad, "member-of", &department);

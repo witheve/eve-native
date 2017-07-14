@@ -39,7 +39,7 @@ fn hash_write(b:&mut Bencher) {
         seed = a;
         let val = rand(seed);
         seed = val;
-        index.insert(e % 100000, (a % 50) + 1, val % 100000);
+        index.insert(e % 100000, (a % 50) + 1, val % 100000, 0);
         // if(index.size > 100000) {
         //     index = HashIndex3::new();
         // }
@@ -63,7 +63,7 @@ fn hash_write_200_000(b:&mut Bencher) {
             seed = a;
             let val = rand(seed);
             seed = val;
-            index.insert(e % 100000, (a % 50) + 1, val % 100000);
+            index.insert(e % 100000, (a % 50) + 1, val % 100000, 0);
         }
     });
     // println!("{:?} : {:?}", times, index.size);
@@ -83,7 +83,7 @@ fn hash_read(b:&mut Bencher) {
         seed = a;
         let val = rand(seed);
         seed = val;
-        index.insert(e % 100000, (a % 50) + 1, val % 100000);
+        index.insert(e % 100000, (a % 50) + 1, val % 100000, 0);
     }
     seed = 0;
     // let mut v = vec![];
