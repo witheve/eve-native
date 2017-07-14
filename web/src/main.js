@@ -3,10 +3,11 @@ socket.onmessage = (msg) => {
   console.log("GOT", msg);
 }
 socket.onopen = () => {
-  send(socket, "Block", {id: "yo", code: "dude"})
+  send(socket, "Transaction", {adds: [["yo", "tag", "foo"], ["yo", "value", 1.2]], removes: []})
 }
 
 function send(socket, type, content) {
   let thing = {};
   thing[type] = content;
-  socket.send(JSON.stringify(thing))}
+  socket.send(JSON.stringify(thing))
+}

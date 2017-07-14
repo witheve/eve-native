@@ -7,13 +7,10 @@ search
         [#total total]
     end
 
-    commit
-        [#foo]
-        [#foo value: 8]
-    end
+search
+  t = [#total total]
+watch client/websocket
+  ("foo", t, total)
+end
 
-    search
-        [#total total:18]
-    bind
-        [#success]
-    end
+

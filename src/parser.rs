@@ -856,9 +856,7 @@ impl<'a> Node<'a> {
             },
             &Node::Watch(ref name, ref values) => {
                 let registers = values.iter()
-                                      .map(|v| v.compile(interner, cur_block))
-                                      .filter(|v| if let &Some(Field::Register(_)) = v { true } else { false })
-                                      .map(|v| if let Some(Field::Register(reg)) = v { reg } else { panic!() })
+                                      .map(|v| v.compile(interner, cur_block).unwrap())
                                       .collect();
                 cur_block.constraints.push(Constraint::Watch {name:name.to_string(), registers});
                 None

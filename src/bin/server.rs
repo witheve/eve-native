@@ -17,17 +17,20 @@ extern crate serde_derive;
 #[macro_use]
 extern crate lazy_static;
 
-extern crate serde;
+#[macro_use]
 extern crate serde_json;
+
+extern crate serde;
 
 use serde_json::{Error};
 
 extern crate eve;
 extern crate time;
 
-use eve::ops::{Program, Transaction, RawChange, Internable};
+use eve::ops::{Program, Transaction, RawChange, Internable, Interner};
+use eve::indexes::{WatchDiff};
 use eve::parser::{parse_file};
-use eve::watcher::{SystemTimerWatcher};
+use eve::watcher::{SystemTimerWatcher, Watcher};
 use std::env;
 use std::thread;
 
@@ -43,7 +46,7 @@ pub struct ClientHandler {
 
 impl ClientHandler {
     pub fn new(out:Sender) -> ClientHandler {
-        let program_input = make_program();
+        let program_input = make_program(out.clone());
         ClientHandler {out, program_input}
     }
 }
@@ -54,6 +57,20 @@ impl Handler for ClientHandler {
         if let Message::Text(s) = msg {
             let deserialized: Result<ClientMessage, Error> = serde_json::from_str(&s);
             println!("deserialized = {:?}", deserialized);
+            match deserialized {
+                Ok(ClientMessage::Transaction { adds, removes }) => {
+                    let mut raw_changes = vec![];
+                    raw_changes.extend(adds.into_iter().map(|(e,a,v)| {
+                        RawChange { e,a,v,n:Internable::String("input".to_string()),count:1 }
+                    }));
+                    raw_changes.extend(removes.into_iter().map(|(e,a,v)| {
+                        RawChange { e,a,v,n: Internable::String("input".to_string()),count:-1 }
+                    }));
+                    self.program_input.send(raw_changes).unwrap();
+                    println!("Got transaction!");
+                }
+                _ => { }
+            }
             self.out.send(Message::text(serde_json::to_string(&ClientMessage::Yo {message: format!("{} - yo", s)}).unwrap()))
         } else {
             Ok(())
@@ -66,7 +83,7 @@ impl Handler for ClientHandler {
     }
 }
 
-fn make_program() -> SyncSender<Vec<RawChange>> {
+fn make_program(out:Sender) -> SyncSender<Vec<RawChange>> {
     let (sender, receiver) = std::sync::mpsc::channel();
     thread::spawn(move || {
         let local_close = CLOSE.clone();
@@ -74,6 +91,7 @@ fn make_program() -> SyncSender<Vec<RawChange>> {
         sender.send(program.outgoing.clone()).unwrap();
         let outgoing = program.outgoing.clone();
         program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
+        program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out)));
 
         for file in env::args().skip(1) {
             let blocks = parse_file(&mut program, &file);
@@ -107,6 +125,7 @@ fn make_program() -> SyncSender<Vec<RawChange>> {
 pub enum ClientMessage {
     Block { id:String, code:String },
     RemoveBlock { id:String },
+    Transaction { adds: Vec<(Internable, Internable, Internable)>, removes: Vec<(Internable, Internable, Internable)> },
     Yo { message:String },
 }
 
@@ -114,5 +133,29 @@ fn main() {
   listen("127.0.0.1:3012", |out| {
       ClientHandler::new(out)
   }).unwrap()
+}
+
+
+pub struct WebsocketClientWatcher {
+    outgoing: Sender,
+}
+
+impl WebsocketClientWatcher {
+    pub fn new(outgoing: Sender) -> WebsocketClientWatcher {
+        WebsocketClientWatcher { outgoing }
+    }
+}
+
+impl Watcher for WebsocketClientWatcher {
+    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+        let adds:Vec<Vec<&Internable>> = diff.adds.iter().map(|row| {
+            row.iter().map(|v| interner.get_value(*v)).collect()
+        }).collect();
+        let removes:Vec<Vec<&Internable>> = diff.removes.iter().map(|row| {
+            row.iter().map(|v| interner.get_value(*v)).collect()
+        }).collect();
+        let text = serde_json::to_string(&json!({"adds": adds, "removes": removes})).unwrap();
+        self.outgoing.send(Message::Text(text)).unwrap();
+    }
 }
 

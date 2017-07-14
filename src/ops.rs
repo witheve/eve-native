@@ -19,6 +19,9 @@ use std::fmt;
 use watcher::{Watcher};
 use std::sync::mpsc::{SyncSender, Receiver};
 use std::sync::mpsc;
+use serde::ser::{Serialize, Serializer};
+use serde::de::{Deserialize, Deserializer, Visitor};
+use std::error::Error;
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -246,7 +249,7 @@ impl Block {
                     project_constraints.push(constraint);
                 }
                 &Constraint::Watch {..} => {
-                    watch_constraints.push(constraint);
+                    watch_constraints.push((ix, constraint));
                 }
             }
         };
@@ -407,11 +410,11 @@ impl Block {
                 }
             }
 
-            for constraint in watch_constraints.iter() {
-                if let &&Constraint::Watch {ref name, ref registers} = constraint {
+            for &(ix, constraint) in watch_constraints.iter() {
+                if let &Constraint::Watch {ref name, ..} = constraint {
                     last_iter_next -= 1;
                     let next = if to_solve > 0 {last_iter_next} else { PIPE_FINISHED };
-                    pipe.push(Instruction::Watch {next, registers:registers.iter().map(|x| *x as u32).collect(), name:name.to_string()});
+                    pipe.push(Instruction::Watch {next, name:name.to_string(), constraint:ix as usize});
                 }
             }
 
@@ -909,7 +912,7 @@ pub enum Instruction {
     Commit {next: i32, constraint:u32},
     InsertIntermediate {next: i32, constraint:u32},
     Project {next: i32, from:u32},
-    Watch { next:i32, registers:Vec<u32>, name:String}
+    Watch { next:i32, name:String, constraint:usize}
 }
 
 #[inline(never)]
@@ -1395,13 +1398,19 @@ pub fn project(_: &mut RuntimeState, frame: &mut Frame, from:u32, next:i32) -> i
 }
 
 #[inline(never)]
-pub fn watch(program: &mut RuntimeState, frame: &mut Frame, name:&str, registers:&Vec<u32>, next:i32) -> i32 {
-    let resolved = registers.iter().map(|x| frame.get_register(*x)).collect();
-    let mut total = 0;
-    for &(_, count) in program.rounds.get_output_rounds().iter() {
-        total += count;
+pub fn watch(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, name:&str, next:i32, constraint:usize) -> i32 {
+    let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
+    match cur {
+        &Constraint::Watch { ref registers, ..} => {
+            let resolved = registers.iter().map(|x| frame.resolve(x)).collect();
+            let mut total = 0;
+            for &(_, count) in program.rounds.get_output_rounds().iter() {
+                total += count;
+            }
+            program.watch(name, resolved, total);
+        },
+        _ => unreachable!()
     }
-    program.watch(name, resolved, total);
     next
 }
 
@@ -1463,6 +1472,48 @@ impl Internable {
                 "Null!".to_string()
             }
         }
+    }
+}
+
+impl Serialize for Internable {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        match self {
+            &Internable::String(ref s) => serializer.serialize_str(s),
+            &Internable::Number(_) => serializer.serialize_f32(Internable::to_number(self)),
+            _ => serializer.serialize_unit(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Internable {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct InternableVisitor;
+
+        impl<'de> Visitor<'de> for InternableVisitor {
+            type Value = Internable;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("Internable")
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+                where E: Error
+            {
+                Ok(Internable::from_number(v as f32))
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where E: Error
+            {
+                Ok(Internable::String(v.to_owned()))
+            }
+        }
+
+        deserializer.deserialize_any(InternableVisitor)
     }
 }
 
@@ -1548,7 +1599,7 @@ pub enum Constraint {
     RemoveAttribute {e: Field, a: Field},
     RemoveEntity {e: Field },
     Project {registers: Vec<usize>},
-    Watch {name: String, registers: Vec<usize>},
+    Watch {name: String, registers: Vec<Field>},
 }
 
 fn filter_registers(fields:&Vec<&Field>) -> Vec<Field> {
@@ -1602,7 +1653,7 @@ impl Constraint {
             &Constraint::RemoveAttribute { ref e, ref a } => { filter_registers(&vec![e,a]) },
             &Constraint::RemoveEntity { ref e } => { filter_registers(&vec![e]) },
             &Constraint::Project {ref registers} => { registers.iter().map(|v| Field::Register(*v)).collect() },
-            &Constraint::Watch {ref registers, ..} => { registers.iter().map(|v| Field::Register(*v)).collect() },
+            &Constraint::Watch {ref registers, ..} => { filter_registers(&registers.iter().collect()) },
         }
     }
 
@@ -1699,13 +1750,7 @@ impl Constraint {
                     }
                 }
             },
-            &mut Constraint::Watch {ref mut registers, ..} => {
-                for reg in registers.iter_mut() {
-                    if let &Field::Register(neue) = lookup.get(&Field::Register(*reg)).unwrap() {
-                        *reg = neue;
-                    }
-                }
-            },
+            &mut Constraint::Watch {ref mut registers, ..} => { replace_registers(&mut registers.iter_mut().collect(), lookup); },
         }
     }
 }
@@ -2198,8 +2243,8 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
             Instruction::Project { from, next } => {
                 project(program, frame, from, next)
             },
-            Instruction::Watch { ref name, ref registers, next } => {
-                watch(program, frame, name, registers, next)
+            Instruction::Watch { ref name, next, constraint } => {
+                watch(program, block_info, frame, name, next, constraint)
             },
         }
     };
