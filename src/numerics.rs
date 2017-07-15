@@ -9,7 +9,6 @@ const EXTENSION_MASK:u64 = 1 << 63;
 const MANTISSA_MASK:u64 = (((1 as u64) << 49) as u64 - 1); // 49 bits at the end
 const META_MASK:u64 = ((1 << 15) as u64 - 1) << 49; // 15 1s at the front
 const RANGE_MASK:u64 = ((1 << 7) as u64 - 1) << 49;
-const DOMAIN_MASK:u64 = ((1 << 7) as u64 - 1) << 56;
 const SHIFTED_RANGE_DOMAIN_MASK:u64 = ((1 << 7) as u64 - 1);
 const SHIFTED_FILL:u64 = ((((1 as u64) << 57) as u64 - 1) << 7);
 const SIGN_MASK:u64 = 1 << 48;
@@ -86,13 +85,13 @@ pub fn overflow_handler(me:u64) -> (u64, u64) {
 }
 
 pub fn decrease_range(mantissa:i64, range_delta:u64) -> (i64, u64) {
-    let hi = mantissa.leading_zeros();
-    let thing = 1 << (hi + 1);
-    let hi_10 = (thing as f64).log10().floor() as u64;
-    if range_delta <= hi_10 {
+    let remaining_space = mantissa.leading_zeros();
+    let thing:u64 = (1 as u64) << remaining_space;
+    let remaining_10 = (thing as f64).log10().floor() as u64;
+    if range_delta <= remaining_10 {
         (mantissa * 10u64.pow(range_delta as u32) as i64, range_delta)
     } else {
-        (mantissa * 10u64.pow(hi_10 as u32) as i64, range_delta)
+        (mantissa * 10u64.pow(remaining_10 as u32) as i64, range_delta)
     }
 }
 
@@ -117,11 +116,13 @@ pub trait TaggedMath {
     fn is_other(self) -> bool;
     fn domain(self) -> u64;
     fn range(self) -> i64;
+    fn set_range(&mut self, range:i64);
     fn mantissa(self) -> i64;
     fn is_negative(self) -> bool;
     fn add(self, Tagged) -> Tagged;
     fn sub(self, Tagged) -> Tagged;
     fn multiply(self, Tagged) -> Tagged;
+    fn to_string(self) -> String;
 }
 
 impl TaggedMath for Tagged {
@@ -137,17 +138,23 @@ impl TaggedMath for Tagged {
 
     #[inline(always)]
     fn domain(self) -> u64 {
-        (self >> 49) & SHIFTED_RANGE_DOMAIN_MASK
+        (self >> 56) & SHIFTED_RANGE_DOMAIN_MASK
     }
 
     #[inline(always)]
     fn range(self) -> i64 {
         let range = (self >> 49) & SHIFTED_RANGE_DOMAIN_MASK;
-        if range & (1 << 7) != 0 {
+        if range & (1 << 6) == 0 {
             range as i64
         } else {
             (range | SHIFTED_FILL) as i64
         }
+    }
+
+    fn set_range(&mut self, range:i64) {
+        let range_fill = ((range << 49) as u64) & RANGE_MASK;
+        *self &= !RANGE_MASK;
+        *self |= range_fill;
     }
 
     #[inline(always)]
@@ -165,10 +172,14 @@ impl TaggedMath for Tagged {
         (self & SIGN_MASK) == SIGN_MASK
     }
 
+    fn to_string(self) -> String {
+        format!("{}r{}", self.mantissa(), self.range())
+    }
+
     #[inline(always)]
     fn add(self, other:Tagged) -> Tagged {
-        let my_range = self & RANGE_MASK;
-        let other_range = self & RANGE_MASK;
+        let my_range = self.range();
+        let other_range = other.range();
         if my_range == other_range {
             let added = self.mantissa() + other.mantissa();
             added.to_tagged()
@@ -180,15 +191,17 @@ impl TaggedMath for Tagged {
             } else {
                 (other_range, my_range, other_mant, my_mant)
             };
-            let range_delta = (a_range - b_range) >> 49;
+            let range_delta = (a_range - b_range) as u64;
             let (neue, actual_delta) = decrease_range(a_mant, range_delta);
             if actual_delta == range_delta {
-                let added = neue + b_mant;
-                added.to_tagged()
+                let mut added = (neue + b_mant).to_tagged();
+                added.set_range(b_range);
+                added
             } else {
                 let (b_neue, _) = increase_range(b_mant, actual_delta);
-                let added = neue + b_neue;
-                added.to_tagged()
+                let mut added = (neue + b_neue).to_tagged();
+                added.set_range(a_range - actual_delta as i64);
+                added
             }
         }
     }
@@ -206,44 +219,39 @@ impl TaggedMath for Tagged {
 
 #[test]
 fn numerics_base() {
-    let x:i64 = -1 * (2u64.pow(52) as i64);
-    // let y:i64 = -1;
-    println!("{:b}", make_tagged(1, 3, 1));
-    println!("{:b}", x.to_tagged());
-    println!("{}", x.to_tagged().mantissa());
-    // println!("{:b}", y.to_tagged());
-    // println!("{:b}", META_MASK);
-    // println!("{}", x.to_tagged().add(y.to_tagged()).mantissa());
-    // println!("{:b} {:b}", ((1 << 16) as u64 - 1) << 49, (2u64.pow(15) - 1) << 49);
-    // assert!(x.to_tagged().is_number());
-    // assert!(!x.to_tagged().is_other());
-    // assert_eq!(x.to_tagged().mantissa(), x as i64);
-    // assert_eq!(y.to_tagged().mantissa(), y as i64);
-    // assert_eq!(y.to_tagged().add(x.to_tagged()).mantissa(), 9);
+    let x = make_tagged(1, 3, 1);
+    let y = make_tagged(1, -3, 1);
+    let added = x.add(y);
+    assert!(x.is_number());
+    assert!(!x.is_other());
+    assert_eq!(x.mantissa(), 1);
+    assert_eq!(y.mantissa(), 1);
+    assert_eq!(x.range(), 3);
+    assert_eq!(y.range(), -3);
+    assert_eq!(added.mantissa(), 1000001);
+    assert_eq!(added.range(), -3);
 }
 
 extern crate test;
 use self::test::{Bencher};
-#[bench]
-fn bench_numerics_add(b:&mut Bencher) {
-    let y:i32 = -1;
-    // let xs = (0..10000).map(|x| x.to_tagged()).collect::<Vec<_>>();
-    let y_tagged = y.to_tagged();
-    println!(" YO {:b}", y_tagged);
-    println!(" YO2 {:b}", ((-1 as i32) as i64));
-    b.iter(|| {
-        for x in (0..10000).map(|x| x.to_tagged()) {
-            test::black_box(x.add(y_tagged));
-        }
-    });
-}
+// #[bench]
+// fn bench_numerics_add(b:&mut Bencher) {
+//     let y:i32 = -1;
+//     // let xs = (0..10000).map(|x| x.to_tagged()).collect::<Vec<_>>();
+//     let y_tagged = y.to_tagged();
+//     b.iter(|| {
+//         for x in (0..10000).map(|x| x.to_tagged()) {
+//             test::black_box(x.add(y_tagged));
+//         }
+//     });
+// }
 
-#[bench]
-fn bench_numerics_normal_add(b:&mut Bencher) {
-    let y:i32 = -1;
-    b.iter(|| {
-        for x in 0..10000 {
-            test::black_box(x + y);
-        }
-    });
-}
+// #[bench]
+// fn bench_numerics_normal_add(b:&mut Bencher) {
+//     let y:i32 = -1;
+//     b.iter(|| {
+//         for x in 0..10000 {
+//             test::black_box(x + y);
+//         }
+//     });
+// }
