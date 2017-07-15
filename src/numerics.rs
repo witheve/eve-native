@@ -119,6 +119,7 @@ pub trait TaggedMath {
     fn set_range(&mut self, range:i64);
     fn mantissa(self) -> i64;
     fn is_negative(self) -> bool;
+    fn negate(self) -> Tagged;
     fn add(self, Tagged) -> Tagged;
     fn sub(self, Tagged) -> Tagged;
     fn multiply(self, Tagged) -> Tagged;
@@ -167,6 +168,11 @@ impl TaggedMath for Tagged {
         }
     }
 
+    fn negate(self) -> Tagged {
+        let value = ((self.mantissa() * -1) as u64 & MANTISSA_MASK) as u64;
+        self & META_MASK | value
+    }
+
     #[inline(always)]
     fn is_negative(self) -> bool {
         (self & SIGN_MASK) == SIGN_MASK
@@ -207,13 +213,17 @@ impl TaggedMath for Tagged {
     }
 
     fn sub(self, other:Tagged) -> Tagged {
-        let result = self.mantissa() - other.mantissa();
-        result.to_tagged()
+        self.add(other.negate())
     }
 
     fn multiply(self, other:Tagged) -> Tagged {
-        let result = self.mantissa() * other.mantissa();
-        result.to_tagged()
+        let result = match self.mantissa().checked_mul(other.mantissa()) {
+           Some(result) => { result },
+           None => { panic!("TaggedMultiply overflow") }
+        };
+        let mut tagged = result.to_tagged();
+        tagged.set_range(self.range() + other.range());
+        tagged
     }
 }
 
@@ -230,6 +240,27 @@ fn numerics_base() {
     assert_eq!(y.range(), -3);
     assert_eq!(added.mantissa(), 1000001);
     assert_eq!(added.range(), -3);
+    let added_reverse = y.add(x);
+    assert_eq!(added_reverse.mantissa(), 1000001);
+    assert_eq!(added_reverse.range(), -3);
+}
+
+#[test]
+fn numerics_base_sub() {
+    let x = make_tagged(1, 3, 1);
+    let y = make_tagged(1, -3, 1);
+    let sub = x.sub(y);
+    assert_eq!(sub.mantissa(), 999999);
+    assert_eq!(sub.range(), -3);
+}
+
+#[test]
+fn numerics_base_multiply() {
+    let x = make_tagged(1, 3, 1);
+    let y = make_tagged(1, -3, 1);
+    let sub = x.multiply(y);
+    assert_eq!(sub.mantissa(), 1);
+    assert_eq!(sub.range(), 0);
 }
 
 extern crate test;
