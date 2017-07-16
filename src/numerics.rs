@@ -87,7 +87,7 @@ impl ToTagged for f64 {
         let me = *self;
         let (mantissa, exponent, sign) = Float::integer_decode(me);
         let exp_log = 2f64.powi(exponent as i32).log10();
-        let real_exponent = exp_log.floor() as i64;
+        let real_exponent = (exp_log.floor() as i64 + 1);
         let real_mantissa = (sign as f64 * ((mantissa as f64) * 10f64.powf(exp_log.fract()))) as i64;
         let mut result = real_mantissa.to_tagged();
         let cur = result.range();
