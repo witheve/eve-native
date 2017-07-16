@@ -7,6 +7,7 @@
 
 extern crate num;
 use self::num::Float;
+use std::mem;
 
 const EXTENSION_MASK:u64 = 1 << 63;
 const MANTISSA_MASK:u64 = (((1 as u64) << 49) as u64 - 1); // 49 bits at the end
