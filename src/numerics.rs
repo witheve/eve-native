@@ -12,6 +12,7 @@ use std::mem;
 const EXTENSION_MASK:u64 = 1 << 63;
 const MANTISSA_MASK:u64 = (((1 as u64) << 49) as u64 - 1); // 49 bits at the end
 const META_MASK:u64 = ((1 << 15) as u64 - 1) << 49; // 15 1s at the front
+const OVERFLOW_MASK:u64 = ((1 << 16) as u64 - 1) << 48; // 15 1s at the front
 const RANGE_MASK:u64 = ((1 << 7) as u64 - 1) << 49;
 const SHIFTED_RANGE_DOMAIN_MASK:u64 = ((1 << 7) as u64 - 1);
 const SHIFTED_FILL:u64 = ((((1 as u64) << 57) as u64 - 1) << 7);
@@ -71,7 +72,7 @@ impl ToTagged for i64 {
             } else {
                 (me as u64) & MANTISSA_MASK | EXTENSION_MASK
             }
-        } else if (me as u64) & META_MASK != 0 {
+        } else if (me as u64) & OVERFLOW_MASK != 0 {
             let (mantissa, range) = overflow_handler(me as u64);
             (mantissa as u64) & MANTISSA_MASK | shifted_range(range) |  EXTENSION_MASK
         } else {
@@ -143,6 +144,7 @@ pub trait TaggedMath {
     fn add(self, Tagged) -> Tagged;
     fn sub(self, Tagged) -> Tagged;
     fn multiply(self, Tagged) -> Tagged;
+    fn divide(self, Tagged) -> Tagged;
     fn to_string(self) -> String;
     fn to_float(self) -> f64;
 }
@@ -250,6 +252,10 @@ impl TaggedMath for Tagged {
         tagged.set_range(self.range() + other.range());
         tagged
     }
+
+    fn divide(self, other:Tagged) -> Tagged {
+        (self.to_float() / other.to_float()).to_tagged()
+    }
 }
 
 #[test]
@@ -289,12 +295,26 @@ fn numerics_base_multiply() {
 }
 
 #[test]
+fn numerics_base_divide() {
+    let x = 1.to_tagged();
+    let y = 2.to_tagged();
+    assert_eq!(x.divide(y).to_float(), 0.5);
+}
+
+#[test]
 fn numerics_base_float() {
     let x = 1.2;
     let y = 1.1;
+    let z = 0.5;
+    assert_eq!(x.to_tagged().to_float(), x);
+    assert_eq!(y.to_tagged().to_float(), y);
+    assert_eq!(z.to_tagged().to_float(), z);
     println!("{}", x.to_tagged().to_string());
     println!("{}", y.to_tagged().to_string());
+    println!("{}", z.to_tagged().to_string());
 }
+
+
 
 extern crate test;
 use self::test::{Bencher};
