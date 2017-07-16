@@ -5,6 +5,9 @@
 // S: mantissa Sign bit
 // M: Mantissa [-2^48, 2^48 - 1]
 
+extern crate num;
+use self::num::Float;
+
 const EXTENSION_MASK:u64 = 1 << 63;
 const MANTISSA_MASK:u64 = (((1 as u64) << 49) as u64 - 1); // 49 bits at the end
 const META_MASK:u64 = ((1 << 15) as u64 - 1) << 49; // 15 1s at the front
@@ -76,6 +79,25 @@ impl ToTagged for i64 {
     }
 }
 
+impl ToTagged for f64 {
+    #[inline(always)]
+    fn to_tagged(&self) -> u64 {
+        let me = *self;
+        let (mantissa, exponent, sign) = Float::integer_decode(me);
+        let real_exponent = exponent;
+        let tens_place = ((mantissa as f64).log10().floor() + 1.0) as u32;
+        let integer_mantissa = 10u64.pow(tens_place);
+        let real_mantissa = ((mantissa) as f64 * 2f64.powi(real_exponent as i32)) as u64 + integer_mantissa;
+        let bits:u64 = unsafe {mem::transmute(me)};
+        println!("BITS {:b}", bits);
+        println!(" FLOAT: {} {} {} = {}", mantissa, exponent, sign, (sign as f64) * (mantissa as f64) * 2f64.powi(exponent as i32));
+        println!(" other bits: {} {}", me.fract(), me.exp());
+        println!(" more bits: {} {}", real_mantissa, real_exponent);
+        0
+    }
+}
+
+
 #[inline(always)]
 pub fn overflow_handler(me:u64) -> (u64, u64) {
     let hi = 64 - me.leading_zeros() - 48;
@@ -124,6 +146,7 @@ pub trait TaggedMath {
     fn sub(self, Tagged) -> Tagged;
     fn multiply(self, Tagged) -> Tagged;
     fn to_string(self) -> String;
+    fn to_float(self) -> f64;
 }
 
 impl TaggedMath for Tagged {
@@ -180,6 +203,10 @@ impl TaggedMath for Tagged {
 
     fn to_string(self) -> String {
         format!("{}r{}", self.mantissa(), self.range())
+    }
+
+    fn to_float(self) -> f64 {
+        (self.mantissa() as f64) * 10f64.powi(self.range() as i32)
     }
 
     #[inline(always)]
@@ -261,6 +288,12 @@ fn numerics_base_multiply() {
     let sub = x.multiply(y);
     assert_eq!(sub.mantissa(), 1);
     assert_eq!(sub.range(), 0);
+}
+
+#[test]
+fn numerics_base_float() {
+    let x = 1.2;
+    x.to_tagged();
 }
 
 extern crate test;
