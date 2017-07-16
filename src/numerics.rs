@@ -85,16 +85,13 @@ impl ToTagged for f64 {
     fn to_tagged(&self) -> u64 {
         let me = *self;
         let (mantissa, exponent, sign) = Float::integer_decode(me);
-        let real_exponent = exponent;
-        let tens_place = ((mantissa as f64).log10().floor() + 1.0) as u32;
-        let integer_mantissa = 10u64.pow(tens_place);
-        let real_mantissa = ((mantissa) as f64 * 2f64.powi(real_exponent as i32)) as u64 + integer_mantissa;
-        let bits:u64 = unsafe {mem::transmute(me)};
-        println!("BITS {:b}", bits);
-        println!(" FLOAT: {} {} {} = {}", mantissa, exponent, sign, (sign as f64) * (mantissa as f64) * 2f64.powi(exponent as i32));
-        println!(" other bits: {} {}", me.fract(), me.exp());
-        println!(" more bits: {} {}", real_mantissa, real_exponent);
-        0
+        let exp_log = 2f64.powi(exponent as i32).log10();
+        let real_exponent = exp_log.floor() as i64;
+        let real_mantissa = (sign as f64 * ((mantissa as f64) * 10f64.powf(exp_log.fract()))) as i64;
+        let mut result = real_mantissa.to_tagged();
+        let cur = result.range();
+        result.set_range(cur + real_exponent);
+        result
     }
 }
 
@@ -294,7 +291,9 @@ fn numerics_base_multiply() {
 #[test]
 fn numerics_base_float() {
     let x = 1.2;
-    x.to_tagged();
+    let y = 1.1;
+    println!("{}", x.to_tagged().to_string());
+    println!("{}", y.to_tagged().to_string());
 }
 
 extern crate test;
