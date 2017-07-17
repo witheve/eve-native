@@ -7,7 +7,6 @@
 
 extern crate num;
 use self::num::Float;
-use std::mem;
 
 const EXTENSION_MASK:u64 = 1 << 63;
 const MANTISSA_MASK:u64 = (((1 as u64) << 49) as u64 - 1); // 49 bits at the end
@@ -87,7 +86,7 @@ impl ToTagged for f64 {
         let me = *self;
         let (mantissa, exponent, sign) = Float::integer_decode(me);
         let exp_log = 2f64.powi(exponent as i32).log10();
-        let real_exponent = (exp_log.floor() as i64 + 1);
+        let real_exponent = exp_log.floor() as i64 + 1;
         let real_mantissa = (sign as f64 * ((mantissa as f64) * 10f64.powf(exp_log.fract()))) as i64;
         let mut result = real_mantissa.to_tagged();
         let cur = result.range();
