@@ -637,25 +637,28 @@ impl<'a> Node<'a> {
 
                 for attr in attrs {
                     let (a, v) = match attr {
-                        &Node::Attribute(a) => { (a, cur_block.get_unified_register(a)) },
-                        &Node::AttributeEquality(a, ref v) if a != "entity" => {
+                        &Node::Attribute(a) => { (a, Some(cur_block.get_unified_register(a))) },
+                        &Node::AttributeEquality(a, ref v) => {
                             let result = match **v {
                                 Node::RecordSet(ref records) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
                                 Node::ExprSet(ref items) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
 
-                                _ => v.compile(interner, cur_block).unwrap()
+                                _ => v.compile(interner, cur_block)
                             };
                             (a, result)
                         },
-                        _ => panic!("Parse Error: Unrecognized node type in lookup attributes.")
+                        _ => {
+                            println!("{:?}", attr);
+                            panic!("Parse Error: Unrecognized node type in lookup attributes.")
+                        }
                     };
 
                     // @FIXME: What do we do if there are multiple fields for a given a?
                     // Seems like that should be handled in gather_equalities, is it?
                     match a {
-                        "attribute" => attribute = Some(v),
-                        "value" => value = Some(v),
-                        "entity" => {},
+                        "entity" => {}
+                        "attribute" => attribute = v,
+                        "value" => value = v,
                         _ => panic!("Lookup supports only entity, attribute, and value lookups.")
                     }
                 }
