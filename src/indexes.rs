@@ -465,7 +465,7 @@ impl HashIndex {
                 None => false,
             }
         } else {
-            for (maybe_a, level) in self.a.iter() {
+            for level in self.a.values() {
                 if level.check(e, v) {
                     return true;
                 }

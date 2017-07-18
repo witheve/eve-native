@@ -615,7 +615,7 @@ impl<'a> Node<'a> {
                 }
                 final_result
             },
-            &Node::RecordLookup(ref attrs, ref output_type) => {
+            &Node::RecordLookup(ref attrs, ..) => {
                 let mut entity = None;
                 let mut attribute = None;
                 let mut value = None;
@@ -640,9 +640,8 @@ impl<'a> Node<'a> {
                         &Node::Attribute(a) => { (a, Some(cur_block.get_unified_register(a))) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result = match **v {
-                                Node::RecordSet(ref records) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
-                                Node::ExprSet(ref items) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
-
+                                Node::RecordSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
+                                Node::ExprSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
                                 _ => v.compile(interner, cur_block)
                             };
                             (a, result)
