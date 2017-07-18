@@ -339,7 +339,7 @@ impl Block {
             pipe.push(Instruction::ClearRounds);
             last_iter_next -= 1;
 
-            if outputs.len() > 0 {
+            if outputs.len() > 0 || watch_constraints.len() > 0 {
                 for inst in get_rounds.iter() {
                     match inst {
                         &Instruction::GetRounds { constraint, .. } |
@@ -410,10 +410,10 @@ impl Block {
                 }
             }
 
-            for &(ix, constraint) in watch_constraints.iter() {
+            for (watch_ix, &(ix, constraint)) in watch_constraints.iter().enumerate() {
                 if let &Constraint::Watch {ref name, ..} = constraint {
                     last_iter_next -= 1;
-                    let next = if ix as usize != watch_constraints.len() - 1 {
+                    let next = if watch_ix as usize != watch_constraints.len() - 1 {
                         1
                     } else if to_solve > 0 {
                         last_iter_next
@@ -1105,7 +1105,7 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
 }
 
 #[inline(never)]
-pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:u32, bail:i32, finished_mask:u64) -> i32 {
+pub fn iterator_next(Jeff: &mut RuntimeState, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:u32, bail:i32, finished_mask:u64) -> i32 {
     let mut passthrough = false;
     let go = {
         let mut iter = iter_pool.iters[iterator as usize].as_mut();
@@ -1120,6 +1120,13 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
                     },
                     true => {
                         // frame.counters.iter_next += 1;
+                        if frame.row.solving_for & 0b100 == frame.row.solving_for {
+                            println!("iter next attr {:?} => {:?} | {:b}", frame.row.fields[2], Jeff.interner.get_value(frame.row.fields[2]), frame.row.solved_fields);
+
+                        if frame.row.solving_for & 0b1000 == frame.row.solving_for {
+                            println!("iter next val {:?} => {:?} | {:b}", frame.row.fields[3], Jeff.interner.get_value(frame.row.fields[3]), frame.row.solved_fields);
+                        }
+                        }
                         frame.row.put_solved(iterator);
                         1
                     },
@@ -1127,6 +1134,7 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
             },
             None => {
                 if frame.row.get_solved(iterator as i32 - 1) == finished_mask {
+                    println!("Is it any marvel that satan will masquerade as an angel of light?");
                     // if we were solved when we came into here, and there were no
                     // iterators set, that means we've completely solved for all the variables
                     // and we just need to passthrough to the end, by setting the current iter
@@ -1262,7 +1270,7 @@ pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut
             let resolved_e = frame.resolve(e);
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
-            // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
+            println!("getting rounds for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
             program.rounds.compute_output_rounds(program.index.distinct_iter(resolved_e, resolved_a, resolved_v));
             if program.rounds.get_output_rounds().len() > 0 {
                 1
@@ -1408,12 +1416,14 @@ pub fn watch(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fram
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Watch { ref registers, ..} => {
-            let resolved = registers.iter().map(|x| frame.resolve(x)).collect();
+            let resolved:Vec<Interned> = registers.iter().map(|x| frame.resolve(x)).collect();
             let mut total = 0;
             for &(_, count) in program.rounds.get_output_rounds().iter() {
                 total += count;
             }
-            program.watch(name, resolved, total);
+            let floob:Vec<&Internable> = resolved.iter().map(|x| program.interner.get_value(*x)).collect();
+            println!("  ->  {:?}", floob);
+            //program.watch(name, resolved, total);
         },
         _ => unreachable!()
     }

@@ -1,0 +1,106 @@
+# Test 3
+
+# DOM
+
+Create instances for each root.
+~~~ eve
+search
+  element = [#html/root]
+
+bind
+  [#html/instance element tagname: element.tagname]
+end
+~~~
+
+Create an instance for each child of a rooted parent.
+~~~ eve
+search
+  element = [#html/element]
+  parentElem = [#html/element children: element]
+  parent = [#html/instance element: parentElem]
+bind
+  [#html/instance element tagname: element.tagname parent]
+end
+~~~
+
+Export all instances.
+~~~ eve
+search
+  instance = [#html/instance tagname element]
+watch client/websocket
+  ("Export all instances." instance "tagname" tagname)
+  ("Export all instances." instance "element" element)
+  ("Export all instances." instance "instance" instance)
+end
+~~~
+
+
+Export roots.
+~~~ eve
+search
+  root = [#html/root]
+  instance = [#html/instance element: root]
+
+watch client/websocket
+  ("Export roots.", root, "instance", instance)
+end
+~~~
+
+Export instance parents.
+~~~ eve
+search
+  instance = [#html/instance parent]
+
+watch client/websocket
+  ("Export instance parents." instance "instance" instance)
+  ("Export instance parents." instance "parent" parent)
+end
+~~~
+
+Export element styles.
+~~~ eve
+s earch
+  element = [#html/element style]
+  lookup[entity: style attribute value]
+
+w atch client/websocket
+  ("Export element styles." style attribute value)
+end
+~~~
+
+Export element attributes.
+@FIME: Only grabbing a single attribute:value pair per element?
+@FIXME: add back dynamic class support: attribute != "class"
+~~~ eve
+search
+  instance = [#html/instance element]
+  lookup[entity: element attribute value]
+
+watch client/websocket
+  ("Export element attributes." instance attribute value)
+end
+~~~
+
+
+
+# HTML
+
+Elements with no parents are roots.
+~~~ eve
+search
+  element = [#html/element]
+  not([#html/element children: element])
+bind
+  element += #html/root
+end
+~~~
+
+
+# DEBUG
+
+~~~ eve
+commit
+  [#html/element tagname: "div" | style: [color: "red"] children:
+    [#html/element tagname: "span" text: "borf"]]
+end
+~~~
