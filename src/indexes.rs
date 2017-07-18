@@ -465,7 +465,12 @@ impl HashIndex {
                 None => false,
             }
         } else {
-            panic!("Haven't implemented check for free a")
+            for (maybe_a, level) in self.a.iter() {
+                if level.check(e, v) {
+                    return true;
+                }
+            }
+            false
         }
     }
 
@@ -489,6 +494,9 @@ impl HashIndex {
         if a == 0 {
             // @FIXME: this isn't always safe. In the case where we have an arbitrary lookup, if we
             // then propose, we might propose values that we then never actually check are correct.
+            if e != 0 && v != 0 {
+                panic!("ERROR: Proposing for unsafe a");
+            }
             match iter {
                 &mut EstimateIter::Scan { ref mut estimate, ref mut iter, ref mut output, .. } => {
                     let attrs_iter = self.a.get_dangerous_keys();
@@ -896,4 +904,3 @@ impl WatchIndex {
         WatchDiff { adds, removes }
     }
 }
-
