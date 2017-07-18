@@ -3,6 +3,10 @@ extern crate eve;
 use eve::ops::{Program};
 use eve::parser::{parse_string};
 
+//--------------------------------------------------------------------
+// Helper macros
+//--------------------------------------------------------------------
+
 // macro_rules! n (($p:ident, $i:expr) => ({ $p.state.interner.number_id($i as f32) }));
 macro_rules! s (($p:ident, $i:expr) => ({ $p.state.interner.string_id(&$i) }));
 // macro_rules! txn (($p:ident, [ $($t:ident ($e:ident, $a:expr, $v:expr),)* ]) => ({
@@ -32,6 +36,10 @@ macro_rules! test (($name:ident, $body:tt) => (
     }
 
 ));
+
+//--------------------------------------------------------------------
+// Basic binds
+//--------------------------------------------------------------------
 
 test!(base_bind, {
     search
