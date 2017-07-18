@@ -925,10 +925,14 @@ impl<'a> Node<'a> {
                 None
             },
             &Node::Watch(ref name, ref values) => {
-                let registers = values.iter()
-                                      .map(|v| v.compile(interner, cur_block).unwrap())
-                                      .collect();
-                cur_block.constraints.push(Constraint::Watch {name:name.to_string(), registers});
+                for value in values {
+                    if let &Node::ExprSet(ref items) = value {
+                        let registers = items.iter()
+                            .map(|v| v.compile(interner, cur_block).unwrap())
+                            .collect();
+                        cur_block.constraints.push(Constraint::Watch {name:name.to_string(), registers});
+                    }
+                }
                 None
             },
             &Node::Block{ref search, ref update} => {
@@ -1641,7 +1645,7 @@ named!(watch_section<Node<'a>>,
        do_parse!(
            sp!(tag!("watch")) >>
            watcher: sp!(identifier) >>
-           items: sp!(delimited!(tag!("("), many1!(sp!(expr)) ,tag!(")"))) >>
+           items: many1!(expr_set) >>
            (Node::Watch(watcher, items))));
 
 named!(block<Node<'a>>,
@@ -1799,4 +1803,3 @@ pub fn parser_test() {
     let x = markdown(contents.as_bytes());
     println!("{:?}", x);
 }
-

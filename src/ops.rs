@@ -413,7 +413,13 @@ impl Block {
             for &(ix, constraint) in watch_constraints.iter() {
                 if let &Constraint::Watch {ref name, ..} = constraint {
                     last_iter_next -= 1;
-                    let next = if to_solve > 0 {last_iter_next} else { PIPE_FINISHED };
+                    let next = if ix as usize != watch_constraints.len() - 1 {
+                        1
+                    } else if to_solve > 0 {
+                        last_iter_next
+                    } else {
+                        PIPE_FINISHED
+                    };
                     pipe.push(Instruction::Watch {next, name:name.to_string(), constraint:ix as usize});
                 }
             }
