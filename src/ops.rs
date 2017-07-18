@@ -1114,8 +1114,10 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
             Some(ref mut cur) => {
                 match cur.next(&mut frame.row, iterator) {
                     false => {
-                        frame.row.clear_solved(iterator);
-                        cur.clear(&mut frame.row, iterator);
+                        if cur.estimate() != 0 {
+                            frame.row.clear_solved(iterator);
+                            cur.clear(&mut frame.row, iterator);
+                        }
                         bail
                     },
                     true => {
