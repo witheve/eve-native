@@ -42,11 +42,89 @@ macro_rules! many_n (($state:ident, $n:expr, $err:ident, $func:ident) => (
         }
 ));
 #[macro_export] macro_rules! many_0 (
-    ($state:ident, $func:ident | $err:ident) => ( many_n!($state, 0, $err, $func); ),
-    ($state:ident, $func:ident) => ( many_n!($state, 0, InvalidBlock, $func); )
+    ($state:ident, $func:ident | $err:ident) => ( many_n!($state, 0, $err, $func); );
+    ($state:ident, $func:ident) => ( many_n!($state, 0, InvalidBlock, $func); );
 );
 #[macro_export] macro_rules! many_1 (($state:ident, $func:ident | $err:ident) => ( many_n!($state, 1, $err, $func); ));
 
+macro_rules! alt_branch (
+    ($state:ident, $cur:ident ) => ({ $cur($state) });
+    ($state:ident, $cur:ident $(, $rest:ident)*) => ({
+        let a = $cur($state);
+        match a {
+            ParseResult::Ok(..) => { a }
+            ParseResult::Error(..) => { a }
+            ParseResult::Fail(..) => {
+                alt_branch!($state $(, $rest)*)
+            }
+        }
+    });
+);
+
+#[macro_export]
+macro_rules! alt (
+    ($state:ident, [ $($rest:ident)* ] | $err:ident) => (
+        {
+            let result = alt_branch!($state $(, $rest)*);
+            match result {
+                ParseResult::Fail(..) => { return $state.error(ParseError::$err); }
+                ParseResult::Error(..) => { return result; }
+                ParseResult::Ok(v) => v
+            }
+        });
+    ($state:ident, [ $($rest:ident)* ]) => (
+        {
+            let result = alt_branch!($state $(, $rest)*);
+            match result {
+                ParseResult::Fail(..) => { return ParseResult::Fail(MatchType::NoAlternative) }
+                ParseResult::Error(..) => { return result; }
+                ParseResult::Ok(v) => v
+            }
+        });
+);
+
+macro_rules! alt_tag_branch (
+    ($state:ident, $cur:expr ) => ({
+        let v = $cur;
+        match $state.consume(v) {
+            Ok(res) => ParseResult::Ok(res),
+            Err(_) => ParseResult::Fail(MatchType::NoAlternative),
+        }
+    });
+    ($state:ident, $cur:expr $(, $rest:expr)*) => ({
+        let v = $cur;
+        match $state.consume(v) {
+            Ok(res) => ParseResult::Ok(res),
+            Err(_) => {
+                alt_tag_branch!($state $(, $rest)*)
+            }
+        }
+    });
+);
+
+#[macro_export]
+macro_rules! alt_tag (
+    ($state:ident, [ $($rest:expr)* ] | $err:ident) => (
+        {
+            let result:ParseResult<&str> = alt_tag_branch!($state $(, $rest)*);
+            match result {
+                ParseResult::Fail(..) => { return $state.error(ParseError::$err); }
+                ParseResult::Error(..) => { unreachable!() }
+                ParseResult::Ok(v) => v
+            }
+        });
+    ($state:ident, [ $($rest:expr)* ]) => (
+        {
+            let result:ParseResult<&str> = alt_tag_branch!($state $(, $rest)*);
+            match result {
+                ParseResult::Fail(..) => { return ParseResult::Fail(MatchType::NoAlternative); }
+                ParseResult::Error(..) => { unreachable!() }
+                ParseResult::Ok(v) => v
+            }
+        });
+);
+
+#[macro_export]
 macro_rules! result (($state:ident, $value:expr) => (
         {
             $state.pop();
@@ -54,10 +132,20 @@ macro_rules! result (($state:ident, $value:expr) => (
         }
 ));
 
+#[macro_export]
 macro_rules! parser (($name:ident( $state:ident $(, $arg:ident : $type:ty)* ) -> $out:ty $body:block) => (
         pub fn $name<'a>($state:&mut ParseState<'a> $(, $arg:$type)*) -> ParseResult<'a, $out> {
-            $state.mark("expr");
+            $state.mark(stringify!($name));
             $state.ignore_space(true);
+            $body
+        }
+));
+
+#[macro_export]
+macro_rules! whitespace_parser (($name:ident( $state:ident $(, $arg:ident : $type:ty)* ) -> $out:ty $body:block) => (
+        pub fn $name<'a>($state:&mut ParseState<'a> $(, $arg:$type)*) -> ParseResult<'a, $out> {
+            $state.mark(stringify!($name));
+            $state.ignore_space(false);
             $body
         }
 ));
@@ -80,6 +168,7 @@ pub enum ParseResult<'a, T> {
 
 #[derive(Debug)]
 pub enum MatchType<'a> {
+    NoAlternative,
     Tag(&'a str),
     AnyExcept(&'a str),
 }
@@ -204,6 +293,16 @@ parser!(project_section(state) -> Node<'a> {
     let items = many_1!(state, expr | EmptyUpdate);
     tag!(state, ")");
     result!(state, Node::Project(items))
+});
+
+parser!(alt_test(state) -> Node<'a> {
+    let v = alt!(state, [ project_section expr identifier ] | InvalidBlock);
+    result!(state, v)
+});
+
+parser!(alt_tag_test(state) -> Node<'a> {
+    let v = alt_tag!(state, [ "foo" "bar" "baz" ] | InvalidBlock);
+    result!(state, Node::Variable(v))
 });
 
 // parser!(alt_test(state) -> Node<'a> {

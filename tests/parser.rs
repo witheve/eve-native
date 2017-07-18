@@ -35,7 +35,7 @@ test!(parse_error_empty_search, {
 
 #[test]
 pub fn parser_combinator() {
-    let mut state = ParseState::new("   project (1,1,1)");
-    let result = identifier(&mut state);
+    let mut state = ParseState::new(" project ( bajEz");
+    let result = alt_test(&mut state);
     println!("{:?}", result);
 }
