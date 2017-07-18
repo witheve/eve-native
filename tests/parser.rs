@@ -11,6 +11,7 @@ macro_rules! parse_blocks (($info:tt) => ({
     let mut program = Program::new();
     let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=").replace(" . ", ".");
     let blocks = parse_string(&mut program, &stringy, "test");
+    blocks
 }));
 
 macro_rules! test (($name:ident, $body:tt) => (
@@ -35,7 +36,7 @@ test!(parse_error_empty_search, {
 
 #[test]
 pub fn parser_combinator() {
-    let mut state = ParseState::new("   project (1,1,1)");
-    let result = identifier(&mut state);
+    let mut state = ParseState::new(" project ( bajEz");
+    let result = alt_test(&mut state);
     println!("{:?}", result);
 }

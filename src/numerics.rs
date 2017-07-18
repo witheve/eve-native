@@ -315,8 +315,8 @@ fn numerics_base_float() {
 
 
 
-extern crate test;
-use self::test::{Bencher};
+// extern crate test;
+// use self::test::{Bencher};
 // #[bench]
 // fn bench_numerics_add(b:&mut Bencher) {
 //     let y:i32 = -1;
