@@ -42,8 +42,8 @@ macro_rules! many_n (($state:ident, $n:expr, $err:ident, $func:ident) => (
         }
 ));
 #[macro_export] macro_rules! many_0 (
-    ($state:ident, $func:ident | $err:ident) => ( many_n!($state, 0, $err, $func); ),
-    ($state:ident, $func:ident) => ( many_n!($state, 0, InvalidBlock, $func); )
+    ($state:ident, $func:ident | $err:ident) => ( many_n!($state, 0, $err, $func); );
+    ($state:ident, $func:ident) => ( many_n!($state, 0, InvalidBlock, $func); );
 );
 #[macro_export] macro_rules! many_1 (($state:ident, $func:ident | $err:ident) => ( many_n!($state, 1, $err, $func); ));
 
