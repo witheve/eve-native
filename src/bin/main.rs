@@ -11,13 +11,14 @@ extern crate time;
 
 use eve::ops::{Program, Transaction};
 use eve::parser::{parse_file};
-use eve::watcher::{SystemTimerWatcher};
+use eve::watcher::{SystemTimerWatcher, PrintWatcher};
 use std::env;
 
 fn main() {
     let mut program = Program::new();
     let outgoing = program.outgoing.clone();
     program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
+    program.attach("system/print", Box::new(PrintWatcher{}));
 
     for file in env::args().skip(1) {
         let blocks = parse_file(&mut program, &file);
@@ -38,4 +39,3 @@ fn main() {
         println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
     }
 }
-
