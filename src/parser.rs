@@ -89,6 +89,7 @@ pub enum Node<'a> {
     NoneValue,
     Tag(&'a str),
     Variable(&'a str),
+    Identifier(&'a str),
     GeneratedVariable(String),
     Attribute(&'a str),
     AttributeEquality(&'a str, Box<Node<'a>>),
