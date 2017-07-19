@@ -36,7 +36,8 @@ test!(parse_error_empty_search, {
 
 #[test]
 pub fn parser_combinator() {
-    let mut state = ParseState::new(" project ( bajEz");
-    let result = expression(&mut state);
+    let mut state = ParseState::new(" asdofk aspodkf
+                                    search [#zomg] bind [#bar] end");
+    let result = embedded_blocks(&mut state, "test.eve");
     println!("{:?}", result);
 }

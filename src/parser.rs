@@ -12,6 +12,7 @@ use std::io::prelude::*;
 use std::fs::{self, File};
 use std::cmp::{self};
 use self::walkdir::WalkDir;
+use parser2::{ParseResult};
 
 struct FunctionInfo {
     is_multi: bool,
@@ -113,7 +114,7 @@ pub enum Node<'a> {
     Commit(Vec<Node<'a>>),
     Project(Vec<Node<'a>>),
     Watch(&'a str, Vec<Node<'a>>),
-    Block{search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
+    Block{errors: Vec<ParseResult<'a, Node<'a>>>, search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
     Doc { file:String, blocks:Vec<Node<'a>> }
 }
 
@@ -426,7 +427,7 @@ impl<'a> Node<'a> {
                 };
                 None
             },
-            &mut Node::Block{ref mut search, ref mut update} => {
+            &mut Node::Block{ref mut search, ref mut update, ..} => {
                 if let Some(ref mut s) = **search {
                     s.gather_equalities(interner, cur_block);
                 };
@@ -938,7 +939,7 @@ impl<'a> Node<'a> {
                 }
                 None
             },
-            &Node::Block{ref search, ref update} => {
+            &Node::Block{ref search, ref update, ..} => {
                 if let Some(ref s) = **search {
                     s.compile(interner, cur_block);
                 };
@@ -1657,7 +1658,7 @@ named!(block<Node<'a>>,
                search: opt!(search_section) >>
                update: alt_complete!( bind_section | commit_section | project_section | watch_section ) >>
                sp!(tag!("end")) >>
-               (Node::Block {search:Box::new(search), update:Box::new(update)}))));
+               (Node::Block {errors: vec![], search:Box::new(search), update:Box::new(update)}))));
 
 named!(maybe_block<Option<Node<'a>>>,
        alt_complete!(block => { |block| Some(block) } |

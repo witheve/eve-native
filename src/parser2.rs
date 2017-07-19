@@ -11,7 +11,8 @@ macro_rules! call (
         let result = $func($state);
         match result {
             ParseResult::Ok(value) => { value }
-            _ => return result,
+            ParseResult::Fail(f) => { return $state.fail(f) }
+            _ => { $state.pop(); return result },
         }
     });
     ($state:ident, $func:ident | $err:ident) => ({
@@ -23,13 +24,29 @@ macro_rules! call (
     });
 );
 
+macro_rules! opt (
+    ($state:ident, $func:ident) => ({
+        let result = $func($state);
+        match result {
+            ParseResult::Ok(value) => { Some(value) }
+            _ => None,
+        }
+    });
+);
+
 #[macro_export]
-macro_rules! tag (($name:ident, $tag:expr) => (
-    let v = $tag;
-    if let Err(_) = $name.consume(v) {
-        return $name.fail(MatchType::Tag(v));
-    }
-));
+macro_rules! tag (
+    ($name:ident, $tag:expr) => (
+        let v = $tag;
+        if let Err(_) = $name.consume(v) {
+            return $name.fail(MatchType::Tag(v));
+        });
+    ($name:ident, $tag:expr => $err:ident) => (
+        let v = $tag;
+        if let Err(_) = $name.consume(v) {
+            return $name.error(ParseError::$err);
+        });
+);
 
 #[macro_export]
 macro_rules! any_except (($name:ident, $chars:expr) => (
@@ -68,7 +85,7 @@ macro_rules! take_while (
                 }
             }
         });
-    ($name:ident, $chars:ident | $err:ident) => ({
+    ($name:ident, $chars:ident => $err:ident) => ({
             let v = $chars;
             match $name.consume_while(v) {
                 Ok(cur) => {
@@ -100,7 +117,7 @@ macro_rules! take_while_1 (
                 }
             }
         });
-    ($name:ident, $chars:ident | $err:ident) => ({
+    ($name:ident, $chars:ident => $err:ident) => ({
             let v = $chars;
             match $name.consume_while(v) {
                 Ok(cur) => {
@@ -123,7 +140,7 @@ macro_rules! many_n (
             loop {
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { return result; }
+                    ParseResult::Error(..) => { $state.pop(); return result; }
                     ParseResult::Ok(value) => { items.push(value); }
                     ParseResult::Fail(..) => { break }
                 }
@@ -139,7 +156,7 @@ macro_rules! many_n (
             loop {
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { return result; }
+                    ParseResult::Error(..) => { $state.pop(); return result; }
                     ParseResult::Ok(value) => { items.push(value); }
                     ParseResult::Fail(..) => { break }
                 }
@@ -155,7 +172,7 @@ macro_rules! many_n (
             loop {
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { return result; }
+                    ParseResult::Error(..) => { $state.pop(); return result; }
                     ParseResult::Ok(value) => { items.push(value); }
                     ParseResult::Fail(..) => { break }
                 }
@@ -165,7 +182,7 @@ macro_rules! many_n (
 );
 #[macro_export] macro_rules! many (($state:ident, $func:ident) => ( many_n!($state, $func); ); );
 #[macro_export] macro_rules! many_1 (
-    ($state:ident, $func:ident | $err:ident) => ( many_n!($state, 1, $err, $func); );
+    ($state:ident, $func:ident => $err:ident) => ( many_n!($state, 1, $err, $func); );
     ($state:ident, $func:ident) => ( many_n!($state, 1, $func); );
 );
 
@@ -186,12 +203,12 @@ macro_rules! alt_branch (
 
 #[macro_export]
 macro_rules! alt (
-    ($state:ident, [ $($rest:ident)* ] | $err:ident) => (
+    ($state:ident, [ $($rest:ident)* ] => $err:ident) => (
         {
             let result = alt_branch!($state $(, $rest)*);
             match result {
                 ParseResult::Fail(..) => { return $state.error(ParseError::$err); }
-                ParseResult::Error(..) => { return result; }
+                ParseResult::Error(frozen, info) => { $state.pop(); return ParseResult::Error(frozen, info); }
                 ParseResult::Ok(v) => v
             }
         });
@@ -199,8 +216,8 @@ macro_rules! alt (
         {
             let result = alt_branch!($state $(, $rest)*);
             match result {
-                ParseResult::Fail(..) => { return ParseResult::Fail(MatchType::Alternative) }
-                ParseResult::Error(..) => { return result; }
+                ParseResult::Fail(..) => { return $state.fail(MatchType::Alternative) }
+                ParseResult::Error(frozen, info) => { $state.pop(); return ParseResult::Error(frozen, info); }
                 ParseResult::Ok(v) => v
             }
         });
@@ -228,7 +245,7 @@ macro_rules! alt_tag_branch (
 
 #[macro_export]
 macro_rules! alt_tag (
-    ($state:ident, [ $($rest:expr)* ] | $err:ident) => (
+    ($state:ident, [ $($rest:expr)* ] => $err:ident) => (
         {
             let result:ParseResult<&str> = alt_tag_branch!($state $(, $rest)*);
             match result {
@@ -241,7 +258,7 @@ macro_rules! alt_tag (
         {
             let result:ParseResult<&str> = alt_tag_branch!($state $(, $rest)*);
             match result {
-                ParseResult::Fail(..) => { return ParseResult::Fail(MatchType::Alternative); }
+                ParseResult::Fail(..) => { return $state.fail(MatchType::Alternative); }
                 ParseResult::Error(..) => { unreachable!() }
                 ParseResult::Ok(v) => v
             }
@@ -278,24 +295,28 @@ macro_rules! whitespace_parser (($name:ident( $state:ident $(, $arg:ident : $typ
 // Parse Result and Errors
 //--------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseError {
     EmptySearch,
     EmptyUpdate,
     InvalidBlock,
+    MissingEnd,
+    MissingUpdate,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseResult<'a, T> {
     Ok(T),
     Error(FrozenParseState, ParseError),
     Fail(MatchType<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MatchType<'a> {
+    Block,
     Alternative,
     TakeWhile,
+    ConsumeUntil,
     Tag(&'a str),
     AnyExcept(&'a str),
     Many(usize),
@@ -323,11 +344,12 @@ pub struct ParseState<'a> {
     ch: usize,
     pos: usize,
     ignore_space: bool,
+    output_type: OutputType,
 }
 
 impl<'a> ParseState<'a> {
     pub fn new(input:&str) -> ParseState {
-        ParseState { input, stack:vec![], capture_stack:vec![], line:0, ch:0, pos:0, ignore_space: false }
+        ParseState { input, stack:vec![], capture_stack:vec![], line:0, ch:0, pos:0, output_type: OutputType::Lookup, ignore_space: false }
     }
 
     pub fn capture(&mut self) {
@@ -375,30 +397,41 @@ impl<'a> ParseState<'a> {
     pub fn consume_except(&mut self, chars:&str) -> Result<&'a str, ()> {
         if self.ignore_space { self.eat_space(); }
         let remaining = &self.input[self.pos..];
+        if remaining.len() == 0 { return Err(()); }
         let start = self.pos;
         for c in remaining.chars() {
             if chars.find(c) != None { break; }
             self.ch += 1;
             self.pos += 1;
         }
-        Ok(&self.input[start..self.pos])
+        if self.pos != start {
+            Ok(&self.input[start..self.pos])
+        } else {
+            Err(())
+        }
     }
 
     pub fn consume_chars(&mut self, chars:&str) -> Result<&'a str, ()> {
         if self.ignore_space { self.eat_space(); }
         let remaining = &self.input[self.pos..];
+        if remaining.len() == 0 { return Err(()); }
         let start = self.pos;
         for c in remaining.chars() {
             if chars.find(c) == None { break; }
             self.ch += 1;
             self.pos += 1;
         }
-        Ok(&self.input[start..self.pos])
+        if self.pos != start {
+            Ok(&self.input[start..self.pos])
+        } else {
+            Err(())
+        }
     }
 
     pub fn consume_while(&mut self, pred:fn(char) -> bool) -> Result<&'a str, ()> {
         if self.ignore_space { self.eat_space(); }
         let remaining = &self.input[self.pos..];
+        if remaining.len() == 0 { return Err(()); }
         let start = self.pos;
         for c in remaining.chars() {
             if !pred(c) { break; }
@@ -410,12 +443,17 @@ impl<'a> ParseState<'a> {
             }
             self.pos += 1;
         }
-        Ok(&self.input[start..self.pos])
+        if self.pos != start {
+            Ok(&self.input[start..self.pos])
+        } else {
+            Err(())
+        }
     }
 
     pub fn consume<'b>(&mut self, token:&'b str) -> Result<&'b str, ()> {
         if self.ignore_space { self.eat_space(); }
         let remaining = &self.input[self.pos..];
+        if remaining.len() == 0 { return Err(()); }
         let token_len = token.len();
         if remaining.len() < token_len {
             return Err(());
@@ -430,12 +468,41 @@ impl<'a> ParseState<'a> {
         Ok(token)
     }
 
+    pub fn consume_until<T>(&mut self, pred:fn(&mut ParseState<'a>) -> ParseResult<'a, T>) -> (Result<&'a str, ()>, ParseResult<'a, T>) {
+        if self.ignore_space { self.eat_space(); }
+        let remaining = &self.input[self.pos..];
+        let start = self.pos;
+        for c in remaining.chars() {
+            let pre_check_pos = self.pos;
+            let result = pred(self);
+            match result {
+                ParseResult::Ok(..) => return (Ok(&self.input[start..pre_check_pos]), result),
+                ParseResult::Error(..) => return (Ok(&self.input[start..pre_check_pos]), result),
+                _ => {}
+            }
+            if c == '\n' {
+                self.ch = 0;
+                self.line += 1;
+            } else {
+                self.ch += 1;
+            }
+            self.pos += 1;
+        }
+        (Ok(&self.input[start..self.pos]), ParseResult::Fail(MatchType::ConsumeUntil))
+    }
+
     pub fn fail<'b, T>(&mut self, with:MatchType<'b>) -> ParseResult<'b, T> {
         self.backtrack();
         ParseResult::Fail(with)
     }
 
-    pub fn error<'b, T>(&self, with:ParseError) -> ParseResult<'b, T> {
+    pub fn error<'b, T>(&mut self, with:ParseError) -> ParseResult<'b, T> {
+        let err = self.make_error(with);
+        self.pop();
+        err
+    }
+
+    pub fn make_error<'b, T>(&self, with:ParseError) -> ParseResult<'b, T> {
         ParseResult::Error(self.freeze(), with)
     }
 
@@ -555,6 +622,11 @@ parser!(string(state) -> Node<'a> {
 // values and expressions
 //--------------------------------------------------------------------
 
+parser!(none_value(state) -> Node<'a> {
+    tag!(state, "none");
+    result!(state, Node::NoneValue)
+});
+
 parser!(value(state) -> Node<'a> {
     let part = alt!(state, [ number string /* record_function record_reference */ wrapped_expression ]);
     result!(state, part)
@@ -574,7 +646,7 @@ parser!(expression(state) -> Node<'a> {
 
 parser!(expression_set(state) -> Node<'a> {
     tag!(state, "(");
-    let exprs = many_1!(state, expression | EmptyUpdate);
+    let exprs = many_1!(state, expression => EmptyUpdate);
     tag!(state, ")");
     result!(state, Node::ExprSet(exprs))
 });
@@ -657,15 +729,31 @@ parser!(attribute(state) -> Node<'a> {
     result!(state, part)
 });
 
+parser!(pipe(state) -> Node<'a> {
+    tag!(state, "|");
+    result!(state, Node::Pipe)
+});
+
+parser!(output_attribute(state) -> Node<'a> {
+    let item = alt!(state, [ hashtag attribute_equality pipe attribute_variable ]);
+    result!(state, item)
+});
+
 //--------------------------------------------------------------------
 // Records
 //--------------------------------------------------------------------
 
 parser!(record(state) -> Node<'a> {
     tag!(state, "[");
-    let attributes = many!(state, attribute);
-    tag!(state, "]");
-    result!(state, Node::Record(None, attributes))
+    if state.output_type == OutputType::Lookup {
+        let attributes = many!(state, attribute);
+        tag!(state, "]");
+        result!(state, Node::Record(None, attributes))
+    } else {
+        let attributes = many!(state, output_attribute);
+        tag!(state, "]");
+        result!(state, Node::OutputRecord(None, attributes, state.output_type))
+    }
 });
 
 parser!(record_set(state) -> Node<'a> {
@@ -689,14 +777,14 @@ parser!(function_attribute(state) -> Node<'a> {
     result!(state, part)
 });
 
-parser!(lookup(state, output_type:OutputType) -> Node<'a> {
+parser!(lookup(state) -> Node<'a> {
     tag!(state, "lookup[");
     let attributes = many!(state, function_attribute);
     tag!(state, "]");
-    result!(state, Node::RecordLookup(attributes, output_type))
+    result!(state, Node::RecordLookup(attributes, state.output_type))
 });
 
-parser!(record_function(state) -> Node<'a> {
+whitespace_parser!(record_function(state) -> Node<'a> {
     let op = match call!(state, identifier) {
         Node::Identifier(v) => v,
         _ => unreachable!(),
@@ -730,13 +818,263 @@ parser!(multi_function_equality(state) -> Node<'a> {
 });
 
 //--------------------------------------------------------------------
-// Watch and Project
+// Attribute access (foo.bar)
 //--------------------------------------------------------------------
+
+parser!(dot_pair(state) -> Node<'a> {
+    tag!(state, ".");
+    let ident = call!(state, identifier);
+    result!(state, ident)
+});
+
+parser!(attribute_access(state) -> Node<'a> {
+    let start = match call!(state, identifier) {
+        Node::Identifier(v) => v,
+        _ => unreachable!(),
+    };
+    let mut items = vec![start];
+    let mut pairs = many_1!(state, dot_pair);
+    items.extend(pairs.drain(..).map(|x| {
+        if let Node::Identifier(v) = x { v } else { unreachable!() }
+    }));
+    result!(state, Node::AttributeAccess(items))
+});
+
+parser!(record_reference(state) -> Node<'a> {
+    let part = alt!(state, [ attribute_access variable ]);
+    result!(state, part)
+});
+
+parser!(mutating_attribute_access(state) -> Node<'a> {
+    let start = match call!(state, identifier) {
+        Node::Identifier(v) => v,
+        _ => unreachable!(),
+    };
+    let mut items = vec![start];
+    let mut pairs = many_1!(state, dot_pair);
+    items.extend(pairs.drain(..).map(|x| {
+        if let Node::Identifier(v) = x { v } else { unreachable!() }
+    }));
+    result!(state, Node::MutatingAttributeAccess(items))
+});
+
+parser!(mutating_record_reference(state) -> Node<'a> {
+    let part = alt!(state, [ mutating_attribute_access variable ]);
+    result!(state, part)
+});
+
+//--------------------------------------------------------------------
+// Outputs
+//--------------------------------------------------------------------
+
+parser!(bind_update(state) -> Node<'a> {
+    let left = call!(state, mutating_record_reference);
+    let op = alt_tag!(state, [ "+=" "<-" ]);
+    let value = alt!(state, [ record none_value expression hashtag ]);
+    result!(state, Node::RecordUpdate { op, record:Box::new(left), value:Box::new(value), output_type: OutputType::Bind })
+});
+
+parser!(commit_update(state) -> Node<'a> {
+    let left = call!(state, mutating_record_reference);
+    let op = alt_tag!(state, [ ":=" "+=" "-=" "<-" ]);
+    let value = alt!(state, [ record none_value expression hashtag ]);
+    result!(state, Node::RecordUpdate { op, record:Box::new(left), value:Box::new(value), output_type: OutputType::Commit })
+});
+
+parser!(output_equality(state) -> Node<'a> {
+    let left = call!(state, variable);
+    tag!(state, "=");
+    let right = call!(state, record);
+    result!(state, Node::Equality { left:Box::new(left), right:Box::new(right) })
+});
+
+//--------------------------------------------------------------------
+// Not
+//--------------------------------------------------------------------
+
+parser!(not_statement(state) -> Node<'a> {
+    let item = alt!(state, [ lookup multi_function_equality inequality record equality attribute_access ]);
+    result!(state, item)
+});
+
+parser!(not_form(state) -> Node<'a> {
+    tag!(state, "not");
+    tag!(state, "(");
+    let items = many!(state, not_statement);
+    tag!(state, ")");
+    result!(state, Node::Not(0, items))
+});
+
+//--------------------------------------------------------------------
+// If
+//--------------------------------------------------------------------
+
+parser!(if_equality(state) -> Vec<Node<'a>> {
+    let outputs = alt!(state, [ expression expression_set ]);
+    tag!(state, "=");
+    let items = match outputs {
+        Node::ExprSet(items) => items,
+        _ => vec![outputs],
+    };
+    result!(state, items)
+});
+
+parser!(else_only_branch(state) -> Node<'a> {
+    let result = alt!(state, [ if_branch else_branch ]);
+    result!(state, Node::IfBranch {sub_block_id:0, exclusive:true, body:vec![], result:Box::new(result)})
+});
+
+parser!(else_branch(state) -> Node<'a> {
+    tag!(state, "else");
+    let mut branch = call!(state, if_branch);
+    if let Node::IfBranch { ref mut exclusive, .. } = branch {
+        *exclusive = true;
+    } else {
+        panic!("Invalid if branch");
+    };
+    result!(state, branch)
+});
+
+parser!(if_else_branch(state) -> Node<'a> {
+    let result = alt!(state, [ if_branch else_branch else_only_branch ]);
+    result!(state, result)
+});
+
+parser!(if_branch_statement(state) -> Node<'a> {
+    let item = alt!(state, [ lookup multi_function_equality not_form inequality record equality attribute_access ]);
+    result!(state, item)
+});
+
+parser!(if_branch(state) -> Node<'a> {
+    tag!(state, "if");
+    let body = many!(state, if_branch_statement);
+    tag!(state, "then");
+    let result = alt!(state, [ expression expression_set ]);
+    result!(state, Node::IfBranch {sub_block_id:0, exclusive:false, body, result:Box::new(result)})
+});
+
+parser!(if_expression(state) -> Node<'a> {
+    let outputs = opt!(state, if_equality);
+    let start_branch = call!(state, if_branch);
+    let other_branches = many!(state, if_else_branch);
+    let exclusive = other_branches.iter().any(|b| {
+        if let &Node::IfBranch {exclusive, ..} = b {
+            exclusive
+        } else {
+            false
+        }
+    });
+    let mut branches = vec![start_branch];
+    branches.extend(other_branches);
+    result!(state, Node::If { sub_block_id:0, exclusive, outputs, branches })
+});
+
+//--------------------------------------------------------------------
+// Sections
+//--------------------------------------------------------------------
+
+parser!(search_section_statement(state) -> Node<'a> {
+    let item = alt!(state, [ not_form lookup multi_function_equality if_expression inequality
+                             record equality attribute_access ]);
+    result!(state, item)
+});
+
+parser!(search_section(state) -> Node<'a> {
+    tag!(state, "search");
+    let items = many_1!(state, search_section_statement => EmptySearch);
+    result!(state, Node::Search(items))
+});
+
+parser!(bind_section_statement(state) -> Node<'a> {
+    let item = alt!(state, [ output_equality record bind_update ]);
+    result!(state, item)
+});
+
+parser!(bind_section(state) -> Node<'a> {
+    tag!(state, "bind");
+    state.output_type = OutputType::Bind;
+    let items = many_1!(state, bind_section_statement => EmptyUpdate);
+    result!(state, Node::Bind(items))
+});
+
+parser!(commit_section_statement(state) -> Node<'a> {
+    let item = alt!(state, [ output_equality record commit_update ]);
+    result!(state, item)
+});
+
+parser!(commit_section(state) -> Node<'a> {
+    tag!(state, "commit");
+    state.output_type = OutputType::Commit;
+    let items = many_1!(state, commit_section_statement => EmptyUpdate);
+    result!(state, Node::Commit(items))
+});
 
 parser!(project_section(state) -> Node<'a> {
     tag!(state, "project");
     tag!(state, "(");
-    let items = many_1!(state, expression | EmptyUpdate);
+    let items = many_1!(state, expression => EmptyUpdate);
     tag!(state, ")");
     result!(state, Node::Project(items))
+});
+
+parser!(watch_section(state) -> Node<'a> {
+    tag!(state, "watch");
+    let watcher = match call!(state, identifier) {
+        Node::Identifier(v) => v,
+        _ => unreachable!(),
+    };
+    let items = many_1!(state, expression_set => EmptyUpdate);
+    result!(state, Node::Watch(watcher, items))
+});
+
+//--------------------------------------------------------------------
+// Block
+//--------------------------------------------------------------------
+parser!(block_end(state) -> Node<'a> {
+    tag!(state, "end");
+    result!(state, Node::NoneValue)
+});
+
+parser!(block_update_section(state) -> Node<'a> {
+    let update = alt!(state, [ bind_section commit_section project_section watch_section ]);
+    result!(state, update)
+});
+
+parser!(block(state) -> Node<'a> {
+    let mut errors = vec![];
+    let s = search_section(state);
+    let search = match s {
+        ParseResult::Ok(node) => Some(node),
+        err @ ParseResult::Error(..) => { errors.push(err); Some(Node::NoneValue) },
+        _ => None,
+    };
+    let update = match block_update_section(state) {
+        ParseResult::Ok(node) => Some(node),
+        err @ ParseResult::Error(..) => { errors.push(err); Some(Node::NoneValue) },
+        _ => { errors.push(state.make_error(ParseError::MissingUpdate)); None },
+    };
+    if search.is_none() && update.is_none() {
+        return state.fail(MatchType::Block);
+    }
+    match state.consume("end") {
+        Err(_) => { errors.push(state.make_error(ParseError::MissingEnd)); }
+        _ => {}
+    }
+    if errors.len() > 0 {
+       state.consume_until(block_end);
+    }
+    result!(state, Node::Block {errors, search:Box::new(search), update:Box::new(update.unwrap_or(Node::NoneValue))})
+});
+
+parser!(embedded_blocks(state, file:&str) -> Node<'a> {
+    let end = state.input.len();
+    let mut blocks = vec![];
+    while state.pos < end {
+        let (_, block_result) = state.consume_until(block);
+        match block_result {
+            ParseResult::Ok(block) => blocks.push(block),
+            _ => {}
+        }
+    }
+    result!(state, Node::Doc { file:file.to_string(), blocks})
 });
