@@ -67,9 +67,7 @@ macro_rules! any (($name:ident, $chars:expr) => (
             let v = $chars;
             match $name.consume_chars(v) {
                 Ok(cur) => cur,
-                Err(_) => {
-                    return $name.fail(MatchType::AnyExcept(v));
-                }
+                Err(_) => { "" }
             }
         }
 ));
@@ -88,12 +86,7 @@ macro_rules! take_while (
     ($name:ident, $chars:ident => $err:ident) => ({
             let v = $chars;
             match $name.consume_while(v) {
-                Ok(cur) => {
-                    if cur.len() == 0 {
-                        return $name.error(ParseError::$err);
-                    }
-                    cur
-                },
+                Ok(cur) => { cur },
                 Err(_) => {
                     return $name.error(ParseError::$err);
                 }
@@ -106,12 +99,7 @@ macro_rules! take_while_1 (
     ($name:ident, $chars:ident) => ({
             let v = $chars;
             match $name.consume_while(v) {
-                Ok(cur) => {
-                    if cur.len() == 0 {
-                        return $name.fail(MatchType::TakeWhile);
-                    }
-                    cur
-                },
+                Ok(cur) => { cur },
                 Err(_) => {
                     return $name.fail(MatchType::TakeWhile);
                 }
@@ -120,12 +108,7 @@ macro_rules! take_while_1 (
     ($name:ident, $chars:ident => $err:ident) => ({
             let v = $chars;
             match $name.consume_while(v) {
-                Ok(cur) => {
-                    if cur.len() == 0 {
-                        return $name.error(ParseError::$err);
-                    }
-                    cur
-                },
+                Ok(cur) => { cur },
                 Err(_) => {
                     return $name.error(ParseError::$err);
                 }
@@ -556,6 +539,7 @@ parser!(variable(state) -> Node<'a> {
 //--------------------------------------------------------------------
 
 whitespace_parser!(float(state) -> Node<'a> {
+    state.eat_space();
     state.capture();
     // -? [0-9]+ \. [0-9]+
     any!(state, "-"); take_while_1!(state, is_digit); tag!(state, "."); take_while_1!(state, is_digit);
@@ -564,6 +548,7 @@ whitespace_parser!(float(state) -> Node<'a> {
 });
 
 whitespace_parser!(integer(state) -> Node<'a> {
+    state.eat_space();
     state.capture();
     // -? [0-9]+
     any!(state, "-"); take_while_1!(state, is_digit);
@@ -628,7 +613,7 @@ parser!(none_value(state) -> Node<'a> {
 });
 
 parser!(value(state) -> Node<'a> {
-    let part = alt!(state, [ number string /* record_function record_reference */ wrapped_expression ]);
+    let part = alt!(state, [ number string record_function record_reference wrapped_expression ]);
     result!(state, part)
 });
 
@@ -640,7 +625,7 @@ parser!(wrapped_expression(state) -> Node<'a> {
 });
 
 parser!(expression(state) -> Node<'a> {
-    let part = alt!(state, [ /* infix_addition infix_multiplication */ value ]);
+    let part = alt!(state, [ infix_addition infix_multiplication value ]);
     result!(state, part)
 });
 
@@ -785,6 +770,7 @@ parser!(lookup(state) -> Node<'a> {
 });
 
 whitespace_parser!(record_function(state) -> Node<'a> {
+    state.eat_space();
     let op = match call!(state, identifier) {
         Node::Identifier(v) => v,
         _ => unreachable!(),
