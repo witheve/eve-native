@@ -1536,7 +1536,8 @@ named!(not_form<Node<'a>>,
                                          multi_function_equality |
                                          inequality |
                                          record |
-                                         equality
+                                         equality |
+                                         attribute_access
                                          ))),
                              tag!(")")) >>
            (Node::Not(0, items))));
