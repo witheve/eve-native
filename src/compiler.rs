@@ -525,7 +525,7 @@ impl<'a> Node<'a> {
                 }
             },
             &Node::RecordFunction { ref op, ref params, ref outputs} => {
-                let info = FUNCTION_INFO.get(*op).unwrap();
+                let info = FUNCTION_INFO.get(*op).expect(&format!("Unknown function: {}", op));
                 let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
                 let mut cur_params = vec![Field::Value(0); info.params.len()];
                 let mut group = vec![];
