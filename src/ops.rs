@@ -1737,9 +1737,10 @@ impl Constraint {
                 *param_mask = make_register_mask(params.iter().collect());
                 *output_mask = make_register_mask(outputs.iter().collect());
             }
-            &mut Constraint::Aggregate {ref mut params, ref mut group, ref mut projection, ref mut param_mask, ..} => {
+            &mut Constraint::Aggregate {ref mut params, ref mut group, ref mut projection, ref mut param_mask, ref mut output_key, ..} => {
                 {
                     let mut vs = vec![];
+                    vs.extend(output_key.iter_mut());
                     vs.extend(params.iter_mut());
                     vs.extend(group.iter_mut());
                     vs.extend(projection.iter_mut());
