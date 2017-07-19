@@ -248,6 +248,7 @@ impl<'a> Node<'a> {
     pub fn gather_equalities(&mut self, interner:&mut Interner, cur_block:&mut Compilation) -> Option<Field> {
         match self {
             &mut Node::Pipe => { None },
+            &mut Node::DisabledBlock(_) => { None },
             &mut Node::Tag(_) => { None },
             &mut Node::Integer(v) => { Some(interner.number(v as f32)) }
             &mut Node::Float(v) => { Some(interner.number(v)) },
@@ -440,6 +441,7 @@ impl<'a> Node<'a> {
 
     pub fn compile(&self, interner:&mut Interner, cur_block: &mut Compilation) -> Option<Field> {
         match self {
+            &Node::DisabledBlock(_) => { None },
             &Node::Integer(v) => { Some(interner.number(v as f32)) }
             &Node::Float(v) => { Some(interner.number(v)) },
             &Node::RawString(v) => { Some(interner.string(v)) },

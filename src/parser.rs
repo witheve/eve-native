@@ -29,19 +29,19 @@ parser!(variable(state) -> Node<'a> {
 
 whitespace_parser!(float(state) -> Node<'a> {
     state.eat_space();
-    state.capture();
+    let start = state.pos;
     // -? [0-9]+ \. [0-9]+
     any!(state, "-"); take_while_1!(state, is_digit); tag!(state, "."); take_while_1!(state, is_digit);
-    let number = f32::from_str(state.stop_capture()).unwrap();
+    let number = f32::from_str(state.capture(start)).unwrap();
     result!(state, Node::Float(number))
 });
 
 whitespace_parser!(integer(state) -> Node<'a> {
     state.eat_space();
-    state.capture();
+    let start = state.pos;
     // -? [0-9]+
     any!(state, "-"); take_while_1!(state, is_digit);
-    let number = i32::from_str(state.stop_capture()).unwrap();
+    let number = i32::from_str(state.capture(start)).unwrap();
     result!(state, Node::Integer(number))
 });
 
@@ -510,6 +510,7 @@ parser!(watch_section(state) -> Node<'a> {
 //--------------------------------------------------------------------
 // Block
 //--------------------------------------------------------------------
+
 parser!(block_end(state) -> () {
     tag!(state, "end");
     result!(state, ())

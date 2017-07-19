@@ -323,7 +323,6 @@ pub struct FrozenParseState {
 pub struct ParseState<'a> {
     pub input: &'a str,
     stack: Vec<(&'a str, usize, usize, usize, bool)>,
-    capture_stack: Vec<usize>,
     pub line: usize,
     pub ch: usize,
     pub pos: usize,
@@ -333,15 +332,10 @@ pub struct ParseState<'a> {
 
 impl<'a> ParseState<'a> {
     pub fn new(input:&str) -> ParseState {
-        ParseState { input, stack:vec![], capture_stack:vec![], line:0, ch:0, pos:0, output_type: OutputType::Lookup, ignore_space: false }
+        ParseState { input, stack:vec![], line:0, ch:0, pos:0, output_type: OutputType::Lookup, ignore_space: false }
     }
 
-    pub fn capture(&mut self) {
-        self.capture_stack.push(self.pos);
-    }
-
-    pub fn stop_capture(&mut self) -> &'a str {
-        let start = self.capture_stack.pop().unwrap();
+    pub fn capture(&self, start:usize) -> &'a str {
         &self.input[start..self.pos]
     }
 
@@ -370,6 +364,14 @@ impl<'a> ParseState<'a> {
         let remaining = &self.input[self.pos..];
         for c in remaining.chars() {
             match c {
+                // eat comments
+                '/' => {
+                    if &self.input[self.pos + 1..self.pos + 2] == "/" {
+                        self.consume_line();
+                        self.eat_space();
+                    }
+                    break;
+                }
                 ' ' | '\t' | ',' => { self.ch += 1; self.pos += 1; }
                 '\n' => { self.line += 1; self.ch = 0; self.pos += 1; }
                 '\r' => { }
