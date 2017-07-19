@@ -410,10 +410,10 @@ impl Block {
                 }
             }
 
-            for &(ix, constraint) in watch_constraints.iter() {
+            for (watch_ix, &(ix, constraint)) in watch_constraints.iter().enumerate() {
                 if let &Constraint::Watch {ref name, ..} = constraint {
                     last_iter_next -= 1;
-                    let next = if ix as usize != watch_constraints.len() - 1 {
+                    let next = if watch_ix as usize != watch_constraints.len() - 1 {
                         1
                     } else if to_solve > 0 {
                         last_iter_next
