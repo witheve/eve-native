@@ -10,7 +10,17 @@ use eve::combinators::*;
 
 macro_rules! parse_blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=").replace(" . ", ".");
+    let stringy = stringify!($info).replace("# ", "#")
+        .replace("search", "\nsearch")
+        .replace("commit", "\ncommit")
+        .replace("bind", "\nbind")
+        .replace("watch", "\nwatch")
+        .replace("project", "\nproject")
+        .replace("end", "\nend\n")
+        .replace(" ! [", "[")
+        .replace(" ! / ", "/")
+        .replace(": =", ":=")
+        .replace(" . ", ".");
     let blocks = parse_string(&mut program, &stringy, "test");
     blocks
 }));

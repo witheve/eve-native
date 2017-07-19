@@ -378,6 +378,16 @@ impl<'a> ParseState<'a> {
         }
     }
 
+    pub fn consume_line(&mut self) {
+        let remaining = &self.input[self.pos..];
+        for c in remaining.chars() {
+            match c {
+                '\n' => { self.line += 1; self.ch = 0; self.pos += 1; break }
+                _ => { self.ch += 1; self.pos += 1; }
+            }
+        }
+    }
+
     pub fn consume_except(&mut self, chars:&str) -> Result<&'a str, ()> {
         if self.ignore_space { self.eat_space(); }
         let remaining = &self.input[self.pos..];

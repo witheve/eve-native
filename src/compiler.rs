@@ -114,6 +114,7 @@ pub enum Node<'a> {
     Project(Vec<Node<'a>>),
     Watch(&'a str, Vec<Node<'a>>),
     Block{errors: Vec<ParseResult<'a, Node<'a>>>, search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
+    DisabledBlock(&'a str),
     Doc { file:String, blocks:Vec<Node<'a>> }
 }
 

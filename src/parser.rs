@@ -510,9 +510,9 @@ parser!(watch_section(state) -> Node<'a> {
 //--------------------------------------------------------------------
 // Block
 //--------------------------------------------------------------------
-parser!(block_end(state) -> Node<'a> {
+parser!(block_end(state) -> () {
     tag!(state, "end");
-    result!(state, Node::NoneValue)
+    result!(state, ())
 });
 
 parser!(block_update_section(state) -> Node<'a> {
@@ -562,14 +562,42 @@ parser!(block(state) -> Node<'a> {
     result!(state, Node::Block {errors, search:Box::new(search), update:Box::new(update.unwrap_or(Node::NoneValue))})
 });
 
+parser!(block_start(state) -> &'a str {
+    let open = alt_tag!(state, [ "disabled" "search" "commit" "bind" "project" "watch" ]);
+    result!(state, open)
+});
+
 parser!(embedded_blocks(state, file:&str) -> Node<'a> {
     let end = state.input.len();
     let mut blocks = vec![];
     while state.pos < end {
-        let (_, block_result) = state.consume_until(block);
-        match block_result {
-            ParseResult::Ok(block) => blocks.push(block),
-            _ => {}
+        state.mark("line");
+        let has_start = opt!(state, block_start);
+        match has_start {
+            None => { state.pop(); state.consume_line(); }
+            Some(v) => {
+                state.backtrack();
+                let block_pos = state.pos;
+                let block_line = state.line;
+                let block_ch = state.ch;
+                while state.pos < end {
+                    if let Some(_) = opt!(state, block_end) { break; }
+                    state.consume_line();
+                }
+                let block_content = &state.input[block_pos..state.pos];
+                let mut block_state = ParseState::new(block_content);
+                block_state.line = block_line;
+                block_state.ch = block_ch;
+                if v == "disabled" {
+                    blocks.push(Node::DisabledBlock(block_content));
+                } else {
+                    let result = block(&mut block_state);
+                    match result {
+                        ParseResult::Ok(block) => blocks.push(block),
+                        _ => {}
+                    }
+                }
+            },
         }
     }
     result!(state, Node::Doc { file:file.to_string(), blocks})

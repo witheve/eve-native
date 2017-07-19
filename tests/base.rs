@@ -21,7 +21,17 @@ macro_rules! valid (($blocks:tt) => ({
 
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=").replace(" . ", ".");
+    let stringy = stringify!($info).replace("# ", "#")
+        .replace("search", "\nsearch")
+        .replace("commit", "\ncommit")
+        .replace("bind", "\nbind")
+        .replace("watch", "\nwatch")
+        .replace("project", "\nproject")
+        .replace("end", "\nend\n")
+        .replace(" ! [", "[")
+        .replace(" ! / ", "/")
+        .replace(": =", ":=")
+        .replace(" . ", ".");
     println!("{}", stringy);
     let blocks = parse_string(&mut program, &stringy, "test");
     for block in blocks {
