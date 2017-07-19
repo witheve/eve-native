@@ -75,6 +75,7 @@ lazy_static! {
 pub enum OutputType {
     Bind,
     Commit,
+    Lookup
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +89,7 @@ pub enum Node<'a> {
     NoneValue,
     Tag(&'a str),
     Variable(&'a str),
+    Identifier(&'a str),
     GeneratedVariable(String),
     Attribute(&'a str),
     AttributeEquality(&'a str, Box<Node<'a>>),
@@ -99,6 +101,7 @@ pub enum Node<'a> {
     Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Record(Option<String>, Vec<Node<'a>>),
     RecordSet(Vec<Node<'a>>),
+    RecordLookup ( Vec<Node<'a>>, OutputType ),
     RecordFunction { op:&'a str, params:Vec<Node<'a>>, outputs:Vec<Node<'a>> },
     OutputRecord(Option<String>, Vec<Node<'a>>, OutputType),
     RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str, output_type:OutputType},
@@ -306,6 +309,12 @@ impl<'a> Node<'a> {
                 }
                 let outs:Vec<Option<Field>> = outputs.iter_mut().map(|output| output.gather_equalities(interner, cur_block)).collect();
                 *outs.get(0).unwrap()
+            },
+            &mut Node::RecordLookup(ref mut attrs, _) => {
+                for attr in attrs {
+                    attr.gather_equalities(interner, cur_block);
+                }
+                None
             },
             &mut Node::RecordSet(ref mut records) => {
                 for record in records {
@@ -607,6 +616,70 @@ impl<'a> Node<'a> {
                 }
                 final_result
             },
+            &Node::RecordLookup(ref attrs, ..) => {
+                let mut entity = None;
+                let mut attribute = None;
+                let mut value = None;
+
+                for attr in attrs {
+                    match attr {
+                        &Node::Attribute("entity") => { entity = Some(cur_block.get_unified_register("entity")); },
+                        &Node::AttributeEquality("entity", ref v) => { entity = v.compile(interner, cur_block); }
+                        _ => {}
+                    }
+                }
+
+                if entity == None {
+                    let var_name = format!("__eve_lookup{}", cur_block.id);
+                    cur_block.id += 1;
+                    let reg = cur_block.get_register(&var_name);
+                    entity = Some(reg)
+                }
+
+                for attr in attrs {
+                    let (a, v) = match attr {
+                        &Node::Attribute(a) => { (a, Some(cur_block.get_unified_register(a))) },
+                        &Node::AttributeEquality(a, ref v) => {
+                            let result = match **v {
+                                Node::RecordSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
+                                Node::ExprSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
+                                _ => v.compile(interner, cur_block)
+                            };
+                            (a, result)
+                        },
+                        _ => {
+                            println!("{:?}", attr);
+                            panic!("Parse Error: Unrecognized node type in lookup attributes.")
+                        }
+                    };
+
+                    // @FIXME: What do we do if there are multiple fields for a given a?
+                    // Seems like that should be handled in gather_equalities, is it?
+                    match a {
+                        "entity" => {}
+                        "attribute" => attribute = v,
+                        "value" => value = v,
+                        _ => panic!("Lookup supports only entity, attribute, and value lookups.")
+                    }
+                }
+
+                if attribute == None {
+                    let var_name = format!("__eve_lookup{}", cur_block.id);
+                    cur_block.id += 1;
+                    let reg = cur_block.get_register(&var_name);
+                    attribute = Some(reg)
+                }
+
+                if value == None {
+                    let var_name = format!("__eve_lookup{}", cur_block.id);
+                    cur_block.id += 1;
+                    let reg = cur_block.get_register(&var_name);
+                    value = Some(reg)
+                }
+
+                cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap()));
+                None
+            },
             &Node::Record(ref var, ref attrs) => {
                 let reg = if let &Some(ref name) = var {
                     cur_block.get_unified_register(name)
@@ -855,10 +928,14 @@ impl<'a> Node<'a> {
                 None
             },
             &Node::Watch(ref name, ref values) => {
-                let registers = values.iter()
-                                      .map(|v| v.compile(interner, cur_block).unwrap())
-                                      .collect();
-                cur_block.constraints.push(Constraint::Watch {name:name.to_string(), registers});
+                for value in values {
+                    if let &Node::ExprSet(ref items) = value {
+                        let registers = items.iter()
+                            .map(|v| v.compile(interner, cur_block).unwrap())
+                            .collect();
+                        cur_block.constraints.push(Constraint::Watch {name:name.to_string(), registers});
+                    }
+                }
                 None
             },
             &Node::Block{ref search, ref update} => {
@@ -1090,7 +1167,7 @@ impl Compilation {
     }
 
     pub fn new_child(parent:&Compilation) -> Compilation {
-        let mut child = Compilation::new(parent.block_name.to_string());
+        let mut child = Compilation::new(format!("{}|{}", parent.block_name, parent.sub_blocks.len()));
         child.id = parent.id + 10000 + (1000 * parent.sub_blocks.len());
         child.is_child = true;
         child
@@ -1329,6 +1406,16 @@ named!(infix_multiplication<Node<'a>>,
            right: alt_complete!(infix_multiplication | value) >>
            (Node::Infix{result:None, left:Box::new(left), right:Box::new(right), op:str::from_utf8(op).unwrap()})));
 
+named_args!(record_lookup<'a>(output_type:OutputType) <Node<'this_is_probably_unique_i_hope_please>>,
+            do_parse!(
+          tag!("lookup") >>
+          tag!("[") >>
+          attrs: sp!(many0!(alt_complete!(
+                    attribute_equality |
+                    identifier => { |v:&'this_is_probably_unique_i_hope_please str| Node::Attribute(v) }))) >>
+          tag!("]") >>
+          (Node::RecordLookup ( attrs, output_type ))));
+
 named!(record_function<Node<'a>>,
        do_parse!(
           op: identifier >>
@@ -1445,10 +1532,12 @@ named!(not_form<Node<'a>>,
            sp!(tag!("not")) >>
            items: delimited!(tag!("("),
                              many0!(sp!(alt_complete!(
+                                         apply!(record_lookup, OutputType::Lookup) |
                                          multi_function_equality |
                                          inequality |
                                          record |
-                                         equality
+                                         equality |
+                                         attribute_access
                                          ))),
                              tag!(")")) >>
            (Node::Not(0, items))));
@@ -1483,6 +1572,7 @@ named!(if_branch<Node<'a>>,
        do_parse!(
            sp!(tag!("if")) >>
            body: many0!(sp!(alt_complete!(
+                       apply!(record_lookup, OutputType::Lookup) |
                        multi_function_equality |
                        not_form |
                        inequality |
@@ -1519,6 +1609,7 @@ named!(search_section<Node<'a>>,
            sp!(tag!("search")) >>
            items: many0!(sp!(alt_complete!(
                             not_form |
+                            apply!(record_lookup, OutputType::Lookup) |
                             multi_function_equality |
                             if_expression |
                             inequality |
@@ -1558,7 +1649,7 @@ named!(watch_section<Node<'a>>,
        do_parse!(
            sp!(tag!("watch")) >>
            watcher: sp!(identifier) >>
-           items: sp!(delimited!(tag!("("), many1!(sp!(expr)) ,tag!(")"))) >>
+           items: many1!(expr_set) >>
            (Node::Watch(watcher, items))));
 
 named!(block<Node<'a>>,
@@ -1716,4 +1807,3 @@ pub fn parser_test() {
     let x = markdown(contents.as_bytes());
     println!("{:?}", x);
 }
-

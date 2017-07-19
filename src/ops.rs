@@ -410,10 +410,16 @@ impl Block {
                 }
             }
 
-            for &(ix, constraint) in watch_constraints.iter() {
+            for (watch_ix, &(ix, constraint)) in watch_constraints.iter().enumerate() {
                 if let &Constraint::Watch {ref name, ..} = constraint {
                     last_iter_next -= 1;
-                    let next = if to_solve > 0 {last_iter_next} else { PIPE_FINISHED };
+                    let next = if watch_ix as usize != watch_constraints.len() - 1 {
+                        1
+                    } else if to_solve > 0 {
+                        last_iter_next
+                    } else {
+                        PIPE_FINISHED
+                    };
                     pipe.push(Instruction::Watch {next, name:name.to_string(), constraint:ix as usize});
                 }
             }
@@ -1108,8 +1114,10 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
             Some(ref mut cur) => {
                 match cur.next(&mut frame.row, iterator) {
                     false => {
-                        frame.row.clear_solved(iterator);
-                        cur.clear(&mut frame.row, iterator);
+                        if cur.estimate() != 0 {
+                            frame.row.clear_solved(iterator);
+                            cur.clear(&mut frame.row, iterator);
+                        }
                         bail
                     },
                     true => {
@@ -1506,6 +1514,18 @@ impl<'de> Deserialize<'de> for Internable {
                 Ok(Internable::from_number(v as f32))
             }
 
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+                where E: Error
+            {
+                Ok(Internable::from_number(v as f32))
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+                where E: Error
+            {
+                Ok(Internable::from_number(v as f32))
+            }
+
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
                 where E: Error
             {
@@ -1717,9 +1737,10 @@ impl Constraint {
                 *param_mask = make_register_mask(params.iter().collect());
                 *output_mask = make_register_mask(outputs.iter().collect());
             }
-            &mut Constraint::Aggregate {ref mut params, ref mut group, ref mut projection, ref mut param_mask, ..} => {
+            &mut Constraint::Aggregate {ref mut params, ref mut group, ref mut projection, ref mut param_mask, ref mut output_key, ..} => {
                 {
                     let mut vs = vec![];
+                    vs.extend(output_key.iter_mut());
                     vs.extend(params.iter_mut());
                     vs.extend(group.iter_mut());
                     vs.extend(projection.iter_mut());

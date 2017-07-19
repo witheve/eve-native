@@ -29,5 +29,6 @@ pub mod ops;
 pub mod indexes;
 pub mod hash;
 pub mod parser;
+pub mod parser2;
 pub mod watcher;
 pub mod numerics;
