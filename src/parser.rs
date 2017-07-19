@@ -1167,7 +1167,7 @@ impl Compilation {
     }
 
     pub fn new_child(parent:&Compilation) -> Compilation {
-        let mut child = Compilation::new(parent.block_name.to_string());
+        let mut child = Compilation::new(format!("{}|{}", parent.block_name, parent.sub_blocks.len()));
         child.id = parent.id + 10000 + (1000 * parent.sub_blocks.len());
         child.is_child = true;
         child
