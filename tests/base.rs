@@ -616,7 +616,7 @@ test!(base_choose_filtered_multi_all, {
     search
         [#foo x]
         (10, "large") = if x > 3 then (x, "large")
-                  else ("unknown", "small")
+                        else ("unknown", "small")
     bind
         [#zomg x]
     end
@@ -640,7 +640,7 @@ test!(base_choose_filtered_multi_expression, {
     search
         [#foo x]
         (5 + 5, "large") = if x > 3 then (x, "large")
-                  else ("unknown", "small")
+                           else ("unknown", "small")
     bind
         [#zomg x]
     end
@@ -748,6 +748,333 @@ test!(base_union, {
         [#zomg x:10 z:("large", "woah")]
         [#zomg x:100 z:"large"]
         not([#zomg x:3])
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
+// Update Operators
+//--------------------------------------------------------------------
+
+test!(base_update_add {
+    search
+        foo = [#foo]
+    bind
+        foo.bar += "baz"
+    end
+
+    commit
+        [#foo]
+    end
+
+    search
+        [#foo bar: "baz"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_remove_last {
+    search
+        foo = [#foo]
+    commit
+        foo.bar -= "baz"
+    end
+    
+    commit
+        [#foo bar: "baz"]
+    end
+
+    search
+        [#foo not(bar)]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_remove_one {
+    search
+        foo = [#foo]
+    commit
+        foo.bar -= "fleeb"
+    end
+    
+    commit
+        [#foo bar: ("baz","fleeb")]
+    end
+
+    search
+        [#foo bar]
+        1 = gather/count[for: bar]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_set {
+    search
+        foo = [#foo]
+    commit
+        foo.bar := "fleeb"
+    end
+    
+    commit
+        [#foo bar: "baz"]
+    end
+
+    search
+        [#foo bar: "fleeb"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_set_none {
+    search
+        foo = [#foo]
+    commit
+        foo.bar := none
+    end
+    
+    commit
+        [#foo bar: "baz"]
+    end
+
+    search
+        [#foo not(bar)]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_merge {
+    search
+        foo = [#foo]
+    commit
+        foo <- [bar: "bar", baz: "baz"]
+    end
+    
+    commit
+        [#foo]
+    end
+
+    search
+        [#foo bar baz]
+    bind
+        [#success]
+    end
+});
+
+
+//--------------------------------------------------------------------
+// Functions
+//--------------------------------------------------------------------
+
+test!(base_lib_math_floor, {
+    search
+        34 = math/floor[value: 34.2]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_ceiling, {
+    search
+        35 = math/ceiling[value: 34.2]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_round, {
+    search
+        34 = math/ceiling[value: 34.2]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_sin_degrees, {
+    search
+        math/sin[degrees: 90]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_sin_radians, {
+    search
+        math/sin[radians: 1.5]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_cos_degrees, {
+    search
+        math/cos[degrees: 90]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_tan_degrees, {
+    search
+        math/tan[degrees: 90]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_max, {
+    search
+        pac-man = 10
+        donkey-kong = 13
+        13 = math/max[a: pac-man, b: donkey-kong]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_min, {
+    search
+        pac-man = 10
+        donkey-kong = 13
+        10 = math/min[a: pac-man, b: donkey-kong]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_mod, {
+    search
+        1 = math/mod[value: 5, by: 2]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_absolute, {
+    search
+        [#city name longitude]
+        hours-from-gmt = math/absolute[value: longitude] * 24 / 360 
+    bind
+        [#success]
+    end
+
+    commit
+        [#city name: "Paris" longitude: 2.33]
+        [#city name: "New York" longitude: -75.61]
+        [#city name: "Los Angeles" longitude: -118.24]
+    end
+});
+
+test!(base_lib_math_pow, {
+    search
+        8 = math/pow[value: 2 exponent: 3]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_log, {
+    search
+        0 = math/ln[value: 1]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_to_fixed, {
+    search
+        circumference = 6
+        diameter = 1.910
+        3.14 = math/to-fixed[value: (circumference / diameter), to: 2]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_math_to_range, {
+    search
+        y = math/range[start: 1, stop: 10]
+        10 = gather/count[for: y]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_random_number, {
+    search
+        x = random/number[seed: 3]
+        y = random/number[seed: 3]
+        x = y
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_string_replace, {
+    search
+        string = "I love the flavour."
+        "I love the flavor." = string/replace[text: string, replace: "flavour", with: "flavor"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_string_get, {
+    search
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "Q" = string/get[text: alphabet, at: 17]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_string_uppercase, {
+    search
+        funny = "lol"
+        "LOL" = string/uppercase[text: funny]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_string_lowercase, {
+    search
+        really-funny = "LOL"
+        "lol" = string/lowercase[text: funny]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_string_index_of, {
+    search
+        2 = string/index-of[text: "developers", substring: "eve"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_string_codepoint_length, {
+    search
+        7 = string/codepoint-length[text: "unicode"]
+        2 = string/codepoint-length[text: "🐩"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_lib_system_timer, {
+    commit
+        [#system/timer resolution: 1000]
+    end
+
+    search
+        [#system/timer hour minute second]
     bind
         [#success]
     end
@@ -945,3 +1272,17 @@ test!(base_aggregate_transitive_choose, {
     end
 });
 
+test!(base_aggregate_sort, {
+    search
+        [#student name GPA]
+        index = gather/sort[for: GPA]
+    bind 
+        [#success]
+    end
+
+    commit
+        [#student name: "Ashley" GPA: 3.10]
+        [#student name: "Jerome" GPA: 2.37]
+        [#student name: "Iggy" GPA: 3.97]
+    end
+});
