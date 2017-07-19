@@ -29,7 +29,7 @@ extern crate time;
 
 use eve::ops::{Program, Transaction, RawChange, Internable, Interner};
 use eve::indexes::{WatchDiff};
-use eve::parser::{parse_file};
+use eve::compiler::{parse_file};
 use eve::watcher::{SystemTimerWatcher, Watcher};
 use std::env;
 use std::thread;

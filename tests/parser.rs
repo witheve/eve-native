@@ -1,7 +1,8 @@
 extern crate eve;
 use eve::ops::{Program};
+use eve::compiler::*;
 use eve::parser::*;
-use eve::parser2::*;
+use eve::combinators::*;
 
 //--------------------------------------------------------------------
 // Helper macros
@@ -26,18 +27,31 @@ macro_rules! test (($name:ident, $body:tt) => (
 //--------------------------------------------------------------------
 
 test!(parse_error_empty_search, {
-    this is pretty cool isn't it?
+    search
+        [#foo woah]
+    bind
+        [#bar baz: [#zomg]]
+    end
 
     search
+        [#bar baz: [#zomg]]
     bind
+        [#success]
+    end
+
+    commit
+        [#foo woah: 1000]
     end
 });
 
 
 #[test]
 pub fn parser_combinator() {
-    let mut state = ParseState::new(" asdofk aspodkf
-                                    search [#zomg] watch asdf/df (1,2,3) end");
-    let result = embedded_blocks(&mut state, "test.eve");
+    let mut state = ParseState::new("z = if x = 3 then \"medium\"
+            else if x = 10 then \"large\"
+            else \"too big\"
+");
+
+    let result = if_expression(&mut state);
     println!("{:?}", result);
 }

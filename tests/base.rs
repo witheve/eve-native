@@ -1,7 +1,7 @@
 extern crate eve;
 
 use eve::ops::{Program};
-use eve::parser::{parse_string};
+use eve::compiler::{parse_string};
 
 //--------------------------------------------------------------------
 // Helper macros
@@ -22,6 +22,7 @@ macro_rules! valid (($blocks:tt) => ({
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
     let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=").replace(" . ", ".");
+    println!("{}", stringy);
     let blocks = parse_string(&mut program, &stringy, "test");
     for block in blocks {
         program.raw_block(block);

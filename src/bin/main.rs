@@ -10,7 +10,7 @@ extern crate futures;
 extern crate time;
 
 use eve::ops::{Program, Transaction};
-use eve::parser::{parse_file};
+use eve::compiler::{parse_file};
 use eve::watcher::{SystemTimerWatcher, PrintWatcher};
 use std::env;
 

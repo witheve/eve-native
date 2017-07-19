@@ -5,7 +5,7 @@
 extern crate time;
 
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry};
-use parser::{make_block};
+use compiler::{make_block};
 use hash::map::{DangerousKeys};
 use std::collections::HashMap;
 use std::mem::transmute;
