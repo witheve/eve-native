@@ -374,7 +374,7 @@ impl<'a> ParseState<'a> {
                 }
                 ' ' | '\t' | ',' => { self.ch += 1; self.pos += 1; }
                 '\n' => { self.line += 1; self.ch = 0; self.pos += 1; }
-                '\r' => { self.ch = 0; self.pos += 1; }
+                '\r' => { self.ch += 1; self.pos += 1; }
                 _ => { break }
             }
         }
