@@ -1953,6 +1953,7 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "/" => divide,
         "math/sin" => math_sin,
         "math/cos" => math_cos,
+        "string/replace" => string_replace,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -2081,6 +2082,15 @@ pub fn math_cos(params: Vec<&Internable>) -> Option<Internable> {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
             Some(Internable::from_number(a.cos()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn string_replace(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref replace), &Internable::String(ref with)] => {
+            Some(Internable::String(text.replace(replace, with)))
         },
         _ => { None }
     }
