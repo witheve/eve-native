@@ -21,7 +21,9 @@ macro_rules! valid (($blocks:tt) => ({
 
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#")
+    // @FIXME: any occurrence of search/commit/etc. will be replaced here...
+    let stringy = stringify!($info).replace("\n", " ")
+        .replace("# ", "#")
         .replace("search", "\nsearch")
         .replace("commit", "\ncommit")
         .replace("bind", "\nbind")
@@ -955,4 +957,3 @@ test!(base_aggregate_transitive_choose, {
         [#success]
     end
 });
-
