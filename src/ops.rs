@@ -2884,7 +2884,7 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
             if round.len() == 0 { break; }
             for change in round.iter() {
                 current_round = change.round;
-                println!("{}", change.print(&program));
+                // println!("{}", change.print(&program));
                 // If this is an add, we want to do it *before* we start running pipes.
                 // This ensures that if there are two constraints in a single block that
                 // would both match the given input, they both have a chance to see this
