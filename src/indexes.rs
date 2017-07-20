@@ -505,11 +505,11 @@ impl HashIndex {
 
     pub fn propose(&self, iter: &mut EstimateIter, e:Interned, a:Interned, v:Interned) {
         if a == 0 {
-            // @FIXME: this isn't always safe. In the case where we have an arbitrary lookup, if we
-            // then propose, we might propose values that we then never actually check are correct.
-            if e != 0 && v != 0 {
-                panic!("ERROR: Proposing for unsafe a");
-            }
+            // @NOTE: In the case where we have an arbitrary lookup we may propose values that may not be correct, but
+            // get_rounds should handle this for us.
+            // if e != 0 && v != 0 {
+            //     panic!("ERROR: Proposing for unsafe a");
+            // }
             match iter {
                 &mut EstimateIter::Scan { ref mut estimate, ref mut iter, ref mut output, .. } => {
                     let attrs_iter = self.a.get_dangerous_keys();
