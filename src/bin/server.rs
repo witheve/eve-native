@@ -53,12 +53,13 @@ impl ClientHandler {
 
 impl Handler for ClientHandler {
     fn on_message(&mut self, msg: Message) -> Result<(), ws::Error> {
-        println!("Server got message '{}'. ", msg);
+        // println!("Server got message '{}'. ", msg);
         if let Message::Text(s) = msg {
             let deserialized: Result<ClientMessage, Error> = serde_json::from_str(&s);
-            println!("deserialized = {:?}", deserialized);
+            // println!("deserialized = {:?}", deserialized);
             match deserialized {
                 Ok(ClientMessage::Transaction { adds, removes }) => {
+                    println!("Got transaction!");
                     let mut raw_changes = vec![];
                     raw_changes.extend(adds.into_iter().map(|(e,a,v)| {
                         RawChange { e,a,v,n:Internable::String("input".to_string()),count:1 }
@@ -67,7 +68,6 @@ impl Handler for ClientHandler {
                         RawChange { e,a,v,n: Internable::String("input".to_string()),count:-1 }
                     }));
                     self.program_input.send(raw_changes).unwrap();
-                    println!("Got transaction!");
                 }
                 _ => { }
             }

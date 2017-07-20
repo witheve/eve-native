@@ -306,7 +306,14 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_roun
         cur_count += counts[ix as usize];
     };
 
-    // @TODO: handle Infinity/-Infinity for commits at round 0
+    // handle Infinity/-Infinity for commits at round 0
+    if input_round == 0 {
+        if input_count < 0 {
+            cur_count = input_count.abs();
+        } else if cur_count < 0 {
+            cur_count = 0;
+        }
+    }
 
     let next_count = cur_count + input_count;
     let delta = get_delta(cur_count, next_count);
@@ -428,17 +435,23 @@ impl HashIndex {
     pub fn remove(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
         let removed = match self.eavs.entry((e,a,v)) {
             Entry::Occupied(mut entry) => {
-                let len = {
+                // There are two possibilities we have to worry about here. One is that we have
+                // completely removed all traces of this eav, which we identify by having the
+                // rounds array contain all zeros. The other is that there are rounds the index
+                // doesn't know about yet, but as far as the index is concerned, this value isn't
+                // in here. In the latter case, we need to remove the value from the index, but
+                // leave the entry containing the round information in. In the former, we nuke the
+                // whole entry.
+                let (should_remove_entry, remove_indexed) = {
                     let info = entry.get_mut();
                     info.update_active(round, -1);
-                    info.active_rounds.len()
+                    (!info.rounds.iter().any(|x| *x != 0), info.active_rounds.len() == 0)
                 };
-                if len == 0 {
+                if should_remove_entry {
                     entry.remove_entry();
-                    true
-                } else {
-                    false
                 }
+                if should_remove && !remove_indexed { panic!("We have active rounds when there are no rounds left"); }
+                remove_indexed
             }
             Entry::Vacant(_) => { false },
         };
@@ -525,7 +538,15 @@ impl HashIndex {
             let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
             let ref mut counts = info.rounds;
             ensure_len(counts, (round + 1) as usize);
-            counts[round as usize] += count;
+            if round == 0 {
+                if count < 0 {
+                    counts[round as usize] = 0;
+                } else {
+                    counts[round as usize] = 1;
+                }
+            } else {
+                counts[round as usize] += count;
+            }
             // if the passed count is less than 0, this is actually a remove and we should send it
             // through that path
             !info.inserted || count < 0
@@ -552,8 +573,14 @@ impl HashIndex {
         let insert = |round, delta| {
             rounds.insert(input.with_round_count(round, delta));
         };
-        let ref mut counts = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] }).rounds;
-        generic_distinct(counts, input.count, input.round, insert);
+        let needs_remove = {
+            let entry = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
+            generic_distinct(&mut entry.rounds, input.count, input.round, insert);
+            entry.active_rounds.len() == 0 && !entry.rounds.iter().any(|x| *x != 0)
+        };
+        if needs_remove {
+            self.eavs.remove(&(input.e, input.a, input.v));
+        }
     }
 }
 
@@ -827,14 +854,17 @@ impl IntermediateIndex {
     }
 
     pub fn buffer(&mut self, full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>, round:Round, count:Count, negate:bool) {
-        println!("Intermediate! {:?} {:?} {:?}", full_key, round, count);
+        // println!("    -> Intermediate! {:?} {:?} {:?}", full_key, round, count);
         self.round_buffer.push((full_key, key, value, round, count, negate));
     }
 
-    pub fn consume_round(&mut self) {
+    pub fn consume_round(&mut self) -> Round {
+        let mut max = 0;
         for (full_key, key, value, round, count, negate) in self.round_buffer.drain(..) {
+            max = cmp::max(round, max);
             intermediate_distinct(&mut self.index, &mut self.rounds, full_key, key, value, round, count, negate);
         }
+        max
     }
 
     pub fn distinct(&mut self, full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>, round:Round, count:Count, negate:bool) {
