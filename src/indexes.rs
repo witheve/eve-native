@@ -450,7 +450,7 @@ impl HashIndex {
                 if should_remove_entry {
                     entry.remove_entry();
                 }
-                if should_remove && !remove_indexed { panic!("We have active rounds when there are no rounds left"); }
+                if should_remove_entry && !remove_indexed { panic!("We have active rounds when there are no rounds left"); }
                 remove_indexed
             }
             Entry::Vacant(_) => { false },
