@@ -560,7 +560,7 @@ parser!(block(state) -> Node<'a> {
     if errors.len() > 0 {
        state.consume_until(block_end);
     }
-    result!(state, Node::Block {errors, search:Box::new(search), update:Box::new(update.unwrap_or(Node::NoneValue))})
+    result!(state, Node::Block {code: state.input, errors, search:Box::new(search), update:Box::new(update.unwrap_or(Node::NoneValue))})
 });
 
 parser!(block_start(state) -> &'a str {

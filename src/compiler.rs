@@ -113,7 +113,7 @@ pub enum Node<'a> {
     Commit(Vec<Node<'a>>),
     Project(Vec<Node<'a>>),
     Watch(&'a str, Vec<Node<'a>>),
-    Block{errors: Vec<ParseResult<'a, Node<'a>>>, search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
+    Block{code: &'a str, errors: Vec<ParseResult<'a, Node<'a>>>, search:Box<Option<Node<'a>>>, update:Box<Node<'a>>},
     DisabledBlock(&'a str),
     Doc { file:String, blocks:Vec<Node<'a>> }
 }
@@ -941,7 +941,7 @@ impl<'a> Node<'a> {
                 }
                 None
             },
-            &Node::Block{ref search, ref update, ref errors} => {
+            &Node::Block{ref search, ref update, ref errors, ..} => {
                 if errors.len() > 0 { return None; }
 
                 if let Some(ref s) = **search {
@@ -1318,9 +1318,12 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 block.unify(&mut comp);
                 block.compile(interner, &mut comp);
                 comp.reassign_registers();
-                println!("Block");
+                println!("---------------------- Block {} ---------------------------", ix - 1);
+                if let &mut Node::Block { code, ..} = block {
+                    println!("{}\n\n => \n", code);
+                }
                 for c in comp.constraints.iter() {
-                    println!("{:?}", c);
+                    println!("   {:?}", c);
                 }
                 let sub_ix = 0;
                 let mut subs:Vec<&mut SubBlock> = comp.sub_blocks.iter_mut().collect();
@@ -1329,9 +1332,9 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                     let mut sub_comp = cur.get_mut_compilation();
                     if sub_comp.constraints.len() > 0 {
                         sub_comp.reassign_registers();
-                        println!("    SubBlock");
+                        println!("       SubBlock");
                         for c in sub_comp.constraints.iter() {
-                            println!("        {:?}", c);
+                            println!("            {:?}", c);
                         }
                         program_blocks.push(Block::new(&format!("{}|sub_block|{}", block_name, sub_ix), sub_comp.constraints.clone()));
                     }

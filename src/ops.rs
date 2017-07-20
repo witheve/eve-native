@@ -38,6 +38,35 @@ pub type Count = i32;
 const TAG_INTERNED_ID:Interned = 1;
 
 //-------------------------------------------------------------------------
+// Utils
+//-------------------------------------------------------------------------
+
+pub fn format_interned(interner:&Interner, v:Interned) -> String {
+    let v_str = interner.get_value(v).print();
+    if v_str.contains("|") {
+        format!("<{}>", v)
+    } else {
+        v_str
+    }
+}
+
+pub fn print_pipe(pipe: &Pipe) {
+    let block_id = if let Instruction::StartBlock { block } = pipe[0] {
+       block
+    } else { unreachable!() };
+
+    let test = pipe.len() == 25;
+
+    if block_id == 6 && test {
+        println!("\n\n-------------- Pipe ----------------\n");
+        for inst in pipe.iter() {
+            println!("   {:?}", inst);
+        }
+        println!("");
+    }
+}
+
+//-------------------------------------------------------------------------
 // Change
 //-------------------------------------------------------------------------
 
@@ -339,7 +368,7 @@ impl Block {
             pipe.push(Instruction::ClearRounds);
             last_iter_next -= 1;
 
-            if outputs.len() > 0 {
+            if outputs_len > 0 || watch_constraints.len() > 0 {
                 for inst in get_rounds.iter() {
                     match inst {
                         &Instruction::GetRounds { constraint, .. } |
@@ -2275,6 +2304,7 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
 // Round holder
 //-------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub enum RoundState {
     Equal,
     Left,
@@ -2328,7 +2358,7 @@ impl RoundHolder {
     }
 
 
-    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F, left_on_equal: bool)
+    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F)
         where F: FnMut(RoundState, &mut Vec<(Round, Count)>, Option<(Round, Count)>, Round, Count, Option<(Round, Count)>, Round, Count)
     {
         let (neue, current) = match (self.output_rounds.len(), self.prev_output_rounds.len()) {
@@ -2383,7 +2413,7 @@ impl RoundHolder {
                         move_output_round(&left, &mut left_round, &mut left_count);
                     },
                     (Some((next_left_round, _)), Some((next_right_round, _))) => {
-                        if next_left_round < next_right_round || (left_on_equal && next_left_round == next_right_round) {
+                        if next_left_round < next_right_round {
                             left = next_left;
                             next_left = left_iter.next();
                             move_output_round(&left, &mut left_round, &mut left_count);
@@ -2433,7 +2463,7 @@ impl RoundHolder {
                 }
             }
         };
-        self._compute_output_rounds(right_iter, action, false);
+        self._compute_output_rounds(right_iter, action);
     }
 
     pub fn compute_output_rounds(&mut self, right_iter: DistinctIter) {
@@ -2444,6 +2474,8 @@ impl RoundHolder {
                         let total = count * right_count;
                         if total != 0 {
                             neue.push((left_round, total));
+                        } else if left_count == 0 && right_count == 0 {
+                            neue.push((left_round, count));
                         }
                     }
 
@@ -2466,9 +2498,7 @@ impl RoundHolder {
                 }
             }
         };
-        // @TODO: Figure out why leftOnEqual is actually necessary to maintain correctness
-        // in this case, but not in the anti case.
-        self._compute_output_rounds(right_iter, action, true);
+        self._compute_output_rounds(right_iter, action);
     }
 
     pub fn insert(&mut self, change:Change) {
@@ -2870,6 +2900,7 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
                 frame.reset();
                 frame.input = Some(*change);
                 for pipe in pipes.iter() {
+                    // print_pipe(pipe);
                     frame.row.reset();
                     interpret(&mut program.state, &program.block_info, frame, pipe);
                 }
