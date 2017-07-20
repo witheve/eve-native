@@ -2951,7 +2951,6 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
     for (name, index) in program.state.watch_indexes.iter_mut() {
         if index.dirty() {
             let diff = index.reconcile();
-            println!("DIFF {} {:?}", name, diff);
             if let Some(watcher) = program.watchers.get(name) {
                 watcher.on_diff(&program.state.interner, diff);
             }
