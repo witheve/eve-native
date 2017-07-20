@@ -27,7 +27,7 @@ use serde_json::{Error};
 extern crate eve;
 extern crate time;
 
-use eve::ops::{Program, Transaction, RawChange, Internable, Interner};
+use eve::ops::{Program, Transaction, RawChange, Internable, Interner, CodeTransaction};
 use eve::indexes::{WatchDiff};
 use eve::compiler::{parse_file};
 use eve::watcher::{SystemTimerWatcher, Watcher};
@@ -93,12 +93,14 @@ fn make_program(out:Sender) -> SyncSender<Vec<RawChange>> {
         program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
         program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out)));
 
+        let mut blocks = vec![];
         for file in env::args().skip(1) {
-            let blocks = parse_file(&mut program, &file);
-            for block in blocks {
-                program.raw_block(block);
-            }
+            blocks.extend(parse_file(&mut program, &file));
         }
+
+        let mut txn = CodeTransaction::new();
+        txn.exec(&mut program, blocks, vec![]);
+
         println!("Starting run loop.");
         'outer: loop {
             match program.incoming.recv() {

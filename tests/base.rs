@@ -1,6 +1,6 @@
 extern crate eve;
 
-use eve::ops::{Program};
+use eve::ops::{Program, CodeTransaction};
 use eve::compiler::{parse_string};
 
 //--------------------------------------------------------------------
@@ -34,9 +34,9 @@ macro_rules! blocks (($info:tt) => ({
         .replace(" . ", ".");
     println!("{}", stringy);
     let blocks = parse_string(&mut program, &stringy, "test");
-    for block in blocks {
-        program.raw_block(block);
-    }
+    let mut txn = CodeTransaction::new();
+    txn.exec(&mut program, blocks, vec![]);
+
     program
 }));
 

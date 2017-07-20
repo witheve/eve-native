@@ -9,7 +9,7 @@ extern crate tokio_timer;
 extern crate futures;
 extern crate time;
 
-use eve::ops::{Program, Transaction};
+use eve::ops::{Program, Transaction, CodeTransaction};
 use eve::compiler::{parse_file};
 use eve::watcher::{SystemTimerWatcher, PrintWatcher};
 use std::env;
@@ -20,12 +20,14 @@ fn main() {
     program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
     program.attach("system/print", Box::new(PrintWatcher{}));
 
+    let mut blocks = vec![];
     for file in env::args().skip(1) {
-        let blocks = parse_file(&mut program, &file);
-        for block in blocks {
-            program.raw_block(block);
-        }
+        blocks.extend(parse_file(&mut program, &file));
     }
+
+    let mut txn = CodeTransaction::new();
+    txn.exec(&mut program, blocks, vec![]);
+
     println!("Starting run loop.");
     loop {
         let v = program.incoming.recv().unwrap();

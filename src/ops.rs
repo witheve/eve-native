@@ -2755,26 +2755,27 @@ impl Program {
         self.block_info.blocks.push(block);
     }
 
+    pub fn unregister_block(&mut self, block:&Block) {
+        println!("Unregister: {}", block.name);
+        unimplemented!();
+    }
+
     pub fn insert_block(&mut self, name:&str, code:&str) {
         let bs = make_block(&mut self.state.interner, name, code);
         for b in bs {
-            self.register_block(b)
+            self.register_block(b);
         }
     }
 
     pub fn block(&mut self, name:&str, code:&str) -> CodeTransaction {
-        self.insert_block(name, code);
+        let bs = make_block(&mut self.state.interner, name, code);
         let mut txn = CodeTransaction::new();
-        txn.exec(self, name, true);
+        txn.exec(self, bs, vec![]);
         txn
     }
 
-    pub fn raw_block(&mut self, block:Block) -> CodeTransaction {
-        let name = &block.name.to_string();
+    pub fn raw_block(&mut self, block:Block) {
         self.register_block(block);
-        let mut txn = CodeTransaction::new();
-        txn.exec(self, name, true);
-        txn
     }
 
     pub fn attach(&mut self, name:&str, watcher:Box<Watcher>) {
@@ -2883,7 +2884,7 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
             if round.len() == 0 { break; }
             for change in round.iter() {
                 current_round = change.round;
-                // println!("{}", change.print(&program));
+                println!("{}", change.print(&program));
                 // If this is an add, we want to do it *before* we start running pipes.
                 // This ensures that if there are two constraints in a single block that
                 // would both match the given input, they both have a chance to see this
@@ -2968,15 +2969,27 @@ impl CodeTransaction {
         CodeTransaction { changes: vec![], frame}
     }
 
-    pub fn exec(&mut self, program: &mut Program, block_name: &str, insert:bool) {
+    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
 
         let ref mut frame = self.frame;
-        // run the block
-        frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count: if insert { 1 } else { -1 } });
-        interpret(&mut program.state, &program.block_info, frame, &program.block_info.get_block(block_name).pipes[0]);
+
+        for add in to_add {
+            frame.reset();
+            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:1 });
+            program.register_block(add);
+            interpret(&mut program.state, &program.block_info, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
+        }
+
+        for remove in to_remove {
+            frame.reset();
+            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
+            interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
+            program.unregister_block(remove);
+        }
+
         intermediate_flow(frame, &mut program.state, &program.block_info, 0);
 
         transaction_flow(frame, program);
