@@ -1284,7 +1284,6 @@ test!(base_aggregate_transitive_choose, {
         [#success]
     end
 });
-<<<<<<< HEAD
 
 test!(base_aggregate_sort, {
     search
@@ -1300,5 +1299,3 @@ test!(base_aggregate_sort, {
         [#student name: "Iggy" GPA: 3.97]
     end
 });
-=======
->>>>>>> refs/remotes/origin/master
