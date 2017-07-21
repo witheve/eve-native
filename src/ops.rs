@@ -2869,8 +2869,8 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
         while remaining.len() > 0 {
             for (_, cur) in remaining {
                 if cur.count == 0 { continue; }
-                state.intermediates.update_active_rounds(&cur);
                 // println!("Int: {:?} {}:{}  neg?:{}", cur.key, cur.round, cur.count, cur.negate);
+                state.intermediates.update_active_rounds(&cur);
                 if let Some(ref actives) = block_info.intermediate_pipe_lookup.get(&cur.key[0]) {
                     frame.reset();
                     frame.intermediate = Some(cur);
