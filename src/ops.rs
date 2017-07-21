@@ -2860,11 +2860,6 @@ impl Program {
 // Transaction
 //-------------------------------------------------------------------------
 
-pub struct Transaction {
-    changes: Vec<Change>,
-    frame: Frame,
-}
-
 fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round, max_round:&mut Round) {
     let mut intermediate_max = state.intermediates.consume_round();
     *max_round = cmp::max(*max_round, intermediate_max);
@@ -2896,7 +2891,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
     }
 }
 
-fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
+fn transaction_flow(commits: &mut CollapsedChanges, frame: &mut Frame, program: &mut Program) {
     let mut pipes = vec![];
     let mut next_frame = true;
 
@@ -2937,6 +2932,7 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
                 if change.count < 0 {
                     program.state.index.remove(change.e, change.a, change.v, change.round);
                 }
+                if current_round == 0 { commits.insert(change.clone()); }
             }
             intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
             max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
@@ -2955,30 +2951,37 @@ fn transaction_flow(frame: &mut Frame, program: &mut Program, ) {
     }
 }
 
+pub struct Transaction {
+    changes: Vec<Change>,
+    commits: CollapsedChanges,
+    frame: Frame,
+}
+
 impl Transaction {
     pub fn new() -> Transaction {
         let frame = Frame::new();
-        Transaction { changes: vec![], frame}
+        Transaction { changes: vec![], commits: CollapsedChanges::new(), frame}
     }
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
         let change = Change { e,a,v,n: 0, transaction:0, round:0, count };
-        self.changes.push(change);
+        self.commits.insert(change);
     }
 
     pub fn input_change(&mut self, change: Change) {
-        self.changes.push(change);
+        self.commits.insert(change);
     }
 
     pub fn exec(&mut self, program: &mut Program) {
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.frame, program);
+        transaction_flow(&mut self.commits, &mut self.frame, program);
     }
 
     pub fn clear(&mut self) {
         self.changes.clear();
+        self.commits.clear();
     }
 }
 
@@ -2988,13 +2991,14 @@ impl Transaction {
 
 pub struct CodeTransaction {
     changes: Vec<Change>,
+    commits: CollapsedChanges,
     frame: Frame,
 }
 
 impl CodeTransaction {
     pub fn new() -> CodeTransaction {
         let frame = Frame::new();
-        CodeTransaction { changes: vec![], frame}
+        CodeTransaction { changes: vec![], commits:CollapsedChanges::new(), frame}
     }
 
     pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
@@ -3021,6 +3025,6 @@ impl CodeTransaction {
         let mut max_round = 0;
         intermediate_flow(frame, &mut program.state, &program.block_info, 0, &mut max_round);
 
-        transaction_flow(frame, program);
+        transaction_flow(&mut self.commits, frame, program);
     }
 }

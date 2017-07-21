@@ -904,6 +904,10 @@ impl CollapsedChanges {
     pub fn drain<'a>(&'a mut self) -> Box<Iterator<Item=Change> + 'a> {
         Box::new(self.changes.drain().map(|kv| kv.1).filter(|x| x.count != 0))
     }
+
+    pub fn clear(&mut self) {
+        self.changes.clear();
+    }
 }
 
 //-------------------------------------------------------------------------
