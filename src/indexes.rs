@@ -654,7 +654,6 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
     let cloned = full_key.clone();
     let value_pos = key.len();
     let insert = |round, delta| {
-        // println!("Intermediate! {:?} {:?} {:?}", cloned, round, delta);
         match rounds.entry(round) {
             Entry::Occupied(mut ent) => {
                 let cur = ent.get_mut();
@@ -720,8 +719,13 @@ impl IntermediateIndex {
         match self.index.get(key) {
             Some(level) => {
                 match level {
-                    &IntermediateLevel::KeyOnly(_) => true,
-                    &IntermediateLevel::Value(ref lookup) => lookup.contains_key(value),
+                    &IntermediateLevel::KeyOnly(ref entry) => entry.active_rounds.len() > 0,
+                    &IntermediateLevel::Value(ref lookup) => {
+                        match lookup.get(value) {
+                            Some(entry) => entry.active_rounds.len() > 0,
+                            _ => false
+                        }
+                    },
                     &IntermediateLevel::SumAggregate(..) => {
                         unimplemented!();
                     }
@@ -830,13 +834,13 @@ impl IntermediateIndex {
         let should_remove = match self.index.get_mut(key) {
             Some(&mut IntermediateLevel::KeyOnly(ref mut info)) => {
                 info.update_active(change.round, count);
-                info.active_rounds.len() == 0
+                !info.rounds.iter().any(|x| *x != 0)
             }
             Some(&mut IntermediateLevel::Value(ref mut lookup)) => {
                 let remove = match lookup.get_mut(value) {
                     Some(ref mut info) => {
                         info.update_active(change.round, count);
-                        info.active_rounds.len() == 0
+                        !info.rounds.iter().any(|x| *x != 0)
                     },
                     None => panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change)
                 };
