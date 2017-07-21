@@ -2965,11 +2965,11 @@ impl Transaction {
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
         let change = Change { e,a,v,n: 0, transaction:0, round:0, count };
-        self.commits.insert(change);
+        self.changes.push(change);
     }
 
     pub fn input_change(&mut self, change: Change) {
-        self.commits.insert(change);
+        self.changes.push(change);
     }
 
     pub fn exec(&mut self, program: &mut Program) {
