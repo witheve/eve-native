@@ -2892,7 +2892,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
     }
 }
 
-fn transaction_flow(commits: &mut CollapsedChanges, frame: &mut Frame, program: &mut Program) {
+fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut Program) {
     let mut pipes = vec![];
     let mut next_frame = true;
 
@@ -2933,7 +2933,7 @@ fn transaction_flow(commits: &mut CollapsedChanges, frame: &mut Frame, program: 
                 if change.count < 0 {
                     program.state.index.remove(change.e, change.a, change.v, change.round);
                 }
-                if current_round == 0 { commits.insert(change.clone()); }
+                if current_round == 0 { commits.push(change.clone()); }
             }
             intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
             max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
@@ -2954,14 +2954,14 @@ fn transaction_flow(commits: &mut CollapsedChanges, frame: &mut Frame, program: 
 
 pub struct Transaction {
     changes: Vec<Change>,
-    commits: CollapsedChanges,
+    commits: Vec<Change>,
     frame: Frame,
 }
 
 impl Transaction {
     pub fn new() -> Transaction {
         let frame = Frame::new();
-        Transaction { changes: vec![], commits: CollapsedChanges::new(), frame}
+        Transaction { changes: vec![], commits: vec![], frame}
     }
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
@@ -2992,14 +2992,14 @@ impl Transaction {
 
 pub struct CodeTransaction {
     changes: Vec<Change>,
-    commits: CollapsedChanges,
+    commits: Vec<Change>,
     frame: Frame,
 }
 
 impl CodeTransaction {
     pub fn new() -> CodeTransaction {
         let frame = Frame::new();
-        CodeTransaction { changes: vec![], commits:CollapsedChanges::new(), frame}
+        CodeTransaction { changes: vec![], commits:vec![], frame}
     }
 
     pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
