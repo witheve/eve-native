@@ -1232,12 +1232,19 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             let checked = program.index.check(resolved_e, resolved_a, resolved_v);
-            // if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
+            if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
             if checked { 1 } else { bail }
         },
-        &Constraint::Function {ref func, ref output, ref params, ref param_mask, ref output_mask, .. } => {
+        &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, .. } => {
+            // We delay actual accept until all but one of our attributes are satisfied. Either:
+            // - We have all inputs and solving for output OR,
+            // - We have the output and all but one input and solving for the remaining input
+
             let solved = frame.row.solved_fields;
-            if !check_bits(solved, *param_mask) || !has_any_bits(frame.row.solving_for, *output_mask) {
+            let solving_output_with_inputs = check_bits(solved, param_mask) && has_any_bits(frame.row.solving_for, output_mask);
+            let solving_input_with_output = check_bits(solved, param_mask | output_mask) && has_any_bits(frame.row.solving_for, param_mask);
+
+            if !solving_output_with_inputs && !solving_input_with_output {
                 return 1
             }
 
