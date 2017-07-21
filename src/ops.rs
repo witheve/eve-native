@@ -751,6 +751,18 @@ impl EstimateIter {
         }
     }
 
+    pub fn constraint(&self) -> u32 {
+        match self {
+            &EstimateIter::Scan {constraint, .. } |
+            &EstimateIter::Function {constraint, .. } |
+            &EstimateIter::Intermediate {constraint, .. } |
+            &EstimateIter::MultiFunction {constraint, .. } => {
+                constraint
+            },
+            &EstimateIter::PassThrough => 999999
+        }
+    }
+
     pub fn next(&mut self, row:&mut Row, iterator: u32) -> bool {
         match self {
             &mut EstimateIter::Scan {ref mut iter, ref output, .. } => {
