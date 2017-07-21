@@ -43,4 +43,5 @@ fn round_holder_compute_output_rounds() {
     check_output_rounds(vec![(3,1), (5,1)], vec![1,-1,0,0], vec![]);
     check_output_rounds(vec![(3,1), (5,1)], vec![1,0,0,0,0,0,-1], vec![(3,1), (5,1), (6,-2)]);
     check_output_rounds(vec![(0,1), (6,-1)], vec![1,0,0,0,0,0,-1], vec![(0,1), (6,-1)]);
+    check_output_rounds(vec![(4,-1)], vec![0,0,0,1,-1], vec![]);
 }

@@ -1,7 +1,7 @@
 extern crate eve;
 
-use eve::ops::{Program};
-use eve::parser::{parse_string};
+use eve::ops::{Program, CodeTransaction};
+use eve::compiler::{parse_string};
 
 //--------------------------------------------------------------------
 // Helper macros
@@ -21,11 +21,24 @@ macro_rules! valid (($blocks:tt) => ({
 
 macro_rules! blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=").replace(" . ", ".");
+    // @FIXME: any occurrence of search/commit/etc. will be replaced here...
+    let stringy = stringify!($info).replace("\n", " ")
+        .replace("# ", "#")
+        .replace("search", "\nsearch")
+        .replace("commit", "\ncommit")
+        .replace("bind", "\nbind")
+        .replace("watch", "\nwatch")
+        .replace("project", "\nproject")
+        .replace("end", "\nend\n")
+        .replace(" ! [", "[")
+        .replace(" ! / ", "/")
+        .replace(": =", ":=")
+        .replace(" . ", ".");
+    println!("{}", stringy);
     let blocks = parse_string(&mut program, &stringy, "test");
-    for block in blocks {
-        program.raw_block(block);
-    }
+    let mut txn = CodeTransaction::new();
+    txn.exec(&mut program, blocks, vec![]);
+
     program
 }));
 
@@ -1271,6 +1284,7 @@ test!(base_aggregate_transitive_choose, {
         [#success]
     end
 });
+<<<<<<< HEAD
 
 test!(base_aggregate_sort, {
     search
@@ -1286,3 +1300,5 @@ test!(base_aggregate_sort, {
         [#student name: "Iggy" GPA: 3.97]
     end
 });
+=======
+>>>>>>> refs/remotes/origin/master

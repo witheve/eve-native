@@ -1,7 +1,8 @@
 extern crate eve;
 use eve::ops::{Program};
+use eve::compiler::*;
 use eve::parser::*;
-use eve::parser2::*;
+use eve::combinators::*;
 
 //--------------------------------------------------------------------
 // Helper macros
@@ -9,7 +10,17 @@ use eve::parser2::*;
 
 macro_rules! parse_blocks (($info:tt) => ({
     let mut program = Program::new();
-    let stringy = stringify!($info).replace("# ", "#").replace(" ! [", "[").replace(" ! / ", "/").replace(": =", ":=").replace(" . ", ".");
+    let stringy = stringify!($info).replace("# ", "#")
+        .replace("search", "\nsearch")
+        .replace("commit", "\ncommit")
+        .replace("bind", "\nbind")
+        .replace("watch", "\nwatch")
+        .replace("project", "\nproject")
+        .replace("end", "\nend\n")
+        .replace(" ! [", "[")
+        .replace(" ! / ", "/")
+        .replace(": =", ":=")
+        .replace(" . ", ".");
     let blocks = parse_string(&mut program, &stringy, "test");
     blocks
 }));
@@ -26,17 +37,31 @@ macro_rules! test (($name:ident, $body:tt) => (
 //--------------------------------------------------------------------
 
 test!(parse_error_empty_search, {
-    this is pretty cool isn't it?
+    search
+        [#foo woah]
+    bind
+        [#bar baz: [#zomg]]
+    end
 
     search
+        [#bar baz: [#zomg]]
     bind
+        [#success]
+    end
+
+    commit
+        [#foo woah: 1000]
     end
 });
 
 
 #[test]
 pub fn parser_combinator() {
-    let mut state = ParseState::new(" project ( bajEz");
-    let result = expression(&mut state);
+    let mut state = ParseState::new("z = if x = 3 then \"medium\"
+            else if x = 10 then \"large\"
+            else \"too big\"
+");
+
+    let result = if_expression(&mut state);
     println!("{:?}", result);
 }
