@@ -873,6 +873,40 @@ impl IntermediateIndex {
 }
 
 //-------------------------------------------------------------------------
+// Collapsed changes
+//-------------------------------------------------------------------------
+
+pub struct CollapsedChanges {
+    changes: HashMap<(Interned, Interned, Interned, Round), Change, MyHasher>
+}
+
+impl CollapsedChanges {
+    pub fn new() -> CollapsedChanges {
+        CollapsedChanges { changes: HashMap::default() }
+    }
+
+    pub fn insert(&mut self, change:Change) {
+        let key = (change.e, change.a, change.v, change.round);
+        match self.changes.entry(key) {
+            Entry::Occupied(mut o) => {
+                o.get_mut().count += change.count;
+            }
+            Entry::Vacant(o) => {
+                o.insert(change);
+            }
+        };
+    }
+
+    pub fn iter<'a>(&'a self) -> Box<Iterator<Item=&'a Change> + 'a> {
+        Box::new(self.changes.values().filter(|x| x.count != 0))
+    }
+
+    pub fn drain<'a>(&'a mut self) -> Box<Iterator<Item=Change> + 'a> {
+        Box::new(self.changes.drain().map(|kv| kv.1).filter(|x| x.count != 0))
+    }
+}
+
+//-------------------------------------------------------------------------
 // Watch Index
 //-------------------------------------------------------------------------
 

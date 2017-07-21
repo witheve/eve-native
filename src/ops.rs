@@ -4,7 +4,7 @@
 
 extern crate time;
 
-use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry};
+use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
 use compiler::{make_block};
 use hash::map::{DangerousKeys};
 use std::collections::HashMap;
@@ -2331,7 +2331,7 @@ pub struct RoundHolder {
     rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
     commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
     staged_commit_keys: Vec<(Interned, Interned, Interned, Interned)>,
-    collapsed_commits: HashMap<(Interned, Interned, Interned), Change>,
+    collapsed_commits: CollapsedChanges,
     pub max_round: usize,
 }
 
@@ -2342,25 +2342,13 @@ pub fn move_output_round(info:&Option<(Round, Count)>, round:&mut Round, count:&
     }
 }
 
-pub fn commit_collapsed(collapsed:&mut HashMap<(Interned, Interned, Interned), Change>, change:Change) {
-    let key = (change.e, change.a, change.v);
-    match collapsed.entry(key) {
-        Entry::Occupied(mut o) => {
-            o.get_mut().count += change.count;
-        }
-        Entry::Vacant(o) => {
-            o.insert(change);
-        }
-    };
-}
-
 impl RoundHolder {
     pub fn new() -> RoundHolder {
         let mut rounds = vec![];
         for _ in 0..100 {
             rounds.push(HashMap::new());
         }
-        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), staged_commit_keys:vec![], collapsed_commits:HashMap::new(), max_round: 0 }
+        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), staged_commit_keys:vec![], collapsed_commits:CollapsedChanges::new(), max_round: 0 }
     }
 
     pub fn get_output_rounds(&self) -> &Vec<(Round, Count)> {
@@ -2557,7 +2545,7 @@ impl RoundHolder {
                                         if let Some(vals) = index.get(e, attr, 0) {
                                             for val in vals {
                                                 let cloned = Change {e, a:attr, v:val, n, count, transaction, round};
-                                                commit_collapsed(&mut self.collapsed_commits, cloned);
+                                                self.collapsed_commits.insert(cloned);
                                             }
                                         }
                                     }
@@ -2567,7 +2555,7 @@ impl RoundHolder {
                                 if let Some(vals) = index.get(e, a, 0) {
                                     for val in vals {
                                         let cloned = Change {e, a, v:val, n, count, transaction, round};
-                                        commit_collapsed(&mut self.collapsed_commits, cloned);
+                                        self.collapsed_commits.insert(cloned);
                                     }
                                 }
                             },
@@ -2584,23 +2572,22 @@ impl RoundHolder {
         for info in self.commits.values() {
             match info {
                 &(ChangeType::Insert, Change {count, ..}) => {
-                    if count > 0 { commit_collapsed(&mut self.collapsed_commits, info.1); }
+                    if count > 0 { self.collapsed_commits.insert(info.1); }
+
                 }
                 &(ChangeType::Remove, Change {count, ..}) => {
-                    if count < 0 { commit_collapsed(&mut self.collapsed_commits, info.1); }
+                    if count < 0 { self.collapsed_commits.insert(info.1); }
                 }
             }
         }
         self.commits.clear();
         let mut has_changes = false;
         // @FIXME: There should be some way for us to not have to allocate a vec here
-        let drained = { self.collapsed_commits.drain().map(|v| v.1).collect::<Vec<Change>>() };
+        let drained = { self.collapsed_commits.drain().collect::<Vec<Change>>() };
         for change in drained {
-            if change.count != 0 {
-                has_changes = true;
-                // apply it
-                index.distinct(&change, self);
-            }
+            has_changes = true;
+            // apply it
+            index.distinct(&change, self);
         }
         has_changes
     }
