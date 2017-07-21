@@ -10,12 +10,9 @@ extern crate futures;
 extern crate ws;
 
 use ws::{listen, Message, Sender, Handler, CloseCode};
-use std::sync::mpsc::{SyncSender};
 
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate lazy_static;
 
 #[macro_use]
 extern crate serde_json;
@@ -27,27 +24,29 @@ use serde_json::{Error};
 extern crate eve;
 extern crate time;
 
-use eve::ops::{Program, Transaction, RawChange, Internable, Interner, CodeTransaction};
+use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Interner};
 use eve::indexes::{WatchDiff};
-use eve::compiler::{parse_file};
 use eve::watcher::{SystemTimerWatcher, Watcher};
 use std::env;
-use std::thread;
-
-
-lazy_static! {
-    static ref CLOSE:RawChange = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
-}
 
 pub struct ClientHandler {
     out: Sender,
-    program_input: SyncSender<Vec<RawChange>>,
+    running: RunLoop,
 }
 
 impl ClientHandler {
     pub fn new(out:Sender) -> ClientHandler {
-        let program_input = make_program(out.clone());
-        ClientHandler {out, program_input}
+        let mut runner = ProgramRunner::new();
+        let outgoing = runner.program.outgoing.clone();
+        runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
+        runner.program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out.clone())));
+
+        for file in env::args().skip(1) {
+            runner.load(&file);
+        }
+
+        let running = runner.run();
+        ClientHandler {out, running}
     }
 }
 
@@ -67,7 +66,7 @@ impl Handler for ClientHandler {
                     raw_changes.extend(removes.into_iter().map(|(e,a,v)| {
                         RawChange { e,a,v,n: Internable::String("input".to_string()),count:-1 }
                     }));
-                    self.program_input.send(raw_changes).unwrap();
+                    self.running.send(raw_changes);
                 }
                 _ => { }
             }
@@ -79,48 +78,8 @@ impl Handler for ClientHandler {
 
     fn on_close(&mut self, code: CloseCode, reason: &str) {
         println!("WebSocket closing for ({:?}) {}", code, reason);
-        self.program_input.send(vec![CLOSE.clone()]).unwrap();
+        self.running.close();
     }
-}
-
-fn make_program(out:Sender) -> SyncSender<Vec<RawChange>> {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    thread::spawn(move || {
-        let local_close = CLOSE.clone();
-        let mut program = Program::new();
-        sender.send(program.outgoing.clone()).unwrap();
-        let outgoing = program.outgoing.clone();
-        program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
-        program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out)));
-
-        let mut blocks = vec![];
-        for file in env::args().skip(1) {
-            blocks.extend(parse_file(&mut program, &file));
-        }
-
-        let mut txn = CodeTransaction::new();
-        txn.exec(&mut program, blocks, vec![]);
-
-        println!("Starting run loop.");
-        'outer: loop {
-            match program.incoming.recv() {
-                Ok(v) => {
-                    let start_ns = time::precise_time_ns();
-                    let mut txn = Transaction::new();
-                    for cur in v {
-                        if cur == local_close { break 'outer; }
-                        txn.input_change(cur.to_change(&mut program.state.interner));
-                    };
-                    txn.exec(&mut program);
-                    let end_ns = time::precise_time_ns();
-                    println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
-                }
-                Err(_) => { break; }
-            }
-        }
-        println!("Closing run loop.");
-    });
-    receiver.recv().unwrap()
 }
 
 #[derive(Serialize, Deserialize, Debug)]

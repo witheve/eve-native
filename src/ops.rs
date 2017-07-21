@@ -5,7 +5,7 @@
 extern crate time;
 
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
-use compiler::{make_block};
+use compiler::{make_block, parse_file};
 use hash::map::{DangerousKeys};
 use std::collections::HashMap;
 use std::mem::transmute;
@@ -22,6 +22,7 @@ use std::sync::mpsc;
 use serde::ser::{Serialize, Serializer};
 use serde::de::{Deserialize, Deserializer, Visitor};
 use std::error::Error;
+use std::thread::{self, JoinHandle};
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -2705,7 +2706,7 @@ impl BlockInfo {
 pub struct Program {
     pub state: RuntimeState,
     pub block_info: BlockInfo,
-    watchers: HashMap<String, Box<Watcher>>,
+    watchers: HashMap<String, Box<Watcher + Send>>,
     pub incoming: Receiver<Vec<RawChange>>,
     pub outgoing: SyncSender<Vec<RawChange>>,
 }
@@ -2794,7 +2795,7 @@ impl Program {
         self.register_block(block);
     }
 
-    pub fn attach(&mut self, name:&str, watcher:Box<Watcher>) {
+    pub fn attach(&mut self, name:&str, watcher:Box<Watcher + Send>) {
         self.watchers.insert(name.to_string(), watcher);
     }
 
@@ -3027,4 +3028,84 @@ impl CodeTransaction {
 
         transaction_flow(&mut self.commits, frame, program);
     }
+}
+
+//-------------------------------------------------------------------------
+// Program Runner
+//-------------------------------------------------------------------------
+
+pub struct RunLoop {
+    thread: JoinHandle<()>,
+    close_message: RawChange,
+    outgoing: SyncSender<Vec<RawChange>>,
+}
+
+impl RunLoop {
+    pub fn wait(self) {
+        self.thread.join().unwrap();
+    }
+
+    pub fn close(&self) {
+        self.outgoing.send(vec![self.close_message.clone()]).unwrap();
+    }
+
+    pub fn send(&self, msg: Vec<RawChange>) {
+        self.outgoing.send(msg).unwrap();
+    }
+}
+
+pub struct ProgramRunner {
+    pub program: Program,
+    paths: Vec<String>,
+    close_message: RawChange,
+}
+
+impl ProgramRunner {
+    pub fn new() -> ProgramRunner {
+        let close_message = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
+        ProgramRunner {close_message, paths: vec![], program: Program::new()}
+    }
+
+    pub fn load(&mut self, path:&str) {
+        self.paths.push(path.to_owned());
+    }
+
+    pub fn run(self) -> RunLoop {
+        let outgoing = self.program.outgoing.clone();
+        let close_message = self.close_message.clone();
+        let close_message2 = self.close_message.clone();
+        let mut program = self.program;
+        let paths = self.paths;
+        let thread = thread::spawn(move || {
+            let mut blocks = vec![];
+            for path in paths {
+                blocks.extend(parse_file(&mut program, &path));
+            }
+
+            let mut txn = CodeTransaction::new();
+            txn.exec(&mut program, blocks, vec![]);
+
+            println!("Starting run loop.");
+            'outer: loop {
+                match program.incoming.recv() {
+                    Ok(v) => {
+                        let start_ns = time::precise_time_ns();
+                        let mut txn = Transaction::new();
+                        for cur in v {
+                            if cur == close_message2 { break 'outer; }
+                            txn.input_change(cur.to_change(&mut program.state.interner));
+                        };
+                        txn.exec(&mut program);
+                        let end_ns = time::precise_time_ns();
+                        println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+                    }
+                    Err(_) => { break; }
+                }
+            }
+            println!("Closing run loop.");
+        });
+
+        RunLoop { thread, outgoing, close_message }
+    }
+
 }
