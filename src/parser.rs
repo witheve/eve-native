@@ -1,4 +1,3 @@
-
 use compiler::{Node, OutputType};
 use std::str::FromStr;
 use combinators::*;
@@ -345,18 +344,42 @@ parser!(mutating_record_reference(state) -> Node<'a> {
 // Outputs
 //--------------------------------------------------------------------
 
-parser!(bind_update(state) -> Node<'a> {
+parser!(update_add(state) -> Node<'a> {
     let left = call!(state, mutating_record_reference);
-    let op = alt_tag!(state, [ "+=" "<-" ]);
-    let value = alt!(state, [ record none_value expression hashtag ]);
-    result!(state, Node::RecordUpdate { op, record:Box::new(left), value:Box::new(value), output_type: OutputType::Bind })
+    tag!(state, "+=");
+    let value = alt!(state, [ record expression expression_set hashtag ]);
+    result!(state, Node::RecordUpdate { op: "+=", record:Box::new(left), value:Box::new(value), output_type: state.output_type })
+});
+
+parser!(update_merge(state) -> Node<'a> {
+    let left = call!(state, mutating_record_reference);
+    tag!(state, "<-");
+    let value = call!(state, record);
+    result!(state, Node::RecordUpdate { op: "<-", record:Box::new(left), value:Box::new(value), output_type: state.output_type })
+});
+
+parser!(update_set(state) -> Node<'a> {
+    let left = call!(state, mutating_record_reference);
+    tag!(state, ":=");
+    let value = alt!(state, [ none_value record expression expression_set ]);
+    result!(state, Node::RecordUpdate { op: ":=", record:Box::new(left), value:Box::new(value), output_type: state.output_type })
+});
+
+parser!(update_remove(state) -> Node<'a> {
+    let left = call!(state, mutating_record_reference);
+    tag!(state, "-=");
+    let value = alt!(state, [ expression expression_set hashtag ]);
+    result!(state, Node::RecordUpdate { op: "-=", record:Box::new(left), value:Box::new(value), output_type: state.output_type })
+});
+
+parser!(bind_update(state) -> Node<'a> {
+    let result = alt!(state, [ update_add update_merge ]);
+    result!(state, result)
 });
 
 parser!(commit_update(state) -> Node<'a> {
-    let left = call!(state, mutating_record_reference);
-    let op = alt_tag!(state, [ ":=" "+=" "-=" "<-" ]);
-    let value = alt!(state, [ record none_value expression hashtag ]);
-    result!(state, Node::RecordUpdate { op, record:Box::new(left), value:Box::new(value), output_type: OutputType::Commit })
+    let result = alt!(state, [ update_add update_merge update_set update_remove ]);
+    result!(state, result)
 });
 
 parser!(output_equality(state) -> Node<'a> {
