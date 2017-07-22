@@ -1,16 +1,38 @@
+~~~ eve
 search
-        foo = [#foo]
-        total = gather/sum[value, for:foo]
-        value = if v = foo.value then v
-                else 10
-    bind
-        [#total total]
-    end
-
-search
-  t = [#total total]
-watch client/websocket
-  ("foo", t, total)
+  blub = "q"
+bind
+  [#ui/div #html/root #app-wrapper blub class: "todoapp" | children:
+    [#html/element tagname: "header" | children:
+      [#ui/input #new-todo, class: "new-todo" autofocus: "true" placeholder: "What needs to be done?"]]
+  [#ui/div #todo-list]]
 end
+~~~
 
+~~~ eve
+search
+  element = [#new-todo value]
+  kd = [#html/event/key-down element, key: "enter"]
 
+commit
+  [#todo number: 1 body: value, editing: "false", completed: "false", kd]
+  element.value := ""
+end
+~~~
+
+~~~ eve
+commit
+  [#app filter: "all"]
+end
+~~~
+
+~~~ eve
+search
+  parent = [#todo-list]
+  todo = [#todo]
+
+bind
+  // parent.children +=
+  [#ui/div #html/root text: "que" todo]
+end
+~~~

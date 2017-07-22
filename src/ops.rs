@@ -17,12 +17,14 @@ use std::collections::HashSet;
 use std::iter::Iterator;
 use std::fmt;
 use watcher::{Watcher};
-use std::sync::mpsc::{SyncSender, Receiver};
+use std::sync::mpsc::{SyncSender, Sender, Receiver};
 use std::sync::mpsc;
 use serde::ser::{Serialize, Serializer};
 use serde::de::{Deserialize, Deserializer, Visitor};
 use std::error::Error;
 use std::thread::{self, JoinHandle};
+use std::io::Write;
+use std::fs::{OpenOptions};
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -99,6 +101,16 @@ impl Change {
         let mut v = prog.state.interner.get_value(self.v).print();
         v = if v.contains("|") { format!("<{}>", self.v) } else { v };
         format!("Change (<{}>, {:?}, {})  {}:{}:{}", self.e, a, v, self.transaction, self.round, self.count)
+    }
+
+    pub fn to_raw(&self, interner:&Interner) -> RawChange {
+        RawChange {
+            e: interner.get_value(self.e).clone(),
+            a: interner.get_value(self.a).clone(),
+            v: interner.get_value(self.v).clone(),
+            n: Internable::Null,
+            count: self.count,
+        }
     }
 }
 
@@ -2973,11 +2985,20 @@ impl Transaction {
         self.changes.push(change);
     }
 
-    pub fn exec(&mut self, program: &mut Program) {
+    pub fn exec(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>) {
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
         transaction_flow(&mut self.commits, &mut self.frame, program);
+        if let &mut Some(ref channel) = persistence_channel {
+            let mut to_persist = vec![];
+            for commit in self.commits.drain(..) {
+                to_persist.push(commit.to_raw(&program.state.interner));
+            }
+            channel.send(PersisterMessage::Write(to_persist)).unwrap();
+        } else {
+            self.commits.clear();
+        }
     }
 
     pub fn clear(&mut self) {
@@ -3031,6 +3052,55 @@ impl CodeTransaction {
 }
 
 //-------------------------------------------------------------------------
+// Persister
+//-------------------------------------------------------------------------
+
+pub enum PersisterMessage {
+    Stop,
+    Write(Vec<RawChange>),
+}
+
+pub struct Persister {
+    thread: JoinHandle<()>,
+    outgoing: Sender<PersisterMessage>,
+}
+
+impl Persister {
+    pub fn new(path_ref:&str) -> Persister {
+        let (outgoing, incoming) = mpsc::channel();
+        let path = path_ref.to_string();
+        let thread = thread::spawn(move || {
+            let mut file = OpenOptions::new().append(true).create(true).open(&path).unwrap();
+            loop {
+                match incoming.recv().unwrap() {
+                    PersisterMessage::Stop => { break; }
+                    PersisterMessage::Write(items) => {
+                        println!("Let's persist some stuff!");
+                        match write!(file, "yo") {
+                            Err(e) => {panic!("Can't persist! {:?}", e); }
+                            Ok(_) => { }
+                        }
+                    }
+                }
+            }
+        });
+        Persister { outgoing, thread }
+    }
+
+    pub fn wait(self) {
+        self.thread.join().unwrap();
+    }
+
+    pub fn get_channel(&self) -> Sender<PersisterMessage> {
+        self.outgoing.clone()
+    }
+
+    pub fn close(&self) {
+       self.outgoing.send(PersisterMessage::Stop).unwrap();
+    }
+}
+
+//-------------------------------------------------------------------------
 // Program Runner
 //-------------------------------------------------------------------------
 
@@ -3058,16 +3128,21 @@ pub struct ProgramRunner {
     pub program: Program,
     paths: Vec<String>,
     close_message: RawChange,
+    persistence_channel: Option<Sender<PersisterMessage>>,
 }
 
 impl ProgramRunner {
     pub fn new() -> ProgramRunner {
         let close_message = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
-        ProgramRunner {close_message, paths: vec![], program: Program::new()}
+        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None}
     }
 
     pub fn load(&mut self, path:&str) {
         self.paths.push(path.to_owned());
+    }
+
+    pub fn persist(&mut self, persister:&Persister) {
+        self.persistence_channel = Some(persister.get_channel());
     }
 
     pub fn run(self) -> RunLoop {
@@ -3076,6 +3151,7 @@ impl ProgramRunner {
         let close_message2 = self.close_message.clone();
         let mut program = self.program;
         let paths = self.paths;
+        let mut persistence_channel = self.persistence_channel;
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
             for path in paths {
@@ -3095,7 +3171,7 @@ impl ProgramRunner {
                             if cur == close_message2 { break 'outer; }
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
-                        txn.exec(&mut program);
+                        txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
                     }

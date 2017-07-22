@@ -24,7 +24,7 @@ use serde_json::{Error};
 extern crate eve;
 extern crate time;
 
-use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Interner};
+use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Interner, Persister};
 use eve::indexes::{WatchDiff};
 use eve::watcher::{SystemTimerWatcher, Watcher};
 use std::env;
@@ -40,6 +40,8 @@ impl ClientHandler {
         let outgoing = runner.program.outgoing.clone();
         runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
         runner.program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out.clone())));
+        // let persister = Persister::new("foo.evedb");
+        // runner.persist(&persister);
 
         for file in env::args().skip(1) {
             runner.load(&file);
