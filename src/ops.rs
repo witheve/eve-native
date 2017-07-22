@@ -763,6 +763,18 @@ impl EstimateIter {
         }
     }
 
+    pub fn constraint(&self) -> u32 {
+        match self {
+            &EstimateIter::Scan {constraint, .. } |
+            &EstimateIter::Function {constraint, .. } |
+            &EstimateIter::Intermediate {constraint, .. } |
+            &EstimateIter::MultiFunction {constraint, .. } => {
+                constraint
+            },
+            &EstimateIter::PassThrough => 999999
+        }
+    }
+
     pub fn next(&mut self, row:&mut Row, iterator: u32) -> bool {
         match self {
             &mut EstimateIter::Scan {ref mut iter, ref output, .. } => {
@@ -1232,12 +1244,19 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             let checked = program.index.check(resolved_e, resolved_a, resolved_v);
-            // if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
+            if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
             if checked { 1 } else { bail }
         },
-        &Constraint::Function {ref func, ref output, ref params, ref param_mask, ref output_mask, .. } => {
+        &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, .. } => {
+            // We delay actual accept until all but one of our attributes are satisfied. Either:
+            // - We have all inputs and solving for output OR,
+            // - We have the output and all but one input and solving for the remaining input
+
             let solved = frame.row.solved_fields;
-            if !check_bits(solved, *param_mask) || !has_any_bits(frame.row.solving_for, *output_mask) {
+            let solving_output_with_inputs = check_bits(solved, param_mask) && has_any_bits(frame.row.solving_for, output_mask);
+            let solving_input_with_output = check_bits(solved, param_mask | output_mask) && has_any_bits(frame.row.solving_for, param_mask);
+
+            if !solving_output_with_inputs && !solving_input_with_output {
                 return 1
             }
 
@@ -1911,6 +1930,9 @@ impl fmt::Debug for Constraint {
             &Constraint::IntermediateScan { ref key, ref value, .. } => { write!(f, "IntermediateScan ( {:?}, {:?} )", key, value) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::InsertIntermediate { ref key, ref value, negate } => { write!(f, "InsertIntermediate ({:?}, {:?}, negate? {:?})", key, value, negate) }
+            &Constraint::Remove { e, a, v, .. } => { write!(f, "Remove ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::RemoveAttribute { e, a, .. } => { write!(f, "RemoveAttribute ( {:?}, {:?} )", e, a) }
+            &Constraint::RemoveEntity { e, .. } => { write!(f, "RemoveEntity ( {:?} )", e) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
             &Constraint::MultiFunction { ref op, ref params, ref outputs, .. } => { write!(f, "{:?} = {}({:?})", outputs, op, params) }
             &Constraint::Aggregate { ref op, ref group, ref projection, ref params, ref output_key, .. } => { write!(f, "{:?} = {}(per: {:?}, for: {:?}, {:?})", output_key, op, group, projection, params) }
