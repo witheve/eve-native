@@ -1927,7 +1927,6 @@ impl fmt::Debug for Constraint {
             &Constraint::Filter { ref op, ref left, ref right, .. } => { write!(f, "Filter ( {:?} {} {:?} )", left, op, right) }
             &Constraint::Project { ref registers } => { write!(f, "Project {:?}", registers) }
             &Constraint::Watch { ref name, ref registers } => { write!(f, "Watch {}{:?}", name, registers) }
-            _ => { write!(f, "Constraint ...") }
         }
     }
 }
