@@ -264,6 +264,39 @@ test!(base_join_binary_unmatched, {
     end
 });
 
+test!(base_join_records, {
+    commit
+        [#foo x: "a"]
+        [#bar x: "a"]
+    end
+
+    search
+        [#foo x]
+        [#bar x]
+    bind
+        [#success]
+    end
+});
+
+test!(base_join_nested_record, {
+    commit
+        [#bar x: "a"]
+    end
+
+    search
+        bar = [#bar x]
+    commit
+        [#foo x: bar]
+    end
+
+    search
+        bar = [#bar]
+        [#foo x: bar]
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Interpolation
 //--------------------------------------------------------------------
@@ -351,6 +384,15 @@ test!(base_interpolation_bind_expression, {
 
     search
         [#foo baz: "3"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_interpolation_functions, {
+    search
+        text = "Hello"
+        "Helle" = "{{ string/replace[text replace: "o" with: "e"] }}"
     bind
         [#success]
     end
@@ -766,11 +808,101 @@ test!(base_union, {
     end
 });
 
+test!(base_union_else, {
+    search
+        [#foo x]
+        z = if x > 10 then "large"
+            else "small"
+    commit
+        [#zomg x | z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z: "small"]
+        [#zomg x:100 z:"large"]
+        [#zomg x:3 z: "small"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_union_multireturn, {
+    search
+        [#foo x]
+        (z, y) = if x > 10 then ("large",3)
+            else ("small", 4)
+    commit
+        [#zomg x | z y]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z: "small" y: 4]
+        [#zomg x:100 z:"large" y: 3]
+        [#zomg x:3 z: "small" y: 4]
+    bind
+        [#success]
+    end
+});
+
+test!(base_union_record, {
+    search
+        name = if [#foo first last] then "{{first}} {{last}}"
+               if [#bar full-name] then full-name
+    commit
+        [#person name]
+    end
+
+    commit
+        [#foo first: "Sam" last: "Smith"]
+        [#bar full-name: "Leopold Hamburger"]
+    end
+
+    search
+        sam = [#person name: "Sam Smith"]
+        leo = [#person name: "Leopold Hamburger"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_union_record_multireturn, {
+    search
+        (name, person) = if p = [#foo first last] then ("{{first}} {{last}}", p)
+                         if p = [#bar full-name] then (full-name, p)
+    commit
+        [#person name person]
+    end
+
+    commit
+        [#foo first: "Sam" last: "Smith"]
+        [#bar full-name: "Leopold Hamburger"]
+    end
+
+    search
+        sam = [#person name: "Sam Smith" person: [#foo]]
+        leo = [#person name: "Leopold Hamburger" person: [#bar]]
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Update Operators
 //--------------------------------------------------------------------
 
-test!(base_update_add {
+test!(base_update_add, {
     search
         foo = [#foo]
     bind
@@ -788,7 +920,7 @@ test!(base_update_add {
     end
 });
 
-test!(base_update_remove_last {
+test!(base_update_remove_last, {
     search
         foo = [#foo]
     commit
@@ -800,13 +932,14 @@ test!(base_update_remove_last {
     end
 
     search
-        [#foo not(bar)]
+        foo = [#foo]
+        not(foo.bar)
     bind
         [#success]
     end
 });
 
-test!(base_update_remove_one {
+test!(base_update_remove_one, {
     search
         foo = [#foo]
     commit
@@ -819,13 +952,13 @@ test!(base_update_remove_one {
 
     search
         [#foo bar]
-        1 = gather/count[for: bar]
+        1 = gather!/count![for: bar]
     bind
         [#success]
     end
 });
 
-test!(base_update_set {
+test!(base_update_set, {
     search
         foo = [#foo]
     commit
@@ -843,7 +976,7 @@ test!(base_update_set {
     end
 });
 
-test!(base_update_set_none {
+test!(base_update_set_none, {
     search
         foo = [#foo]
     commit
@@ -855,13 +988,14 @@ test!(base_update_set_none {
     end
 
     search
-        [#foo not(bar)]
+        foo = [#foo]
+        not(foo.bar)
     bind
         [#success]
     end
 });
 
-test!(base_update_merge {
+test!(base_update_merge, {
     search
         foo = [#foo]
     commit
@@ -874,220 +1008,6 @@ test!(base_update_merge {
 
     search
         [#foo bar baz]
-    bind
-        [#success]
-    end
-});
-
-
-//--------------------------------------------------------------------
-// Functions
-//--------------------------------------------------------------------
-
-test!(base_lib_math_floor, {
-    search
-        34 = math/floor[value: 34.2]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_ceiling, {
-    search
-        35 = math/ceiling[value: 34.2]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_round, {
-    search
-        34 = math/ceiling[value: 34.2]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_sin_degrees, {
-    search
-        math/sin[degrees: 90]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_sin_radians, {
-    search
-        math/sin[radians: 1.5]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_cos_degrees, {
-    search
-        math/cos[degrees: 90]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_tan_degrees, {
-    search
-        math/tan[degrees: 90]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_max, {
-    search
-        pac-man = 10
-        donkey-kong = 13
-        13 = math/max[a: pac-man, b: donkey-kong]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_min, {
-    search
-        pac-man = 10
-        donkey-kong = 13
-        10 = math/min[a: pac-man, b: donkey-kong]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_mod, {
-    search
-        1 = math/mod[value: 5, by: 2]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_absolute, {
-    search
-        [#city name longitude]
-        hours-from-gmt = math/absolute[value: longitude] * 24 / 360 
-    bind
-        [#success]
-    end
-
-    commit
-        [#city name: "Paris" longitude: 2.33]
-        [#city name: "New York" longitude: -75.61]
-        [#city name: "Los Angeles" longitude: -118.24]
-    end
-});
-
-test!(base_lib_math_pow, {
-    search
-        8 = math/pow[value: 2 exponent: 3]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_log, {
-    search
-        0 = math/ln[value: 1]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_to_fixed, {
-    search
-        circumference = 6
-        diameter = 1.910
-        3.14 = math/to-fixed[value: (circumference / diameter), to: 2]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_math_to_range, {
-    search
-        y = math/range[start: 1, stop: 10]
-        10 = gather/count[for: y]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_random_number, {
-    search
-        x = random/number[seed: 3]
-        y = random/number[seed: 3]
-        x = y
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_string_replace, {
-    search
-        string = "I love the flavour."
-        "I love the flavor." = string/replace[text: string, replace: "flavour", with: "flavor"]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_string_get, {
-    search
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "Q" = string/get[text: alphabet, at: 17]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_string_uppercase, {
-    search
-        funny = "lol"
-        "LOL" = string/uppercase[text: funny]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_string_lowercase, {
-    search
-        really-funny = "LOL"
-        "lol" = string/lowercase[text: funny]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_string_index_of, {
-    search
-        2 = string/index-of[text: "developers", substring: "eve"]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_string_codepoint_length, {
-    search
-        7 = string/codepoint-length[text: "unicode"]
-        2 = string/codepoint-length[text: "🐩"]
-    bind
-        [#success]
-    end
-});
-
-test!(base_lib_system_timer, {
-    commit
-        [#system/timer resolution: 1000]
-    end
-
-    search
-        [#system/timer hour minute second]
     bind
         [#success]
     end
@@ -1282,20 +1202,5 @@ test!(base_aggregate_transitive_choose, {
         [#total total:18]
     bind
         [#success]
-    end
-});
-
-test!(base_aggregate_sort, {
-    search
-        [#student name GPA]
-        index = gather/sort[for: GPA]
-    bind 
-        [#success]
-    end
-
-    commit
-        [#student name: "Ashley" GPA: 3.10]
-        [#student name: "Jerome" GPA: 2.37]
-        [#student name: "Iggy" GPA: 3.97]
     end
 });
