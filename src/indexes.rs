@@ -310,6 +310,7 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_roun
     if input_round == 0 {
         if input_count < 0 {
             cur_count = input_count.abs();
+            counts[input_round as usize] = cur_count; // Cancel out the addition we do below.
         } else if cur_count < 0 {
             cur_count = 0;
         }
@@ -361,7 +362,7 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_roun
 #[derive(Clone, Debug)]
 pub struct RoundEntry {
     inserted: bool,
-    rounds: Vec<i32>,
+    pub rounds: Vec<i32>,
     active_rounds: Vec<i32>,
 }
 
@@ -389,7 +390,7 @@ impl RoundEntry {
 
 pub struct HashIndex {
     a: HashMap<Interned, HashIndexLevel, MyHasher>,
-    eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
+    pub eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
     empty: Vec<i32>,
     pub size: u32,
 }
@@ -447,10 +448,9 @@ impl HashIndex {
                     info.update_active(round, -1);
                     (!info.rounds.iter().any(|x| *x != 0), info.active_rounds.len() == 0)
                 };
-                if should_remove_entry {
+                if should_remove_entry && remove_indexed {
                     entry.remove_entry();
                 }
-                if should_remove_entry && !remove_indexed { panic!("We have active rounds when there are no rounds left"); }
                 remove_indexed
             }
             Entry::Vacant(_) => { false },

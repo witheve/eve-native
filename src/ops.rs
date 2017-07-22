@@ -2567,8 +2567,15 @@ impl RoundHolder {
                                     for attr in attrs {
                                         if let Some(vals) = index.get(e, attr, 0) {
                                             for val in vals {
-                                                let cloned = Change {e, a:attr, v:val, n, count, transaction, round};
-                                                self.collapsed_commits.insert(cloned);
+                                                match index.eavs.get(&(e, attr, val)) {
+                                                    Some(entry) => {
+                                                        if entry.rounds[0] > 0 {
+                                                            let cloned = Change {e, a:attr, v:val, n, count, transaction, round};
+                                                            self.collapsed_commits.insert(cloned);
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
                                             }
                                         }
                                     }
@@ -2577,8 +2584,15 @@ impl RoundHolder {
                             (_, 0) => {
                                 if let Some(vals) = index.get(e, a, 0) {
                                     for val in vals {
-                                        let cloned = Change {e, a, v:val, n, count, transaction, round};
-                                        self.collapsed_commits.insert(cloned);
+                                        match index.eavs.get(&(e, a, val)) {
+                                            Some(entry) => {
+                                                if entry.rounds[0] > 0 {
+                                                    let cloned = Change {e, a, v:val, n, count, transaction, round};
+                                                    self.collapsed_commits.insert(cloned);
+                                                }
+                                            }
+                                            _ => {}
+                                        }
                                     }
                                 }
                             },
