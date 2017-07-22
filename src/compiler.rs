@@ -797,41 +797,46 @@ impl<'a> Node<'a> {
                 };
                 let commit = *output_type == OutputType::Commit;
                 let ref val = **value;
-                let (a, v) = match (attr, val) {
-                    (None, &Node::Tag(t)) => { (interner.string("tag"), interner.string(t)) },
-                    (None, &Node::NoneValue) => { (Field::Value(0), Field::Value(0)) }
-                    (Some(attr), &Node::NoneValue) => { (interner.string(attr), Field::Value(0)) }
+                let mut avs = vec![];
+                match (attr, val) {
+                    (None, &Node::Tag(t)) => { avs.push((interner.string("tag"), interner.string(t))) },
+                    (None, &Node::NoneValue) => { avs.push((Field::Value(0), Field::Value(0))) }
+                    (Some(attr), &Node::NoneValue) => { avs.push((interner.string(attr), Field::Value(0))) }
+                    (Some(attr), &Node::ExprSet(ref nodes)) => {
+                        for node in nodes {
+                            avs.push((interner.string(attr), node.compile(interner, cur_block).unwrap()))
+                        }
+                    },
                     (Some(attr), v) => {
-                        (interner.string(attr), v.compile(interner, cur_block).unwrap())
+                        avs.push((interner.string(attr), v.compile(interner, cur_block).unwrap()))
                     },
                     // @TODO: this doesn't handle the case where you do
                     // foo.bar <- [#zomg a]
                     (None, &Node::OutputRecord(..)) => {
                         match op {
-                            &"<-" => {
-                                val.compile(interner, cur_block);
-                                (Field::Value(0), Field::Value(0))
-                            }
+                            &"<-" => { val.compile(interner, cur_block); }
                             _ => panic!("Invalid {:?}", self)
                         }
                     }
                     _ => { panic!("Invalid {:?}", self) }
                 };
-                match (*op, a, v) {
-                    (":=", Field::Value(0), Field::Value(0)) => {
-                        cur_block.constraints.push(Constraint::RemoveEntity {e:reg });
-                    },
-                    (":=", _, Field::Value(0)) => {
-                        cur_block.constraints.push(Constraint::RemoveAttribute {e:reg, a });
-                    },
-                    (":=", _, _) => {
-                        cur_block.constraints.push(Constraint::RemoveAttribute {e:reg, a });
-                        cur_block.constraints.push(Constraint::Insert {e:reg, a, v, commit});
-                    },
-                    (_, Field::Value(0), Field::Value(0)) => {  }
-                    ("+=", _, _) => { cur_block.constraints.push(Constraint::Insert {e:reg, a, v, commit}); }
-                    ("-=", _, _) => { cur_block.constraints.push(Constraint::Remove {e:reg, a, v }); }
-                    _ => { panic!("Invalid record update {:?} {:?} {:?}", op, a, v) }
+                for (a, v) in avs {
+                    match (*op, a, v) {
+                        (":=", Field::Value(0), Field::Value(0)) => {
+                            cur_block.constraints.push(Constraint::RemoveEntity {e:reg });
+                        },
+                        (":=", _, Field::Value(0)) => {
+                            cur_block.constraints.push(Constraint::RemoveAttribute {e:reg, a });
+                        },
+                        (":=", _, _) => {
+                            cur_block.constraints.push(Constraint::RemoveAttribute {e:reg, a });
+                            cur_block.constraints.push(Constraint::Insert {e:reg, a, v, commit});
+                        },
+                        (_, Field::Value(0), Field::Value(0)) => {  }
+                        ("+=", _, _) => { cur_block.constraints.push(Constraint::Insert {e:reg, a, v, commit}); }
+                        ("-=", _, _) => { cur_block.constraints.push(Constraint::Remove {e:reg, a, v }); }
+                        _ => { panic!("Invalid record update {:?} {:?} {:?}", op, a, v) }
+                    }
                 }
                 Some(reg)
             },
