@@ -1228,6 +1228,13 @@ impl Compilation {
         input_regs
     }
 
+    pub fn finalize(&mut self) {
+        self.reassign_registers();
+        let mut collapsed = HashSet::new();
+        collapsed.extend(self.constraints.drain(..));
+        self.constraints.extend(collapsed);
+    }
+
     pub fn reassign_registers(&mut self) {
         let mut regs = HashMap::new();
         let ref var_values = self.var_values;
@@ -1282,7 +1289,7 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
         _ => { println!("Failed: {:?}", parsed); }
     }
 
-    comp.reassign_registers();
+    comp.finalize();
     for c in comp.constraints.iter() {
         println!("{:?}", c);
     }
@@ -1292,7 +1299,7 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
         let mut cur = subs.pop().unwrap();
         let mut sub_comp = cur.get_mut_compilation();
         if sub_comp.constraints.len() > 0 {
-            sub_comp.reassign_registers();
+            sub_comp.finalize();
             println!("    SubBlock");
             for c in sub_comp.constraints.iter() {
                 println!("        {:?}", c);
@@ -1323,7 +1330,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 block.gather_equalities(interner, &mut comp);
                 block.unify(&mut comp);
                 block.compile(interner, &mut comp);
-                comp.reassign_registers();
+                comp.finalize();
                 println!("---------------------- Block {} ---------------------------", block_name);
                 if let &mut Node::Block { code, ..} = block {
                     println!("{}\n\n => \n", code);
@@ -1338,7 +1345,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                     let mut cur = subs.pop().unwrap();
                     let mut sub_comp = cur.get_mut_compilation();
                     if sub_comp.constraints.len() > 0 {
-                        sub_comp.reassign_registers();
+                        sub_comp.finalize();
                         println!("       SubBlock: {}", sub_name);
                         for c in sub_comp.constraints.iter() {
                             println!("            {:?}", c);
