@@ -25,6 +25,7 @@ use std::error::Error;
 use std::thread::{self, JoinHandle};
 use std::io::Write;
 use std::fs::{OpenOptions};
+use std::f32::consts::{PI};
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -2105,7 +2106,7 @@ pub fn math_sin(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
-            Some(Internable::from_number(a.sin()))
+            Some(Internable::from_number((a * PI / 180.0).sin()))
         },
         _ => { None }
     }
@@ -2115,7 +2116,7 @@ pub fn math_cos(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
-            Some(Internable::from_number(a.cos()))
+            Some(Internable::from_number((a * PI / 180.0).cos()))
         },
         _ => { None }
     }
