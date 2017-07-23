@@ -32,6 +32,7 @@ macro_rules! blocks (($info:tt) => ({
         .replace("end", "\nend\n")
         .replace(" ! [", "[")
         .replace(" ! / ", "/")
+        .replace(" ! - ", "-")
         .replace(": =", ":=")
         .replace(" . ", ".");
     println!("{}", stringy);
@@ -416,6 +417,25 @@ test!(base_multi_function_multi_field_filtered_expression, {
     search
         [#token value: "hey"]
         not([#token value: "dude"])
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
+// Eve auto index
+//--------------------------------------------------------------------
+
+test!(base_eve_auto_index, {
+    commit
+        [#div children:
+            [#div1]
+            [#div2]]
+    end
+
+    search
+        [#div1 eve!-auto!-index: 1]
+        [#div2 eve!-auto!-index: 2]
     bind
         [#success]
     end

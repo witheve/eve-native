@@ -753,11 +753,15 @@ impl<'a> Node<'a> {
                             let result_a = interner.string(a);
                             let result = match **v {
                                 Node::RecordSet(ref records) => {
-                                    for record in records[1..].iter() {
+                                    let auto_index = interner.string("eve-auto-index");
+                                    for (ix, record) in records[1..].iter().enumerate() {
                                         let cur_v = record.compile(interner, cur_block).unwrap();
+                                        cur_block.constraints.push(Constraint::Insert{e:cur_v, a:auto_index, v:interner.number((ix + 2) as f32), commit});
                                         cur_block.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
                                     }
-                                    records[0].compile(interner, cur_block).unwrap()
+                                    let sub_record = records[0].compile(interner, cur_block).unwrap();
+                                    cur_block.constraints.push(Constraint::Insert{e:sub_record, a:auto_index, v:interner.number(1 as f32), commit});
+                                    sub_record
                                 },
                                 Node::ExprSet(ref items) => {
                                     for value in items[1..].iter() {
