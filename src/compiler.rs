@@ -67,6 +67,7 @@ lazy_static! {
         m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"]));
         m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"]));
         m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![]));
+        m.insert("null".to_string(), FunctionInfo::new(vec![]));
         m
     };
 }
@@ -528,97 +529,110 @@ impl<'a> Node<'a> {
                 }
             },
             &Node::RecordFunction { ref op, ref params, ref outputs} => {
-                let info = FUNCTION_INFO.get(*op).expect(&format!("Unknown function: {}", op));
-                let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
-                let mut cur_params = vec![Field::Value(0); info.params.len()];
-                let mut group = vec![];
-                let mut projection = vec![];
-                for param in params {
-                    let mut compiled_params = vec![];
-                    match param {
-                        &Node::Attribute(a) => {
-                            compiled_params.push((a, cur_block.get_value(a)))
-                        }
-                        &Node::AttributeEquality(a, ref v) => {
-                            if let Node::ExprSet(ref items) = **v {
-                                for item in items {
-                                    compiled_params.push((a, item.compile(interner, cur_block).unwrap()))
+                match FUNCTION_INFO.get(*op) {
+                    Some(info) => {             
+                        let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
+                        let mut cur_params = vec![Field::Value(0); info.params.len()];
+                        let mut group = vec![];
+                        let mut projection = vec![];
+                        for param in params {
+                            let mut compiled_params = vec![];
+                            match param {
+                                &Node::Attribute(a) => {
+                                    compiled_params.push((a, cur_block.get_value(a)))
                                 }
-                            } else {
-                                compiled_params.push((a, v.compile(interner, cur_block).unwrap()))
-                            }
-                        }
-                        _ => { panic!("invalid function param: {:?}", param) }
-                    };
-                    for (a, v) in compiled_params {
-                        match info.get_index(a) {
-                            ParamType::Param(ix) => { cur_params[ix] = v; }
-                            ParamType::Output(ix) => { cur_outputs[ix] = v; }
-                            ParamType::Invalid => {
-                                match (info.is_aggregate, a) {
-                                    (true, "per") => { group.push(v) }
-                                    (true, "for") => { projection.push(v) }
-                                    _ => panic!("Invalid parameter for function: {:?} - {:?}", op, a)
+                                &Node::AttributeEquality(a, ref v) => {
+                                    if let Node::ExprSet(ref items) = **v {
+                                        for item in items {
+                                            compiled_params.push((a, item.compile(interner, cur_block).unwrap()))
+                                        }
+                                    } else {
+                                        compiled_params.push((a, v.compile(interner, cur_block).unwrap()))
+                                    }
+                                }
+                                _ => { 
+                                    println!("invalid function param: {:?}", param);
+                                    return None 
+                                }
+                            };
+                            for (a, v) in compiled_params {
+                                match info.get_index(a) {
+                                    ParamType::Param(ix) => { cur_params[ix] = v; }
+                                    ParamType::Output(ix) => { cur_outputs[ix] = v; }
+                                    ParamType::Invalid => {
+                                        match (info.is_aggregate, a) {
+                                            (true, "per") => { group.push(v) }
+                                            (true, "for") => { projection.push(v) }
+                                            _ => {
+                                                println!("Invalid parameter for function: {:?} - {:?}", op, a);
+                                                return None
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
-                let compiled_outputs:Vec<Option<Field>> = outputs.iter().map(|output| output.compile(interner, cur_block)).collect();
-                for (out_ix, mut attr_output) in cur_outputs.iter_mut().enumerate() {
-                    let maybe_output = compiled_outputs.get(out_ix).map(|x| x.unwrap());
-                    match (&attr_output, maybe_output) {
-                        (&&mut Field::Value(0), Some(Field::Register(_))) => {
-                            *attr_output = maybe_output.unwrap();
-                        },
-                        (&&mut Field::Value(0), Some(Field::Value(_))) => {
-                            let result_name = format!("__eve_record_function_output{}", cur_block.id);
-                            let out_reg = cur_block.get_register(&result_name);
-                            cur_block.id += 1;
-                            cur_block.constraints.push(make_filter("=", out_reg, maybe_output.unwrap()));
-                            *attr_output = out_reg;
-                        },
-                        (&&mut Field::Value(_), Some(Field::Register(_))) => {
-                            cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
-                            *attr_output = maybe_output.unwrap();
-                        },
-                        (&&mut Field::Register(_), Some(Field::Value(_))) |
-                        (&&mut Field::Register(_), Some(Field::Register(_))) => {
-                            cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
-                        },
-                        (&&mut Field::Value(x), None) => {
-                            let result_name = format!("__eve_record_function_output{}", cur_block.id);
-                            let out_reg = cur_block.get_register(&result_name);
-                            cur_block.id += 1;
-                            if x > 0 {
-                                cur_block.constraints.push(make_filter("=", *attr_output, out_reg));
+                        let compiled_outputs:Vec<Option<Field>> = outputs.iter().map(|output| output.compile(interner, cur_block)).collect();
+                        for (out_ix, mut attr_output) in cur_outputs.iter_mut().enumerate() {
+                            let maybe_output = compiled_outputs.get(out_ix).map(|x| x.unwrap());
+                            match (&attr_output, maybe_output) {
+                                (&&mut Field::Value(0), Some(Field::Register(_))) => {
+                                    *attr_output = maybe_output.unwrap();
+                                },
+                                (&&mut Field::Value(0), Some(Field::Value(_))) => {
+                                    let result_name = format!("__eve_record_function_output{}", cur_block.id);
+                                    let out_reg = cur_block.get_register(&result_name);
+                                    cur_block.id += 1;
+                                    cur_block.constraints.push(make_filter("=", out_reg, maybe_output.unwrap()));
+                                    *attr_output = out_reg;
+                                },
+                                (&&mut Field::Value(_), Some(Field::Register(_))) => {
+                                    cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
+                                    *attr_output = maybe_output.unwrap();
+                                },
+                                (&&mut Field::Register(_), Some(Field::Value(_))) |
+                                (&&mut Field::Register(_), Some(Field::Register(_))) => {
+                                    cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
+                                },
+                                (&&mut Field::Value(x), None) => {
+                                    let result_name = format!("__eve_record_function_output{}", cur_block.id);
+                                    let out_reg = cur_block.get_register(&result_name);
+                                    cur_block.id += 1;
+                                    if x > 0 {
+                                        cur_block.constraints.push(make_filter("=", *attr_output, out_reg));
+                                    }
+                                    *attr_output = out_reg;
+                                },
+                                (&&mut Field::Value(x), Some(Field::Value(z))) => {
+                                    if x != z { 
+                                        println!("Invalid constant equality in record function: {:?} != {:?}", x, z); 
+                                        return None
+                                    }
+                                    let result_name = format!("__eve_record_function_output{}", cur_block.id);
+                                    let out_reg = cur_block.get_register(&result_name);
+                                    cur_block.id += 1;
+                                    if x > 0 {
+                                        cur_block.constraints.push(make_filter("=", *attr_output, out_reg));
+                                    }
+                                    *attr_output = out_reg;
+                                },
+                                _ => { }
                             }
-                            *attr_output = out_reg;
-                        },
-                        (&&mut Field::Value(x), Some(Field::Value(z))) => {
-                            if x != z { panic!("Invalid constant equality in record function: {:?} != {:?}", x, z) }
-                            let result_name = format!("__eve_record_function_output{}", cur_block.id);
-                            let out_reg = cur_block.get_register(&result_name);
-                            cur_block.id += 1;
-                            if x > 0 {
-                                cur_block.constraints.push(make_filter("=", *attr_output, out_reg));
-                            }
-                            *attr_output = out_reg;
-                        },
-                        _ => { }
-                    }
+                        }
+                        let final_result = Some(cur_outputs[0].clone());
+                        if info.is_multi {
+                            cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
+                        } else if info.is_aggregate {
+                            let mut sub_block = Compilation::new_child(cur_block);
+                            sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), cur_outputs[0]));
+                            cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, cur_outputs[0]));
+                        } else {
+                            cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
+                        }
+                        final_result
+                    },
+                    None => None,
                 }
-                let final_result = Some(cur_outputs[0].clone());
-                if info.is_multi {
-                    cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
-                } else if info.is_aggregate {
-                    let mut sub_block = Compilation::new_child(cur_block);
-                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), cur_outputs[0]));
-                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, cur_outputs[0]));
-                } else {
-                    cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
-                }
-                final_result
             },
             &Node::RecordLookup(ref attrs, ..) => {
                 let mut entity = None;
