@@ -265,6 +265,39 @@ test!(base_join_binary_unmatched, {
     end
 });
 
+test!(base_join_records, {
+    commit
+        [#foo x: "a"]
+        [#bar x: "a"]
+    end
+
+    search
+        [#foo x]
+        [#bar x]
+    bind
+        [#success]
+    end
+});
+
+test!(base_join_nested_record, {
+    commit
+        [#bar x: "a"]
+    end
+
+    search
+        bar = [#bar x]
+    commit
+        [#foo x: bar]
+    end
+
+    search
+        bar = [#bar]
+        [#foo x: bar]
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Interpolation
 //--------------------------------------------------------------------
@@ -352,6 +385,15 @@ test!(base_interpolation_bind_expression, {
 
     search
         [#foo baz: "3"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_interpolation_functions, {
+    search
+        text = "Hello"
+        "Helle" = "{{ string/replace[text replace: "o" with: "e"] }}"
     bind
         [#success]
     end
@@ -649,7 +691,7 @@ test!(base_choose_filtered_multi_all, {
     search
         [#foo x]
         (10, "large") = if x > 3 then (x, "large")
-                  else ("unknown", "small")
+                        else ("unknown", "small")
     bind
         [#zomg x]
     end
@@ -673,7 +715,7 @@ test!(base_choose_filtered_multi_expression, {
     search
         [#foo x]
         (5 + 5, "large") = if x > 3 then (x, "large")
-                  else ("unknown", "small")
+                           else ("unknown", "small")
     bind
         [#zomg x]
     end
@@ -781,6 +823,211 @@ test!(base_union, {
         [#zomg x:10 z:("large", "woah")]
         [#zomg x:100 z:"large"]
         not([#zomg x:3])
+    bind
+        [#success]
+    end
+});
+
+test!(base_union_else, {
+    search
+        [#foo x]
+        z = if x > 10 then "large"
+            else "small"
+    commit
+        [#zomg x | z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z: "small"]
+        [#zomg x:100 z:"large"]
+        [#zomg x:3 z: "small"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_union_multireturn, {
+    search
+        [#foo x]
+        (z, y) = if x > 10 then ("large",3)
+            else ("small", 4)
+    commit
+        [#zomg x | z y]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z: "small" y: 4]
+        [#zomg x:100 z:"large" y: 3]
+        [#zomg x:3 z: "small" y: 4]
+    bind
+        [#success]
+    end
+});
+
+test!(base_union_record, {
+    search
+        name = if [#foo first last] then "{{first}} {{last}}"
+               if [#bar full-name] then full-name
+    commit
+        [#person name]
+    end
+
+    commit
+        [#foo first: "Sam" last: "Smith"]
+        [#bar full-name: "Leopold Hamburger"]
+    end
+
+    search
+        sam = [#person name: "Sam Smith"]
+        leo = [#person name: "Leopold Hamburger"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_union_record_multireturn, {
+    search
+        (name, person) = if p = [#foo first last] then ("{{first}} {{last}}", p)
+                         if p = [#bar full-name] then (full-name, p)
+    commit
+        [#person name person]
+    end
+
+    commit
+        [#foo first: "Sam" last: "Smith"]
+        [#bar full-name: "Leopold Hamburger"]
+    end
+
+    search
+        sam = [#person name: "Sam Smith" person: [#foo]]
+        leo = [#person name: "Leopold Hamburger" person: [#bar]]
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
+// Update Operators
+//--------------------------------------------------------------------
+
+test!(base_update_add, {
+    search
+        foo = [#foo]
+    bind
+        foo.bar += "baz"
+    end
+
+    commit
+        [#foo]
+    end
+
+    search
+        [#foo bar: "baz"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_remove_last, {
+    search
+        foo = [#foo]
+    commit
+        foo.bar -= "baz"
+    end
+    
+    commit
+        [#foo bar: "baz"]
+    end
+
+    search
+        foo = [#foo]
+        not(foo.bar)
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_remove_one, {
+    search
+        foo = [#foo]
+    commit
+        foo.bar -= "fleeb"
+    end
+    
+    commit
+        [#foo bar: ("baz","fleeb")]
+    end
+
+    search
+        [#foo bar]
+        1 = gather!/count![for: bar]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_set, {
+    search
+        foo = [#foo]
+    commit
+        foo.bar := "fleeb"
+    end
+    
+    commit
+        [#foo bar: "baz"]
+    end
+
+    search
+        [#foo bar: "fleeb"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_set_none, {
+    search
+        foo = [#foo]
+    commit
+        foo.bar := none
+    end
+    
+    commit
+        [#foo bar: "baz"]
+    end
+
+    search
+        foo = [#foo]
+        not(foo.bar)
+    bind
+        [#success]
+    end
+});
+
+test!(base_update_merge, {
+    search
+        foo = [#foo]
+    commit
+        foo <- [bar: "bar", baz: "baz"]
+    end
+    
+    commit
+        [#foo]
+    end
+
+    search
+        [#foo bar baz]
     bind
         [#success]
     end
