@@ -3022,60 +3022,62 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
 }
 
 fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut Program) {
-    let mut pipes = vec![];
-    let mut next_frame = true;
+    {
+        let mut pipes = vec![];
+        let mut next_frame = true;
 
-    while next_frame {
-        let mut current_round = 0;
-        let mut max_round:Round = program.state.rounds.max_round as Round;
-        let mut items = program.state.rounds.iter();
-        while current_round <= max_round {
-            let round = items.get_round(&mut program.state.rounds, current_round);
-            for change in round.iter() {
-                // println!("{}", change.print(&program));
-                // If this is an add, we want to do it *before* we start running pipes.
-                // This ensures that if there are two constraints in a single block that
-                // would both match the given input, they both have a chance to see this
-                // new triple at the same time. Doing so, means we don't have to go through
-                // every possible combination of the inputs, e.g. A, B, and AB. Instead we
-                // do AB and BA. To make sure that removes correctly cancel out, we don't
-                // want to do a real remove until *after* the pipes have run. Hence, the
-                // separation of insert and remove.
-                if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v, change.round);
+        while next_frame {
+            let mut current_round = 0;
+            let mut max_round:Round = program.state.rounds.max_round as Round;
+            let mut items = program.state.rounds.iter();
+            while current_round <= max_round {
+                let round = items.get_round(&mut program.state.rounds, current_round);
+                for change in round.iter() {
+                    // println!("{}", change.print(&program));
+                    // If this is an add, we want to do it *before* we start running pipes.
+                    // This ensures that if there are two constraints in a single block that
+                    // would both match the given input, they both have a chance to see this
+                    // new triple at the same time. Doing so, means we don't have to go through
+                    // every possible combination of the inputs, e.g. A, B, and AB. Instead we
+                    // do AB and BA. To make sure that removes correctly cancel out, we don't
+                    // want to do a real remove until *after* the pipes have run. Hence, the
+                    // separation of insert and remove.
+                    if change.count > 0 {
+                        program.state.index.insert(change.e, change.a, change.v, change.round);
+                    }
+                    pipes.clear();
+                    program.get_pipes(&program.block_info, change, &mut pipes);
+                    frame.reset();
+                    frame.input = Some(*change);
+                    for pipe in pipes.iter() {
+                        // print_pipe(pipe, &program.block_info, &mut program.state);
+                        frame.row.reset();
+                        interpret(&mut program.state, &program.block_info, frame, pipe);
+                        // if program.state.debug {
+                        //     program.state.debug = false;
+                        //     println!("\n---------------------------------\n");
+                        // }
+                    }
+                    // as stated above, we want to do removes after so that when we look
+                    // for AB and BA, they find the same values as when they were added.
+                    if change.count < 0 {
+                        program.state.index.remove(change.e, change.a, change.v, change.round);
+                    }
+                    if current_round == 0 { commits.push(change.clone()); }
                 }
-                pipes.clear();
-                program.get_pipes(&program.block_info, change, &mut pipes);
-                frame.reset();
-                frame.input = Some(*change);
-                for pipe in pipes.iter() {
-                    // print_pipe(pipe, &program.block_info, &mut program.state);
-                    frame.row.reset();
-                    interpret(&mut program.state, &program.block_info, frame, pipe);
-                    // if program.state.debug {
-                    //     program.state.debug = false;
-                    //     println!("\n---------------------------------\n");
-                    // }
-                }
-                // as stated above, we want to do removes after so that when we look
-                // for AB and BA, they find the same values as when they were added.
-                if change.count < 0 {
-                    program.state.index.remove(change.e, change.a, change.v, change.round);
-                }
-                if current_round == 0 { commits.push(change.clone()); }
+                intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
+                max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
+                current_round += 1;
             }
-            intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
-            max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
-            current_round += 1;
+            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
         }
-        next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
     }
 
     for (name, index) in program.state.watch_indexes.iter_mut() {
         if index.dirty() {
             let diff = index.reconcile();
             if let Some(watcher) = program.watchers.get(name) {
-                watcher.on_diff(&program.state.interner, diff);
+                watcher.on_diff(&mut program.state.interner, diff);
             }
         }
     }

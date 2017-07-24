@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, SyncSender};
 use std::thread::{self};
 
 pub trait Watcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff);
+    fn on_diff(&self, interner:&mut Interner, diff:WatchDiff);
 }
 
 pub struct SystemTimerWatcher {
@@ -38,7 +38,7 @@ impl SystemTimerWatcher {
 }
 
 impl Watcher for SystemTimerWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             println!("timer: {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
             let resolution = Internable::to_number(interner.get_value(add[1])) as u64;
@@ -73,10 +73,41 @@ impl Watcher for SystemTimerWatcher {
 pub struct PrintWatcher { }
 
 impl Watcher for PrintWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             println!("Printer: {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
         }
     }
 }
 
+
+pub struct CompilerWatcher {
+    outgoing: SyncSender<Vec<RawChange>>
+}
+
+impl CompilerWatcher {
+    pub fn new(outgoing: SyncSender<Vec<RawChange>>) -> CompilerWatcher {
+        CompilerWatcher{outgoing}
+    }
+}
+
+impl Watcher for CompilerWatcher {
+    fn on_diff(&self, interner:&mut Interner, diff:WatchDiff) {
+        for remove in diff.removes {
+            println!("WARNING: Compile watcher ignoring removals for now");
+        }
+
+        for add in diff.adds {
+            let raw_add = add.iter().map(|v| interner.get_value(*v)).collect::<Vec<&Internable>>();
+            if let &Internable::String(ref kind) = raw_add[0] {
+                match (kind.as_ref(), &raw_add[1..]) {
+                    ("block", &[block, kind]) => println!("Found block '{:?}' {:?}", block, kind),
+                    ("scan", &[block, e, a, v]) => println!("Found scan '{:?}' '{:?}' '{:?}' '{:?}'", block, e, a, v),
+                    ("output", &[block, e, a, v]) => println!("Found output '{:?}' '{:?}' '{:?}' '{:?}'", block, e, a, v),
+                    ("variable", &[var, name]) => println!("Found variable '{:?}' '{:?}'", var, name),
+                    _ => println!("Found other '{:?}'", add)
+                }
+            }
+        }
+    }
+}
