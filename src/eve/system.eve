@@ -52,3 +52,9 @@ search
 watch file/write
   (path, contents)
 end
+
+search
+  [#file/read path]
+watch file/read
+  (path)
+end

@@ -131,10 +131,20 @@ pub struct FileReadWatcher { }
 impl Watcher for FileReadWatcher {
     fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
         for add in diff.adds {
-            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
-            for t in text {
-                println!("{}",t);
+            let raw_path = Internable::to_string(interner.get_value(add[0]));
+            let path = Path::new(raw_path);
+            let mut file = match File::open(&path) {
+                Err(why) => panic!("couldn't write to file"),
+                Ok(file) => file,
+            };
+            let mut s = String::new();
+            match file.read_to_string(&mut s) {
+                Err(why) => panic!("couldn't write to file"),
+                Ok(_) => print!("{} contains:\n{}", display, s),
             }
+            println!("{:?}",s);
+
+
         }
     }
 }
