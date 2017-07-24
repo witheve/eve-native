@@ -119,4 +119,29 @@ impl Watcher for ConsoleWarnWatcher {
     }
 }
 
+//-------------------------------------------------------------------------
+// File Watcher
+//-------------------------------------------------------------------------
 
+pub struct FileReadWatcher { }
+
+impl Watcher for FileReadWatcher {
+    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+        for add in diff.adds {
+            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
+            for t in text {
+                println!("{}",t);
+            }
+        }
+    }
+}
+
+pub struct FileWriteWatcher { }
+
+impl Watcher for FileWriteWatcher {
+    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+        for add in diff.adds {
+            println!("{}",add);
+        }
+    }
+}
