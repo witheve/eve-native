@@ -27,6 +27,7 @@ use std::error::Error;
 use std::thread::{self, JoinHandle};
 use std::io::{Write, BufReader, BufWriter};
 use std::fs::{OpenOptions, File};
+use std::mem;
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -3144,6 +3145,10 @@ impl CodeTransaction {
         CodeTransaction { changes: vec![], commits:vec![], frame}
     }
 
+    pub fn input_change(&mut self, change: Change) {
+        self.changes.push(change);
+    }
+
     pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
@@ -3184,6 +3189,7 @@ pub enum PersisterMessage {
 pub struct Persister {
     thread: JoinHandle<()>,
     outgoing: Sender<PersisterMessage>,
+    loaded: Vec<RawChange>,
 }
 
 impl Persister {
@@ -3210,16 +3216,25 @@ impl Persister {
                 }
             }
         });
-        Persister { outgoing, thread }
+        Persister { outgoing, thread, loaded: vec![] }
     }
 
-    pub fn load(&self, path:&str) {
-        let file = File::open(path).expect("Unable to open the file");
+    pub fn load(&mut self, path:&str) {
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => {
+                println!("Unable to load db: {}", path);
+                return;
+            }
+        };
         let mut reader = BufReader::new(file);
         loop {
             let result:Result<RawChange, _> = bincode::deserialize_from(&mut reader, bincode::Infinite);
             match result {
-                Ok(c) => println!("{:?}", c),
+                Ok(c) => {
+                    println!("{:?}", c);
+                    self.loaded.push(c);
+                },
                 Err(info) => {
                     println!("ran out {:?}", info);
                     break;
@@ -3238,6 +3253,10 @@ impl Persister {
 
     pub fn get_channel(&self) -> Sender<PersisterMessage> {
         self.outgoing.clone()
+    }
+
+    pub fn get_commits(&mut self) -> Vec<RawChange> {
+        mem::replace(&mut self.loaded, vec![])
     }
 
     pub fn close(&self) {
@@ -3273,21 +3292,23 @@ pub struct ProgramRunner {
     pub program: Program,
     paths: Vec<String>,
     close_message: RawChange,
+    initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
 }
 
 impl ProgramRunner {
     pub fn new() -> ProgramRunner {
         let close_message = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
-        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None}
+        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
     }
 
     pub fn load(&mut self, path:&str) {
         self.paths.push(path.to_owned());
     }
 
-    pub fn persist(&mut self, persister:&Persister) {
+    pub fn persist(&mut self, persister:&mut Persister) {
         self.persistence_channel = Some(persister.get_channel());
+        self.initial_commits = persister.get_commits();
     }
 
     pub fn run(self) -> RunLoop {
@@ -3297,6 +3318,7 @@ impl ProgramRunner {
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
+        let initial_commits = self.initial_commits;
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
             for path in paths {
@@ -3304,6 +3326,9 @@ impl ProgramRunner {
             }
 
             let mut txn = CodeTransaction::new();
+            for initial in initial_commits {
+                txn.input_change(initial.to_change(&mut program.state.interner));
+            }
             txn.exec(&mut program, blocks, vec![]);
 
             println!("Starting run loop.");
@@ -3322,6 +3347,9 @@ impl ProgramRunner {
                     }
                     Err(_) => { break; }
                 }
+            }
+            if let Some(channel) = persistence_channel {
+                channel.send(PersisterMessage::Stop).unwrap();
             }
             println!("Closing run loop.");
         });
