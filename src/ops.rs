@@ -3150,10 +3150,6 @@ impl CodeTransaction {
     }
 
     pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
-        for change in self.changes.iter() {
-            program.state.index.distinct(&change, &mut program.state.rounds);
-        }
-
         let ref mut frame = self.frame;
 
         for add in to_add {
@@ -3172,6 +3168,10 @@ impl CodeTransaction {
 
         let mut max_round = 0;
         intermediate_flow(frame, &mut program.state, &program.block_info, 0, &mut max_round);
+
+        for change in self.changes.iter() {
+            program.state.index.distinct(&change, &mut program.state.rounds);
+        }
 
         transaction_flow(&mut self.commits, frame, program);
     }
