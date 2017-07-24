@@ -393,7 +393,9 @@ test!(base_interpolation_bind_expression, {
 test!(base_interpolation_functions, {
     search
         text = "Hello"
-        "Helle" = "{{ string/replace[text replace: "o" with: "e"] }}"
+        replace = "o"
+        with = "e"
+        "Helle" = "{{ string/replace[text replace with] }}"
     bind
         [#success]
     end
@@ -879,14 +881,14 @@ test!(base_union_multireturn, {
 test!(base_union_record, {
     search
         name = if [#foo first last] then "{{first}} {{last}}"
-               if [#bar full-name] then full-name
+               if [#bar fullname] then fullname
     commit
         [#person name]
     end
 
     commit
         [#foo first: "Sam" last: "Smith"]
-        [#bar full-name: "Leopold Hamburger"]
+        [#bar fullname: "Leopold Hamburger"]
     end
 
     search
@@ -900,14 +902,14 @@ test!(base_union_record, {
 test!(base_union_record_multireturn, {
     search
         (name, person) = if p = [#foo first last] then ("{{first}} {{last}}", p)
-                         if p = [#bar full-name] then (full-name, p)
+                         if p = [#bar fullname] then (fullname, p)
     commit
         [#person name person]
     end
 
     commit
         [#foo first: "Sam" last: "Smith"]
-        [#bar full-name: "Leopold Hamburger"]
+        [#bar fullname: "Leopold Hamburger"]
     end
 
     search
@@ -946,7 +948,7 @@ test!(base_update_remove_last, {
     commit
         foo.bar -= "baz"
     end
-    
+
     commit
         [#foo bar: "baz"]
     end
@@ -965,7 +967,7 @@ test!(base_update_remove_one, {
     commit
         foo.bar -= "fleeb"
     end
-    
+
     commit
         [#foo bar: ("baz","fleeb")]
     end
@@ -984,7 +986,7 @@ test!(base_update_set, {
     commit
         foo.bar := "fleeb"
     end
-    
+
     commit
         [#foo bar: "baz"]
     end
@@ -1002,7 +1004,7 @@ test!(base_update_set_none, {
     commit
         foo.bar := none
     end
-    
+
     commit
         [#foo bar: "baz"]
     end
@@ -1021,7 +1023,7 @@ test!(base_update_merge, {
     commit
         foo <- [bar: "bar", baz: "baz"]
     end
-    
+
     commit
         [#foo]
     end

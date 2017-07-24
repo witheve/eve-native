@@ -19,6 +19,9 @@ extern crate lazy_static;
 
 extern crate serde;
 
+#[macro_use]
+extern crate serde_derive;
+
 extern crate tokio_timer;
 extern crate futures;
 
