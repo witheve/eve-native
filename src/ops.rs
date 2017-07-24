@@ -3,6 +3,8 @@
 //-------------------------------------------------------------------------
 
 extern crate time;
+extern crate serde_json;
+extern crate bincode;
 
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
@@ -23,8 +25,10 @@ use serde::ser::{Serialize, Serializer};
 use serde::de::{Deserialize, Deserializer, Visitor};
 use std::error::Error;
 use std::thread::{self, JoinHandle};
-use std::io::Write;
-use std::fs::{OpenOptions};
+use std::io::{Write, BufReader, BufWriter};
+use std::fs::{OpenOptions, File};
+use std::f32::consts::{PI};
+use std::mem;
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -114,7 +118,7 @@ impl Change {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RawChange {
     pub e: Internable,
     pub a: Internable,
@@ -1513,7 +1517,7 @@ pub fn is_register(field:&Field) -> bool {
 // Interner
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum Internable {
     String(String),
     Number(u32),
@@ -1546,28 +1550,101 @@ impl Internable {
             }
         }
     }
+
+    pub fn to_json(&self) -> JSONInternable {
+        match self {
+            &Internable::String(ref s) => { JSONInternable::String(s.to_owned()) }
+            &Internable::Number(n) => { JSONInternable::Number(n) }
+            &Internable::Null => { JSONInternable::Null }
+        }
+    }
 }
 
-impl Serialize for Internable {
+impl From<JSONInternable> for Internable {
+    fn from(json: JSONInternable) -> Self {
+        match json {
+            JSONInternable::String(s) => { Internable::String(s) }
+            JSONInternable::Number(n) => { Internable::Number(n) }
+            JSONInternable::Null => { Internable::Null }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum JSONInternable {
+    String(String),
+    Number(u32),
+    Null,
+}
+
+impl JSONInternable {
+    pub fn to_number(intern: &JSONInternable) -> f32 {
+        match intern {
+            &JSONInternable::Number(num) => unsafe { transmute::<u32, f32>(num) },
+            _ => { panic!("to_number on non-number") }
+        }
+    }
+
+    pub fn from_number(num: f32) -> JSONInternable {
+        let value = unsafe { transmute::<f32, u32>(num) };
+        JSONInternable::Number(value)
+    }
+
+    pub fn print(&self) -> String {
+        match self {
+            &JSONInternable::String(ref s) => {
+                s.to_string()
+            }
+            &JSONInternable::Number(_) => {
+                JSONInternable::to_number(self).to_string()
+            }
+            &JSONInternable::Null => {
+                "Null!".to_string()
+            }
+        }
+    }
+}
+
+impl From<Internable> for JSONInternable {
+    fn from(internable: Internable) -> Self {
+        match internable {
+            Internable::String(s) => { JSONInternable::String(s) }
+            Internable::Number(n) => { JSONInternable::Number(n) }
+            Internable::Null => { JSONInternable::Null }
+        }
+    }
+}
+
+impl<'a> From<&'a Internable> for JSONInternable {
+    fn from(internable: &'a Internable) -> Self {
+        match internable {
+            &Internable::String(ref s) => { JSONInternable::String(s.to_owned()) }
+            &Internable::Number(n) => { JSONInternable::Number(n) }
+            &Internable::Null => { JSONInternable::Null }
+        }
+    }
+}
+
+impl Serialize for JSONInternable {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
         match self {
-            &Internable::String(ref s) => serializer.serialize_str(s),
-            &Internable::Number(_) => serializer.serialize_f32(Internable::to_number(self)),
+            &JSONInternable::String(ref s) => serializer.serialize_str(s),
+            &JSONInternable::Number(_) => serializer.serialize_f32(JSONInternable::to_number(self)),
             _ => serializer.serialize_unit(),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for Internable {
+impl<'de> Deserialize<'de> for JSONInternable {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where D: Deserializer<'de>
     {
         struct InternableVisitor;
 
         impl<'de> Visitor<'de> for InternableVisitor {
-            type Value = Internable;
+            type Value = JSONInternable;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("Internable")
@@ -1576,25 +1653,31 @@ impl<'de> Deserialize<'de> for Internable {
             fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
                 where E: Error
             {
-                Ok(Internable::from_number(v as f32))
+                Ok(JSONInternable::from_number(v as f32))
             }
 
             fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
                 where E: Error
             {
-                Ok(Internable::from_number(v as f32))
+                Ok(JSONInternable::from_number(v as f32))
             }
 
             fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
                 where E: Error
             {
-                Ok(Internable::from_number(v as f32))
+                Ok(JSONInternable::from_number(v as f32))
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
                 where E: Error
             {
-                Ok(Internable::String(v.to_owned()))
+                Ok(JSONInternable::String(v.to_owned()))
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+                where E: Error
+            {
+                Ok(JSONInternable::Null)
             }
         }
 
@@ -2105,7 +2188,7 @@ pub fn math_sin(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
-            Some(Internable::from_number(a.sin()))
+            Some(Internable::from_number((a * PI / 180.0).sin()))
         },
         _ => { None }
     }
@@ -2115,7 +2198,7 @@ pub fn math_cos(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
-            Some(Internable::from_number(a.cos()))
+            Some(Internable::from_number((a * PI / 180.0).cos()))
         },
         _ => { None }
     }
@@ -3002,13 +3085,14 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
 pub struct Transaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
+    collapsed_commits: CollapsedChanges,
     frame: Frame,
 }
 
 impl Transaction {
     pub fn new() -> Transaction {
         let frame = Frame::new();
-        Transaction { changes: vec![], commits: vec![], frame}
+        Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame}
     }
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
@@ -3026,8 +3110,12 @@ impl Transaction {
         }
         transaction_flow(&mut self.commits, &mut self.frame, program);
         if let &mut Some(ref channel) = persistence_channel {
+            self.collapsed_commits.clear();
             let mut to_persist = vec![];
             for commit in self.commits.drain(..) {
+                self.collapsed_commits.insert(commit);
+            }
+            for commit in self.collapsed_commits.drain() {
                 to_persist.push(commit.to_raw(&program.state.interner));
             }
             channel.send(PersisterMessage::Write(to_persist)).unwrap();
@@ -3058,11 +3146,11 @@ impl CodeTransaction {
         CodeTransaction { changes: vec![], commits:vec![], frame}
     }
 
-    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
-        for change in self.changes.iter() {
-            program.state.index.distinct(&change, &mut program.state.rounds);
-        }
+    pub fn input_change(&mut self, change: Change) {
+        self.changes.push(change);
+    }
 
+    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
         let ref mut frame = self.frame;
 
         for add in to_add {
@@ -3082,6 +3170,10 @@ impl CodeTransaction {
         let mut max_round = 0;
         intermediate_flow(frame, &mut program.state, &program.block_info, 0, &mut max_round);
 
+        for change in self.changes.iter() {
+            program.state.index.distinct(&change, &mut program.state.rounds);
+        }
+
         transaction_flow(&mut self.commits, frame, program);
     }
 }
@@ -3098,6 +3190,7 @@ pub enum PersisterMessage {
 pub struct Persister {
     thread: JoinHandle<()>,
     outgoing: Sender<PersisterMessage>,
+    loaded: Vec<RawChange>,
 }
 
 impl Persister {
@@ -3105,21 +3198,54 @@ impl Persister {
         let (outgoing, incoming) = mpsc::channel();
         let path = path_ref.to_string();
         let thread = thread::spawn(move || {
-            let mut file = OpenOptions::new().append(true).create(true).open(&path).unwrap();
+            let file = OpenOptions::new().append(true).create(true).open(&path).unwrap();
+            let mut writer = BufWriter::new(file);
             loop {
                 match incoming.recv().unwrap() {
                     PersisterMessage::Stop => { break; }
                     PersisterMessage::Write(items) => {
                         println!("Let's persist some stuff!");
-                        match write!(file, "yo") {
-                            Err(e) => {panic!("Can't persist! {:?}", e); }
-                            Ok(_) => { }
+                        for item in items {
+                            let result = bincode::serialize(&item, bincode::Infinite).unwrap();
+                            match writer.write_all(&result) {
+                                Err(e) => {panic!("Can't persist! {:?}", e); }
+                                Ok(_) => { }
+                            }
                         }
+                        writer.flush().unwrap();
                     }
                 }
             }
         });
-        Persister { outgoing, thread }
+        Persister { outgoing, thread, loaded: vec![] }
+    }
+
+    pub fn load(&mut self, path:&str) {
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => {
+                println!("Unable to load db: {}", path);
+                return;
+            }
+        };
+        let mut reader = BufReader::new(file);
+        loop {
+            let result:Result<RawChange, _> = bincode::deserialize_from(&mut reader, bincode::Infinite);
+            match result {
+                Ok(c) => {
+                    println!("{:?}", c);
+                    self.loaded.push(c);
+                },
+                Err(info) => {
+                    println!("ran out {:?}", info);
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn send(&self, changes:Vec<RawChange>) {
+       self.outgoing.send(PersisterMessage::Write(changes)).unwrap();
     }
 
     pub fn wait(self) {
@@ -3128,6 +3254,10 @@ impl Persister {
 
     pub fn get_channel(&self) -> Sender<PersisterMessage> {
         self.outgoing.clone()
+    }
+
+    pub fn get_commits(&mut self) -> Vec<RawChange> {
+        mem::replace(&mut self.loaded, vec![])
     }
 
     pub fn close(&self) {
@@ -3163,21 +3293,23 @@ pub struct ProgramRunner {
     pub program: Program,
     paths: Vec<String>,
     close_message: RawChange,
+    initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
 }
 
 impl ProgramRunner {
     pub fn new() -> ProgramRunner {
         let close_message = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
-        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None}
+        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
     }
 
     pub fn load(&mut self, path:&str) {
         self.paths.push(path.to_owned());
     }
 
-    pub fn persist(&mut self, persister:&Persister) {
+    pub fn persist(&mut self, persister:&mut Persister) {
         self.persistence_channel = Some(persister.get_channel());
+        self.initial_commits = persister.get_commits();
     }
 
     pub fn run(self) -> RunLoop {
@@ -3187,6 +3319,7 @@ impl ProgramRunner {
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
+        let initial_commits = self.initial_commits;
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
             for path in paths {
@@ -3194,6 +3327,9 @@ impl ProgramRunner {
             }
 
             let mut txn = CodeTransaction::new();
+            for initial in initial_commits {
+                txn.input_change(initial.to_change(&mut program.state.interner));
+            }
             txn.exec(&mut program, blocks, vec![]);
 
             println!("Starting run loop.");
@@ -3212,6 +3348,9 @@ impl ProgramRunner {
                     }
                     Err(_) => { break; }
                 }
+            }
+            if let Some(channel) = persistence_channel {
+                channel.send(PersisterMessage::Stop).unwrap();
             }
             println!("Closing run loop.");
         });
