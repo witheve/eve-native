@@ -32,19 +32,32 @@ MultiFunction
   x handle return constants
 
 Aggregates
-  - parser
+  x parser
     x replace aggregate with block
-    - tranisitively find all the constraints that could filter inputs
-    - correctly handle sub blocks that depend on sub blocks
-  - Sum aggregates
+    x tranisitively find all the constraints that could filter inputs
+    x correctly handle sub blocks that depend on sub blocks
+  x Sum aggregates
     x sum index
     x sum add/remove
-    - generic sum agg index
-    - aggregate output instruction
+    x generic sum agg index
+    x aggregate output instruction
   - Sort aggregates
     - sort index
-    - collector impl
-    - reporter impl
+    - sort aggregation results
+    - topk/bottomk
+    - min/max
+
+Errors
+  - Error reporting
+    - To the console
+    - In eve
+  - Compiler errors
+    - unknown functions
+    - unprovided vars
+  - Parse errors
+    - Empty searches and updates
+    - Missing brackets
+    - ifs in the wrong places
 
 ----------------------------------------------------
 - Platform
@@ -55,13 +68,25 @@ Javascript
   - js watchers
   - eavs in
 Persistence
+  x save commits
+  x read commits
+  - load commits
+  - database persistence policy
 Communication
-  - websocket in
-  - websocket out
+  x websocket in
+  x websocket out
 Permissions
 Interning
-  - Move to NaN-packing
+  - Move to typed math
   - Reference count + free
+
+----------------------------------------------------
+- Editor
+----------------------------------------------------
+
+Code writing
+  - Reflect compilations
+  - Compiler watcher
 
 ----------------------------------------------------
 - Distribution
