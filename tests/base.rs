@@ -413,6 +413,64 @@ test!(base_function, {
     end
 });
 
+test!(base_function_no_assign, {
+    search
+        math!/sin![degrees: 180]
+    bind
+        [#success]
+    end
+});
+
+test!(base_function_no_args, {
+    search
+        not(x = math!/sin![])
+    bind
+        [#success]
+    end
+});
+
+test!(base_function_unknown_args, {
+    search
+        not(x = math!/sin![foos: 10])
+    bind
+        [#success]
+    end
+});
+
+test!(base_function_unknown_function, {
+    search
+        not(x = foo!/bar![foos: 10])
+    bind
+        [#success]
+    end
+});
+
+test!(base_function_bind_variable, {
+    search
+        angle = 180
+        x = math!/sin![degrees: angle]
+    bind
+        [#success]
+    end
+});
+
+test!(base_function_sets, {
+    commit
+        [#angle degrees: 180]
+        [#angle degrees: 90]
+        [#angle degrees: 360]
+        [#angle degrees: 270]
+    end
+
+    search
+        [#angle degrees]
+        x = math!/sin![degrees]
+        4 = gather!/count![for: x]
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // MultiFunction
 //--------------------------------------------------------------------
