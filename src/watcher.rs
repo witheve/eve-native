@@ -12,6 +12,9 @@ use ops::{Internable, Interner, RawChange};
 use std::sync::mpsc::{self, SyncSender};
 use std::thread::{self};
 use std::process;
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::Path;
 
 pub trait Watcher {
     fn on_diff(&self, interner:&Interner, diff:WatchDiff);
@@ -141,7 +144,17 @@ pub struct FileWriteWatcher { }
 impl Watcher for FileWriteWatcher {
     fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
         for add in diff.adds {
-            println!("{}",add);
+            let raw_path = Internable::to_string(interner.get_value(add[0]));
+            let path = Path::new(raw_path);
+            let contents = Internable::to_string(interner.get_value(add[1]));
+            let mut file = match File::create(&path) {
+                Err(why) => panic!("couldn't write to file"),
+                Ok(file) => file,
+            };
+            match file.write_all(contents.as_bytes()) {
+                Err(why) => println!("couldn't write to file"),
+                Ok(_) => println!("successfully wrote file"),
+            }
         }
     }
 }

@@ -45,3 +45,10 @@ watch console/error
   (text)
 end
 
+## File
+
+search
+  [#file/write path contents]
+watch file/write
+  (path, contents)
+end
