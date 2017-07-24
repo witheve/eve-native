@@ -2832,12 +2832,18 @@ impl BlockInfo {
 
 }
 
+pub enum RunLoopMessage {
+    Stop,
+    Transaction(Vec<RawChange>),
+    CodeTransaction(Vec<Block>, Vec<String>)
+}
+
 pub struct Program {
     pub state: RuntimeState,
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher + Send>>,
-    pub incoming: Receiver<Vec<RawChange>>,
-    pub outgoing: SyncSender<Vec<RawChange>>,
+    pub incoming: Receiver<RunLoopMessage>,
+    pub outgoing: SyncSender<RunLoopMessage>,
 }
 
 impl Program {
@@ -3272,8 +3278,7 @@ impl Persister {
 
 pub struct RunLoop {
     thread: JoinHandle<()>,
-    close_message: RawChange,
-    outgoing: SyncSender<Vec<RawChange>>,
+    outgoing: SyncSender<RunLoopMessage>,
 }
 
 impl RunLoop {
@@ -3282,10 +3287,10 @@ impl RunLoop {
     }
 
     pub fn close(&self) {
-        self.outgoing.send(vec![self.close_message.clone()]).unwrap();
+        self.outgoing.send(RunLoopMessage::Stop).unwrap();
     }
 
-    pub fn send(&self, msg: Vec<RawChange>) {
+    pub fn send(&self, msg: RunLoopMessage) {
         self.outgoing.send(msg).unwrap();
     }
 }
@@ -3293,15 +3298,13 @@ impl RunLoop {
 pub struct ProgramRunner {
     pub program: Program,
     paths: Vec<String>,
-    close_message: RawChange,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
 }
 
 impl ProgramRunner {
     pub fn new() -> ProgramRunner {
-        let close_message = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
-        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
+        ProgramRunner {paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -3315,8 +3318,6 @@ impl ProgramRunner {
 
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
-        let close_message = self.close_message.clone();
-        let close_message2 = self.close_message.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
@@ -3336,16 +3337,21 @@ impl ProgramRunner {
             println!("Starting run loop.");
             'outer: loop {
                 match program.incoming.recv() {
-                    Ok(v) => {
+                    Ok(RunLoopMessage::Transaction(v)) => {
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new();
                         for cur in v {
-                            if cur == close_message2 { break 'outer; }
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+                    }
+                    Ok(RunLoopMessage::Stop) => {
+                        break 'outer;
+                    }
+                    Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                        println!("Got Code Transaction! {:?} {:?}", adds, removes);
                     }
                     Err(_) => { break; }
                 }
@@ -3356,7 +3362,7 @@ impl ProgramRunner {
             println!("Closing run loop.");
         });
 
-        RunLoop { thread, outgoing, close_message }
+        RunLoop { thread, outgoing }
     }
 
 }

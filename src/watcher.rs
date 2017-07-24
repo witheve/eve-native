@@ -8,7 +8,7 @@ use tokio_timer::*;
 use futures::*;
 use std::time::*;
 use indexes::{WatchDiff};
-use ops::{Internable, Interner, RawChange};
+use ops::{Internable, Interner, RawChange, RunLoopMessage};
 use std::sync::mpsc::{self, SyncSender};
 use std::thread::{self};
 
@@ -18,11 +18,11 @@ pub trait Watcher {
 
 pub struct SystemTimerWatcher {
     remote: Remote,
-    outgoing: SyncSender<Vec<RawChange>>,
+    outgoing: SyncSender<RunLoopMessage>,
 }
 
 impl SystemTimerWatcher {
-    pub fn new(outgoing: SyncSender<Vec<RawChange>>) -> SystemTimerWatcher {
+    pub fn new(outgoing: SyncSender<RunLoopMessage>) -> SystemTimerWatcher {
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let mut core = Core::new().unwrap();
@@ -57,7 +57,7 @@ impl Watcher for SystemTimerWatcher {
                     RawChange {e: id.clone(), a: Internable::String("minutes".to_string()), v: Internable::from_number(cur_time.tm_min as f32), n: Internable::String("System/timer".to_string()), count: 1},
                     RawChange {e: id.clone(), a: Internable::String("seconds".to_string()), v: Internable::from_number(cur_time.tm_sec as f32), n: Internable::String("System/timer".to_string()), count: 1},
                 ];
-                outgoing.send(changes).unwrap();
+                outgoing.send(RunLoopMessage::Transaction(changes)).unwrap();
                 future::ok::<(), TimerError>(())
             }).map_err(|_| {
                 panic!("uh oh");
@@ -82,11 +82,11 @@ impl Watcher for PrintWatcher {
 
 
 pub struct CompilerWatcher {
-    outgoing: SyncSender<Vec<RawChange>>
+    outgoing: SyncSender<RunLoopMessage>
 }
 
 impl CompilerWatcher {
-    pub fn new(outgoing: SyncSender<Vec<RawChange>>) -> CompilerWatcher {
+    pub fn new(outgoing: SyncSender<RunLoopMessage>) -> CompilerWatcher {
         CompilerWatcher{outgoing}
     }
 }

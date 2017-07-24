@@ -22,7 +22,7 @@ use serde_json::{Error};
 extern crate eve;
 extern crate time;
 
-use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Interner, Persister, JSONInternable};
+use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
 use eve::indexes::{WatchDiff};
 use eve::watcher::{SystemTimerWatcher, CompilerWatcher, Watcher};
 
@@ -83,7 +83,7 @@ impl Handler for ClientHandler {
                     raw_changes.extend(removes.into_iter().map(|(e,a,v)| {
                         RawChange { e:e.into(), a:a.into(), v:v.into(), n:Internable::String("input".to_string()),count:-1 }
                     }));
-                    self.running.send(raw_changes);
+                    self.running.send(RunLoopMessage::Transaction(raw_changes));
                 }
                 _ => { }
             }
