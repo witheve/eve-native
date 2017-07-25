@@ -49,7 +49,7 @@ impl ClientHandler {
         let mut runner = ProgramRunner::new();
         let outgoing = runner.program.outgoing.clone();
         runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing.clone())));
-        // runner.program.attach("eve/compiler", Box::new(CompilerWatcher::new(outgoing)));
+        runner.program.attach("eve/compiler", Box::new(CompilerWatcher::new(outgoing)));
         runner.program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out.clone())));
 
         if let Some(persist_file) = persist {
@@ -114,7 +114,7 @@ impl WebsocketClientWatcher {
 }
 
 impl Watcher for WebsocketClientWatcher {
-    fn on_diff(&self, interner:&mut Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         let adds:Vec<Vec<JSONInternable>> = diff.adds.iter().map(|row| {
             row.iter().map(|v| interner.get_value(*v).into()).collect()
         }).collect();

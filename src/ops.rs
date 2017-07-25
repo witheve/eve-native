@@ -19,7 +19,7 @@ use std::collections::HashSet;
 use std::iter::Iterator;
 use std::fmt;
 use watcher::{Watcher};
-use std::sync::mpsc::{SyncSender, Sender, Receiver};
+use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use serde::ser::{Serialize, Serializer};
 use serde::de::{Deserialize, Deserializer, Visitor};
@@ -2843,7 +2843,7 @@ pub struct Program {
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher + Send>>,
     pub incoming: Receiver<RunLoopMessage>,
-    pub outgoing: SyncSender<RunLoopMessage>,
+    pub outgoing: Sender<RunLoopMessage>,
 }
 
 impl Program {
@@ -2858,7 +2858,7 @@ impl Program {
         let pipe_lookup = HashMap::new();
         let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
-        let (outgoing, incoming) = mpsc::sync_channel(1);
+        let (outgoing, incoming) = mpsc::channel();
         let state = RuntimeState { debug:false, rounds, index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
@@ -2907,8 +2907,8 @@ impl Program {
         self.block_info.blocks.push(block);
     }
 
-    pub fn unregister_block(&mut self, block:&Block) {
-        println!("Unregister: {}", block.name);
+    pub fn unregister_block(&mut self, name:String) {
+        println!("Unregister: {}", name);
         unimplemented!();
     }
 
@@ -3082,7 +3082,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
     for (name, index) in program.state.watch_indexes.iter_mut() {
         if index.dirty() {
             let diff = index.reconcile();
-            if let Some(watcher) = program.watchers.get(name) {
+            if let Some(watcher) = program.watchers.get_mut(name) {
                 watcher.on_diff(&mut program.state.interner, diff);
             }
         }
@@ -3157,7 +3157,7 @@ impl CodeTransaction {
         self.changes.push(change);
     }
 
-    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
+    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<String>) {
         let ref mut frame = self.frame;
 
         for add in to_add {
@@ -3167,11 +3167,19 @@ impl CodeTransaction {
             interpret(&mut program.state, &program.block_info, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
         }
 
-        for remove in to_remove {
-            frame.reset();
-            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
-            interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
-            program.unregister_block(remove);
+        for name in to_remove {
+            {
+                let block_ix = match program.block_info.block_names.get(&name) {
+                    Some(v) => *v,
+                    _ => panic!("Unable to find block to remove: '{}'", name)
+                };
+
+                let remove = &program.block_info.blocks[block_ix];
+                frame.reset();
+                frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
+                interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
+            }
+            program.unregister_block(name);
         }
 
         let mut max_round = 0;
@@ -3278,7 +3286,7 @@ impl Persister {
 
 pub struct RunLoop {
     thread: JoinHandle<()>,
-    outgoing: SyncSender<RunLoopMessage>,
+    outgoing: Sender<RunLoopMessage>,
 }
 
 impl RunLoop {
@@ -3335,6 +3343,7 @@ impl ProgramRunner {
             txn.exec(&mut program, blocks, vec![]);
 
             println!("Starting run loop.");
+
             'outer: loop {
                 match program.incoming.recv() {
                     Ok(RunLoopMessage::Transaction(v)) => {
@@ -3351,7 +3360,9 @@ impl ProgramRunner {
                         break 'outer;
                     }
                     Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                        let mut tx = CodeTransaction::new();
                         println!("Got Code Transaction! {:?} {:?}", adds, removes);
+                        tx.exec(&mut program, adds, removes);
                     }
                     Err(_) => { break; }
                 }

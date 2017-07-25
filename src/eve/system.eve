@@ -5,11 +5,11 @@ watch system/timer
 end
 
 search
-  t = [#system/timer/change for hours minutes seconds]
+  t = [#system/timer/change resolution hours minutes seconds]
+  for = [#system/timer resolution]
 commit
   for.minutes := minutes
   for.seconds := seconds
   for.hours := hours
   t := none
 end
-

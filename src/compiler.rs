@@ -1169,7 +1169,7 @@ pub struct Compilation {
     unified_registers: HashMap<Field, Field>,
     provided_registers: HashSet<Field>,
     equalities: Vec<(Field, Field)>,
-    constraints: Vec<Constraint>,
+    pub constraints: Vec<Constraint>,
     sub_blocks: Vec<SubBlock>,
     required_fields: Vec<Field>,
     is_child: bool,
@@ -1317,6 +1317,31 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     blocks
 }
 
+pub fn compilation_to_blocks(mut comp:Compilation) -> Vec<Block> {
+    let block_name = &comp.block_name;
+    let mut compilation_blocks = vec![];
+    let mut sub_ix = 0;
+    let mut subs:Vec<&mut SubBlock> = comp.sub_blocks.iter_mut().collect();
+    while subs.len() > 0 {
+        let sub_name = format!("{}|sub_block|{}", block_name, sub_ix);
+        let mut cur = subs.pop().unwrap();
+        let mut sub_comp = cur.get_mut_compilation();
+        if sub_comp.constraints.len() > 0 {
+            sub_comp.finalize();
+            println!("       SubBlock: {}", sub_name);
+            for c in sub_comp.constraints.iter() {
+                println!("            {:?}", c);
+            }
+            compilation_blocks.push(Block::new(&sub_name, sub_comp.constraints.clone()));
+        }
+        subs.extend(sub_comp.sub_blocks.iter_mut());
+        sub_ix += 1;
+    }
+    println!("");
+    compilation_blocks.push(Block::new(&block_name, comp.constraints));
+    compilation_blocks
+}
+
 pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block> {
     let mut state = ParseState::new(content);
     let res = embedded_blocks(&mut state, path);
@@ -1342,25 +1367,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 for c in comp.constraints.iter() {
                     println!("   {:?}", c);
                 }
-                let mut sub_ix = 0;
-                let mut subs:Vec<&mut SubBlock> = comp.sub_blocks.iter_mut().collect();
-                while subs.len() > 0 {
-                    let sub_name = format!("{}|sub_block|{}", block_name, sub_ix);
-                    let mut cur = subs.pop().unwrap();
-                    let mut sub_comp = cur.get_mut_compilation();
-                    if sub_comp.constraints.len() > 0 {
-                        sub_comp.finalize();
-                        println!("       SubBlock: {}", sub_name);
-                        for c in sub_comp.constraints.iter() {
-                            println!("            {:?}", c);
-                        }
-                        program_blocks.push(Block::new(&sub_name, sub_comp.constraints.clone()));
-                    }
-                    subs.extend(sub_comp.sub_blocks.iter_mut());
-                    sub_ix += 1;
-                }
-                println!("");
-                program_blocks.push(Block::new(&block_name, comp.constraints));
+                program_blocks.extend(compilation_to_blocks(comp));
             }
             program_blocks
         } else {
