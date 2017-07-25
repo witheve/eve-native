@@ -521,8 +521,12 @@ impl<'a> Node<'a> {
             &Node::GeneratedVariable(ref v) => { Some(get_provided!(cur_block, span, v)) },
             // &Node::AttributeEquality(a, ref v) => { v.compile(interner, comp, cur_block) },
             &Node::Equality {ref left, ref right} => {
-                left.compile(interner, cur_block, span);
+                // we do the right first, since it could be an OutputRecord that is going to find
+                // out that it provides its ID. If it does, and we compiled the left first, we
+                // wouldn't know about the provision and incorrectly declare that nothing provides
+                // the left.
                 right.compile(interner, cur_block, span);
+                left.compile(interner, cur_block, span);
                 None
             },
             &Node::AttributeAccess(ref items) => {
@@ -829,7 +833,9 @@ impl<'a> Node<'a> {
                         let reg = cur_block.get_register(name);
                         cur_block.provide(reg);
                     }
-                    (get_provided!(cur_block, span, name), !provided)
+                    let unified = get_provided!(cur_block, span, name);
+                    cur_block.provide(unified);
+                    (unified, !provided)
                 } else {
                     panic!("Record missing a var {:?}", var)
                 };
@@ -1325,7 +1331,7 @@ impl Compilation {
             Some(&Field::Register(cur)) => Field::Register(cur),
             _ => reg.clone()
         };
-        if !self.provided_registers.contains(&reg) {
+        if !self.provided_registers.contains(&reg) && !self.provided_registers.contains(&unified) {
             Provided::No(unified)
         } else {
             Provided::Yes(unified)
