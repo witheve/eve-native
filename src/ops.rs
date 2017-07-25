@@ -6,6 +6,8 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
 use hash::map::{DangerousKeys};
@@ -2071,6 +2073,10 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "math/sin" => math_sin,
         "math/cos" => math_cos,
         "string/replace" => string_replace,
+        "string/contains" => string_contains,
+        "string/lowercase" => string_lowercase,
+        "string/uppercase" => string_uppercase,
+        "string/length" => string_length,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -2083,6 +2089,7 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
     let func = match op {
         "string/split" => string_split,
+        "string/index-of" => string_index_of,
         _ => panic!("Unknown multi function: {:?}", op)
     };
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
@@ -2109,7 +2116,6 @@ pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
         ">=" => gte,
         "<" => lt,
         "<=" => lte,
-        "contains" => string_contains,
         _ => panic!("Unknown filter {:?}", op)
     };
     Constraint::Filter {op:op.to_string(), func, left, right, param_mask }
@@ -2149,15 +2155,6 @@ numeric_filter!(gt, >);
 numeric_filter!(gte, >=);
 numeric_filter!(lt, <);
 numeric_filter!(lte, <=);
-
-pub fn string_contains(haystack:&Internable, needle:&Internable) -> bool {
-    match (haystack, needle) {
-        (&Internable::String(ref a), &Internable::String(ref b)) => {
-            a.contains(b)
-        },
-        _ => { false }
-    }
-}
 
 //-------------------------------------------------------------------------
 // Functions
@@ -2208,6 +2205,54 @@ pub fn string_replace(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref replace), &Internable::String(ref with)] => {
             Some(Internable::String(text.replace(replace, with)))
+        },
+        _ => { None }
+    }
+}
+
+pub fn string_contains(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref substring)] => {
+            if text.contains(substring) {
+                Some(Internable::String("true".to_string()))
+            } else {
+                None
+            }
+        },
+        _ => { None }
+    }
+}
+
+pub fn string_lowercase(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(text.to_lowercase())),
+        _ => None
+    }
+}
+
+pub fn string_uppercase(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(text.to_uppercase())),
+        _ => None
+    }
+}
+
+pub fn string_length(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => {
+            Some(Internable::from_number(UnicodeSegmentation::graphemes(text.as_str(), true).count() as f32))
+        },
+        _ => None
+    }
+}
+
+pub fn string_index_of(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref substring)] => {
+            let results = text.match_indices(substring).map(|(ix, _)| {
+                vec![Internable::from_number((ix + 1) as f32)]
+            }).collect();
+            Some(results)
         },
         _ => { None }
     }
