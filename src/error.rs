@@ -107,8 +107,11 @@ fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
 pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
     match error {
         &ParseResult::Error(ref info, err) => {
-            let pos = Pos { line:info.line, ch:info.ch, pos:info.pos };
-            CompileError { span: Span {start: pos.clone(), stop: pos} , error: Error::ParseError(err) }
+            let start = Pos { line:info.line, ch:info.ch, pos:info.pos };
+            let mut stop = start.clone();
+            stop.ch += 1;
+            stop.pos += 1;
+            CompileError { span: Span {start, stop} , error: Error::ParseError(err) }
         }
         _ => { panic!("Passed non-parse error to from_parse_error"); }
     }
