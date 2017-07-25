@@ -1455,7 +1455,7 @@ pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> V
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
-    println!("");
+    // println!("");
     compilation_blocks.push(Block::new(&block_name, comp.constraints));
     compilation_blocks
 }
