@@ -1423,9 +1423,9 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     }
 
     comp.finalize();
-    for c in comp.constraints.iter() {
-        println!("{:?}", c);
-    }
+    // for c in comp.constraints.iter() {
+    //     println!("{:?}", c);
+    // }
     compilation_to_blocks(comp, name, content)
 }
 
@@ -1446,10 +1446,10 @@ pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> V
         let mut sub_comp = cur.get_mut_compilation();
         if sub_comp.constraints.len() > 0 {
             sub_comp.finalize();
-            println!("       SubBlock: {}", sub_name);
-            for c in sub_comp.constraints.iter() {
-                println!("            {:?}", c);
-            }
+            // println!("       SubBlock: {}", sub_name);
+            // for c in sub_comp.constraints.iter() {
+            //     println!("            {:?}", c);
+            // }
             compilation_blocks.push(Block::new(&sub_name, sub_comp.constraints.clone()));
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
@@ -1469,8 +1469,6 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
             let mut program_blocks = vec![];
             let mut ix = 0;
             for block in blocks {
-                // println!("\n\nBLOCK!");
-                // println!("  {:?}\n", block);
                 ix += 1;
                 let block_name = format!("{}|block|{}", path, ix);
                 let mut comp = Compilation::new(block_name.to_string());
@@ -1479,13 +1477,13 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 block.compile(interner, &mut comp, &EMPTY_SPAN);
 
                 comp.finalize();
-                println!("---------------------- Block {} ---------------------------", block_name);
-                if let &mut Node::Block { code, ..} = block {
-                    println!("{}\n\n => \n", code);
-                }
-                for c in comp.constraints.iter() {
-                    println!("   {:?}", c);
-                }
+                // println!("---------------------- Block {} ---------------------------", block_name);
+                // if let &mut Node::Block { code, ..} = block {
+                //     println!("{}\n\n => \n", code);
+                // }
+                // for c in comp.constraints.iter() {
+                //     println!("   {:?}", c);
+                // }
                 program_blocks.extend(compilation_to_blocks(comp, path, content));
             }
             program_blocks

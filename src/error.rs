@@ -125,7 +125,7 @@ pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
         println!("{}", error_source);
 
         let close = "-".repeat(open.len() - 1);
-        println!("\n{}{}{}", Color::Cyan, close, Color::Normal);
+        println!("\n{}{}{}\n", Color::Cyan, close, Color::Normal);
 
     }
 }
