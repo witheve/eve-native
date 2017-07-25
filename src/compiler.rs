@@ -232,11 +232,13 @@ impl<'a> Node<'a> {
                     let right_value:Field = if let Field::Register(_) = r { values.entry(r).or_insert(r).clone() } else { r };
                     match (left_value, right_value) {
                         (Field::Register(l_reg), Field::Register(r_reg)) => {
-                                if provided.contains(&right_value) {
-                                    provided.insert(l);
+                                if provided.contains_key(&right_value) {
+                                    let v = provided.get(&right_value).cloned().unwrap();
+                                    provided.insert(l, v);
                                 }
-                                if provided.contains(&left_value) {
-                                    provided.insert(r);
+                                if provided.contains_key(&left_value) {
+                                    let v = provided.get(&left_value).cloned().unwrap();
+                                    provided.insert(r, v);
                                 }
                             if l_reg < r_reg {
                                 values.insert(r, left_value.clone());
@@ -250,12 +252,12 @@ impl<'a> Node<'a> {
                         },
                         (Field::Register(_), other) => {
                             values.insert(l, other.clone());
-                            provided.insert(l);
+                            provided.insert(l, true);
                             changed = true;
                         },
                         (other, Field::Register(_)) => {
                             values.insert(r, other.clone());
-                            provided.insert(r);
+                            provided.insert(r, true);
                             changed = true;
                         },
                         (a, b) => { if a != b { panic!("Invalid equality {:?} != {:?}", a, b); } },
@@ -300,14 +302,14 @@ impl<'a> Node<'a> {
             &mut Node::Attribute(a) => {
                 let reg = cur_block.get_register(a);
                 if cur_block.mode == CompilationMode::Search {
-                    cur_block.provide(reg);
+                    cur_block.provide(reg, true);
                 }
                 Some(reg)
             },
             &mut Node::AttributeInequality {ref attribute, ref mut right, ..} => {
                 let reg = cur_block.get_register(attribute);
                 if cur_block.mode == CompilationMode::Search {
-                    cur_block.provide(reg);
+                    cur_block.provide(reg, true);
                 }
                 right.gather_equalities(interner, cur_block)
             },
@@ -315,7 +317,7 @@ impl<'a> Node<'a> {
                 let result = v.gather_equalities(interner, cur_block);
                 if let Some(reg) = result {
                     if cur_block.mode == CompilationMode::Search {
-                        cur_block.provide(reg);
+                        cur_block.provide(reg, true);
                     }
                 }
                 result
@@ -332,7 +334,7 @@ impl<'a> Node<'a> {
                 let var_name = format!("__eve_concat{}", cur_block.id);
                 cur_block.id += 1;
                 let reg = cur_block.get_register(&var_name);
-                cur_block.provide(reg);
+                cur_block.provide(reg, true);
                 *var = Some(var_name);
                 Some(reg)
 
@@ -359,7 +361,7 @@ impl<'a> Node<'a> {
                 let result_name = format!("__eve_infix{}", cur_block.id);
                 cur_block.id += 1;
                 let reg = cur_block.get_register(&result_name);
-                cur_block.provide(reg);
+                cur_block.provide(reg, true);
                 *result = Some(result_name);
                 Some(reg)
             },
@@ -373,10 +375,10 @@ impl<'a> Node<'a> {
                     cur_block.id += 1;
                 }
                 let first = outputs[0].gather_equalities(interner, cur_block);
-                if let Some(reg) = first { cur_block.provide(reg); }
+                if let Some(reg) = first { cur_block.provide(reg, true); }
                 for out in outputs[1..].iter_mut() {
                     let result = out.gather_equalities(interner, cur_block);
-                    if let Some(reg) = result { cur_block.provide(reg); }
+                    if let Some(reg) = result { cur_block.provide(reg, true); }
                 }
                 first
             },
@@ -399,7 +401,7 @@ impl<'a> Node<'a> {
                 let var_name = format!("__eve_record{}", cur_block.id);
                 cur_block.id += 1;
                 let reg = cur_block.get_register(&var_name);
-                cur_block.provide(reg);
+                cur_block.provide(reg, true);
                 *var = Some(var_name);
                 Some(reg)
             },
@@ -410,6 +412,7 @@ impl<'a> Node<'a> {
                 let var_name = format!("__eve_output_record{}", cur_block.id);
                 cur_block.id += 1;
                 let reg = cur_block.get_register(&var_name);
+                cur_block.provide(reg, false);
                 *var = Some(var_name);
                 Some(reg)
             },
@@ -420,7 +423,7 @@ impl<'a> Node<'a> {
                     final_var.push_str(item);
                 }
                 let reg = cur_block.get_register(&final_var);
-                cur_block.provide(reg);
+                cur_block.provide(reg, true);
                 Some(reg)
             },
             &mut Node::MutatingAttributeAccess(_) => {
@@ -430,7 +433,7 @@ impl<'a> Node<'a> {
                 let left = record.gather_equalities(interner, cur_block);
                 let right = value.gather_equalities(interner, cur_block);
                 if op == &"<-" {
-                    cur_block.provide(right.unwrap());
+                    cur_block.provide(right.unwrap(), true);
                     cur_block.equalities.push((left.unwrap(), right.unwrap()));
                 }
                 None
@@ -459,7 +462,7 @@ impl<'a> Node<'a> {
                 if let &mut Some(ref mut outs) = outputs {
                     for out in outs {
                         let result = out.gather_equalities(interner, cur_block);
-                        if let Some(reg) = result { cur_block.provide(reg); }
+                        if let Some(reg) = result { cur_block.provide(reg, true); }
                     };
                 }
                 for branch in branches {
@@ -526,12 +529,8 @@ impl<'a> Node<'a> {
             &Node::GeneratedVariable(ref v) => { Some(get_provided!(cur_block, span, v)) },
             // &Node::AttributeEquality(a, ref v) => { v.compile(interner, comp, cur_block) },
             &Node::Equality {ref left, ref right} => {
-                // we do the right first, since it could be an OutputRecord that is going to find
-                // out that it provides its ID. If it does, and we compiled the left first, we
-                // wouldn't know about the provision and incorrectly declare that nothing provides
-                // the left.
-                right.compile(interner, cur_block, span);
                 left.compile(interner, cur_block, span);
+                right.compile(interner, cur_block, span);
                 None
             },
             &Node::AttributeAccess(ref items) => {
@@ -543,7 +542,7 @@ impl<'a> Node<'a> {
                     final_var.push_str("|");
                     final_var.push_str(item);
                     let reg = cur_block.get_register(&final_var);
-                    cur_block.provide(reg);
+                    cur_block.provide(reg, true);
                     let next = get_provided!(cur_block, span, &final_var);
                     cur_block.constraints.push(make_scan(parent, interner.string(item), next));
                     parent = next;
@@ -558,7 +557,7 @@ impl<'a> Node<'a> {
                         final_var.push_str("|");
                         final_var.push_str(item);
                         let reg = cur_block.get_register(&final_var);
-                        cur_block.provide(reg);
+                        cur_block.provide(reg, true);
                         let next = get_provided!(cur_block, span, &final_var);
                         cur_block.constraints.push(make_scan(parent, interner.string(item), next));
                         parent = next;
@@ -836,10 +835,10 @@ impl<'a> Node<'a> {
                     let provided = cur_block.is_provided(name);
                     if !provided {
                         let reg = cur_block.get_register(name);
-                        cur_block.provide(reg);
+                        cur_block.provide(reg, true);
                     }
                     let unified = get_provided!(cur_block, span, name);
-                    cur_block.provide(unified);
+                    cur_block.provide(unified, true);
                     (unified, !provided)
                 } else {
                     panic!("Record missing a var {:?}", var)
@@ -989,13 +988,13 @@ impl<'a> Node<'a> {
                             Some(val @ Field::Value(_)) => {
                                 let result_name = format!("__eve_if_output{}", cur_block.id);
                                 let out_reg = cur_block.get_register(&result_name);
-                                cur_block.provide(out_reg);
+                                cur_block.provide(out_reg, true);
                                 cur_block.id += 1;
                                 cur_block.constraints.push(make_filter("=", out_reg, val));
                                 out_reg
                             },
                             Some(reg @ Field::Register(_)) => {
-                                cur_block.provide(reg);
+                                cur_block.provide(reg, true);
                                 let cur_value = if let Some(val @ &Field::Value(_)) = cur_block.var_values.get(&reg) {
                                     *val
                                 } else {
@@ -1298,7 +1297,7 @@ pub struct Compilation {
     vars: HashMap<String, usize>,
     var_values: HashMap<Field, Field>,
     unified_registers: HashMap<Field, Field>,
-    provided_registers: HashSet<Field>,
+    provided_registers: HashMap<Field, bool>,
     equalities: Vec<(Field, Field)>,
     pub constraints: Vec<Constraint>,
     sub_blocks: Vec<SubBlock>,
@@ -1310,7 +1309,7 @@ pub struct Compilation {
 
 impl Compilation {
     pub fn new(block_name:String) -> Compilation {
-        Compilation { mode: CompilationMode::Search, vars:HashMap::new(), var_values:HashMap::new(), unified_registers:HashMap::new(), provided_registers:HashSet::new(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false, errors: vec![] }
+        Compilation { mode: CompilationMode::Search, vars:HashMap::new(), var_values:HashMap::new(), unified_registers:HashMap::new(), provided_registers:HashMap::new(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false, errors: vec![] }
     }
 
     pub fn new_child(parent:&Compilation) -> Compilation {
@@ -1336,7 +1335,7 @@ impl Compilation {
             Some(&Field::Register(cur)) => Field::Register(cur),
             _ => reg.clone()
         };
-        if !self.provided_registers.contains(&reg) && !self.provided_registers.contains(&unified) {
+        if !self.provided_registers.contains_key(&reg) {
             Provided::No(unified)
         } else {
             Provided::Yes(unified)
@@ -1409,13 +1408,13 @@ impl Compilation {
         val.clone()
     }
 
-    pub fn provide(&mut self, reg:Field) {
-        self.provided_registers.insert(reg);
+    pub fn provide(&mut self, reg:Field, definitively:bool) {
+        self.provided_registers.insert(reg, definitively);
     }
 
     pub fn is_provided(&mut self, name:&str) -> bool {
         let reg = self.get_register(name);
-        self.provided_registers.contains(&reg)
+        self.provided_registers.get(&reg).cloned().unwrap_or(false)
     }
 }
 
