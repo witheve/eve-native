@@ -1,5 +1,6 @@
 use combinators::{Span, ParseResult, Pos};
 use compiler::{Node};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ParseError {
@@ -8,6 +9,18 @@ pub enum ParseError {
     InvalidBlock,
     MissingEnd,
     MissingUpdate,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &ParseError::EmptySearch => { write!(f, "Looks like this block has an empty search.") }
+            &ParseError::EmptyUpdate => { write!(f, "Looks like this block doesn't have any actions in it.") }
+            &ParseError::InvalidBlock => { write!(f, "This block is invalid, but unfortunately I don't have a lot of information about why.") }
+            &ParseError::MissingEnd => { write!(f, "Looks like the end keyword is missing for this block.") }
+            &ParseError::MissingUpdate => { write!(f, "Looks like this block doesn't have an action section.") }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +37,47 @@ pub enum Error {
     ParseError(ParseError),
 }
 
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Error::Unprovided(ref var) => { write!(f, "Looks like nothing in the block is providing `{}`", var) }
+            &Error::UnknownFunction(ref func) => { write!(f, "I don't know the `{}` function, so I'm not sure what to execute.", func) }
+            &Error::UnknownFunctionParam(ref func, ref param) => { write!(f, "The `{}` function doesn't seem to have a `{}` attribute.", func, param) }
+            &Error::ParseError(ref err) => { write!(f, "{}", err) }
+        }
+    }
+}
+
+#[derive(Debug,PartialEq, Eq)]
+pub enum Color {
+    Normal,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+}
+
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let color_code = match self {
+            &Color::Normal => "0",
+            &Color::Black => "30",
+            &Color::Red => "31",
+            &Color::Green => "32",
+            &Color::Yellow => "33",
+            &Color::Blue => "34",
+            &Color::Magenta => "35",
+            &Color::Cyan => "36",
+            &Color::White => "37",
+        };
+        write!(f, "\x1B[{}m", color_code)
+    }
+}
+
 fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
     let start = &span.start;
     let stop = &span.stop;
@@ -32,7 +86,7 @@ fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
         let stop_line = stop.line;
         let mut parts = String::new();
         for line_ix in start_line..stop_line+1 {
-            parts.push_str(&format!("{}| ", line_ix + 1));
+            parts.push_str(&format!("{}{}|{} ", Color::Yellow, line_ix + 1, Color::Normal));
             parts.push_str(lines[line_ix]);
             parts.push_str("\n");
         }
@@ -40,10 +94,12 @@ fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
         parts
     };
     if span.single_line() {
+        part.push_str(&format!("{}", Color::Red));
         part.push_str("\n   ");
         for _ in 0..start.ch { part.push_str(" "); }
         part.push_str("^");
         for _ in start.ch..stop.ch - 1 { part.push_str("-"); }
+        part.push_str(&format!("{}", Color::Normal));
     }
     part
 }
@@ -64,13 +120,12 @@ pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
     for error in errors {
         let error_source = format_error_source(&error.span, &lines);
         let open = format!("\n-- ERROR -------------------------------- {}\n", path);
-        println!("{}", open);
-        println!("{:?}\n", error.error);
+        println!("{}{}{}", Color::Cyan, open, Color::Normal);
+        println!("{}\n", error.error);
         println!("{}", error_source);
 
-        let mut close = String::with_capacity(open.len());
-        for _ in 0..open.len() - 1 { close.push_str("-"); }
-        println!("\n{}", close);
+        let close = "-".repeat(open.len() - 1);
+        println!("\n{}{}{}", Color::Cyan, close, Color::Normal);
 
     }
 }
