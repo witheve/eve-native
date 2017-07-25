@@ -10,6 +10,7 @@
 #![feature(alloc)]
 #![feature(slice_patterns)]
 #![feature(allocator_api)]
+#![feature(box_patterns)]
 
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 extern {}

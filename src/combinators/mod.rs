@@ -1,4 +1,4 @@
-use super::compiler::OutputType;
+use super::compiler::{OutputType, Node};
 use super::error::*;
 
 //--------------------------------------------------------------------
@@ -259,6 +259,15 @@ macro_rules! result (($state:ident, $value:expr) => (
 ));
 
 #[macro_export]
+macro_rules! pos_result (($state:ident, $value:expr) => (
+        {
+            let wrapped = $state.wrap_pos($value);
+            $state.pop();
+            ParseResult::Ok(wrapped)
+        }
+));
+
+#[macro_export]
 macro_rules! parser (($name:ident( $state:ident $(, $arg:ident : $type:ty)* ) -> $out:ty $body:block) => (
         pub fn $name<'a>($state:&mut ParseState<'a> $(, $arg:$type)*) -> ParseResult<'a, $out> {
             $state.mark(stringify!($name));
@@ -299,6 +308,25 @@ pub enum MatchType<'a> {
 }
 
 //--------------------------------------------------------------------
+// Pos and Span
+//--------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct Pos {
+    line: usize,
+    ch: usize,
+    pos: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Span {
+    start: Pos,
+    stop: Pos,
+}
+
+pub const EMPTY_SPAN:Span = Span { start: Pos {line:0, ch:0, pos:0}, stop: Pos {line:0, ch:0, pos:0} };
+
+//--------------------------------------------------------------------
 // Parse State
 //--------------------------------------------------------------------
 
@@ -333,6 +361,12 @@ impl<'a> ParseState<'a> {
 
     pub fn mark(&mut self, frame:&'a str) {
         self.stack.push((frame, self.line, self.ch, self.pos, self.ignore_space));
+    }
+
+    pub fn wrap_pos(&self, node: Node<'a>) -> Node<'a> {
+        let &(_, line, ch, pos, _) = self.stack.last().unwrap();
+        let span = Span { start: Pos {line, ch, pos}, stop: Pos {line:self.line, ch:self.ch, pos:self.pos}};
+        Node::Pos(span, Box::new(node))
     }
 
     pub fn pop(&mut self) {
