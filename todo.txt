@@ -49,7 +49,7 @@ Aggregates
 
 Errors
   - Error reporting
-    - To the console
+    x To the console
     - In eve
   - Compiler errors
     x unknown functions
@@ -57,7 +57,7 @@ Errors
     - missing function params
     x unprovided vars
   - Parse errors
-    - Empty searches and updates
+    x Empty searches and updates
     - Missing brackets
     - ifs in the wrong places
 
