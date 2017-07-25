@@ -313,15 +313,15 @@ pub enum MatchType<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Pos {
-    line: usize,
-    ch: usize,
-    pos: usize,
+    pub line: usize,
+    pub ch: usize,
+    pub pos: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct Span {
-    start: Pos,
-    stop: Pos,
+    pub start: Pos,
+    pub stop: Pos,
 }
 
 pub const EMPTY_SPAN:Span = Span { start: Pos {line:0, ch:0, pos:0}, stop: Pos {line:0, ch:0, pos:0} };

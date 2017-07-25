@@ -38,7 +38,7 @@ impl Watcher for SystemTimerWatcher {
                         *count -= 1;
                         false
                     } else {
-                        pair.1.send(());
+                        pair.1.send(()).unwrap();
                         true
                     }
                 };
@@ -130,7 +130,7 @@ impl CompilerWatcher {
 
 impl Watcher for CompilerWatcher {
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for remove in diff.removes {
+        for _ in diff.removes {
             println!("WARNING: Compile watcher ignoring removals for now");
         }
 
@@ -172,7 +172,7 @@ impl Watcher for CompilerWatcher {
         }
 
         let mut added_blocks = vec![];
-        for (block, kind) in self.block_types.iter() {
+        for (block, _) in self.block_types.iter() {
             let mut comp = Compilation::new(format!("made up block's nice string (it's for him) {}", block));
             let constraints = self.blocks_to_constraints.get(block).unwrap();
             comp.constraints.extend(constraints.iter().cloned());

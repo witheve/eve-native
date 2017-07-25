@@ -12,6 +12,22 @@ use std::cmp::{self};
 use self::walkdir::WalkDir;
 use parser::{embedded_blocks, block};
 use combinators::{ParseResult, ParseState, Span, EMPTY_SPAN};
+use error::{self, CompileError, report_errors};
+
+macro_rules! get_provided (
+    ($comp:ident, $span:ident, $value:expr) => ({
+        {
+            let result = $comp.get_unified_register($value);
+            match result {
+                Provided::Yes(v) => { v }
+                Provided::No(v) => {
+                    $comp.error($span, error::Error::Unprovided($value.to_string()));
+                    v
+                },
+            }
+        }
+    });
+);
 
 struct FunctionInfo {
     is_multi: bool,
@@ -178,14 +194,11 @@ impl<'a> Node<'a> {
         {
             let ref mut values:HashMap<Field, Field> = comp.var_values;
             let ref mut unified_registers:HashMap<Field, Field> = comp.unified_registers;
-            let mut provided = HashSet::new();
+            let ref mut provided = comp.provided_registers;
             for v in comp.vars.values() {
                 let field = Field::Register(*v);
                 values.insert(field, field);
                 unified_registers.insert(field, field);
-                if comp.provided_registers.contains(&field) {
-                    provided.insert(field);
-                }
             }
             let mut changed = true;
             // go in rounds and try to unify everything
@@ -207,19 +220,19 @@ impl<'a> Node<'a> {
                     let right_value:Field = if let Field::Register(_) = r { values.entry(r).or_insert(r).clone() } else { r };
                     match (left_value, right_value) {
                         (Field::Register(l_reg), Field::Register(r_reg)) => {
-                            if l_reg < r_reg {
-                                values.insert(r, left_value.clone());
-                                unified_registers.insert(r, left_value.clone());
+                                if provided.contains(&right_value) {
+                                    provided.insert(l);
+                                }
                                 if provided.contains(&left_value) {
                                     provided.insert(r);
                                 }
+                            if l_reg < r_reg {
+                                values.insert(r, left_value.clone());
+                                unified_registers.insert(r, left_value.clone());
                                 changed = true;
                             } else if r_reg < l_reg {
                                 values.insert(l, right_value.clone());
                                 unified_registers.insert(l, right_value.clone());
-                                if provided.contains(&right_value) {
-                                    provided.insert(l);
-                                }
                                 changed = true;
                             }
                         },
@@ -237,10 +250,8 @@ impl<'a> Node<'a> {
                     }
                 }
             }
-            comp.provided_registers = provided;
             comp.required_fields = comp.required_fields.iter().map(|v| unified_registers.get(v).unwrap().clone()).collect();
         }
-
 
         for sub_block in comp.sub_blocks.iter_mut() {
             let sub_comp = sub_block.get_mut_compilation();
@@ -257,6 +268,7 @@ impl<'a> Node<'a> {
                 }
             }
             sub_comp.var_values = comp.var_values.clone();
+            sub_comp.provided_registers.extend(comp.provided_registers.iter());
             self.unify(sub_comp);
         }
     }
@@ -273,9 +285,29 @@ impl<'a> Node<'a> {
             &mut Node::Variable(v) => { Some(cur_block.get_register(v)) },
             &mut Node::GeneratedVariable(ref v) => { Some(cur_block.get_register(v)) },
             &mut Node::NoneValue => { None },
-            &mut Node::Attribute(a) => { Some(cur_block.get_register(a)) },
-            &mut Node::AttributeInequality {ref mut right, ..} => { right.gather_equalities(interner, cur_block) },
-            &mut Node::AttributeEquality(_, ref mut v) => { v.gather_equalities(interner, cur_block) },
+            &mut Node::Attribute(a) => {
+                let reg = cur_block.get_register(a);
+                if cur_block.mode == CompilationMode::Search {
+                    cur_block.provide(reg);
+                }
+                Some(reg)
+            },
+            &mut Node::AttributeInequality {ref attribute, ref mut right, ..} => {
+                let reg = cur_block.get_register(attribute);
+                if cur_block.mode == CompilationMode::Search {
+                    cur_block.provide(reg);
+                }
+                right.gather_equalities(interner, cur_block)
+            },
+            &mut Node::AttributeEquality(_, ref mut v) => {
+                let result = v.gather_equalities(interner, cur_block);
+                if let Some(reg) = result {
+                    if cur_block.mode == CompilationMode::Search {
+                        cur_block.provide(reg);
+                    }
+                }
+                result
+            },
             &mut Node::Inequality {ref mut left, ref mut right, ..} => {
                 left.gather_equalities(interner, cur_block);
                 right.gather_equalities(interner, cur_block);
@@ -288,6 +320,7 @@ impl<'a> Node<'a> {
                 let var_name = format!("__eve_concat{}", cur_block.id);
                 cur_block.id += 1;
                 let reg = cur_block.get_register(&var_name);
+                cur_block.provide(reg);
                 *var = Some(var_name);
                 Some(reg)
 
@@ -314,6 +347,7 @@ impl<'a> Node<'a> {
                 let result_name = format!("__eve_infix{}", cur_block.id);
                 cur_block.id += 1;
                 let reg = cur_block.get_register(&result_name);
+                cur_block.provide(reg);
                 *result = Some(result_name);
                 Some(reg)
             },
@@ -326,8 +360,13 @@ impl<'a> Node<'a> {
                     outputs.push(Node::GeneratedVariable(result_name));
                     cur_block.id += 1;
                 }
-                let outs:Vec<Option<Field>> = outputs.iter_mut().map(|output| output.gather_equalities(interner, cur_block)).collect();
-                *outs.get(0).unwrap()
+                let first = outputs[0].gather_equalities(interner, cur_block);
+                if let Some(reg) = first { cur_block.provide(reg); }
+                for out in outputs[1..].iter_mut() {
+                    let result = out.gather_equalities(interner, cur_block);
+                    if let Some(reg) = result { cur_block.provide(reg); }
+                }
+                first
             },
             &mut Node::RecordLookup(ref mut attrs, _) => {
                 for attr in attrs {
@@ -348,6 +387,7 @@ impl<'a> Node<'a> {
                 let var_name = format!("__eve_record{}", cur_block.id);
                 cur_block.id += 1;
                 let reg = cur_block.get_register(&var_name);
+                cur_block.provide(reg);
                 *var = Some(var_name);
                 Some(reg)
             },
@@ -368,6 +408,7 @@ impl<'a> Node<'a> {
                     final_var.push_str(item);
                 }
                 let reg = cur_block.get_register(&final_var);
+                cur_block.provide(reg);
                 Some(reg)
             },
             &mut Node::MutatingAttributeAccess(_) => {
@@ -405,7 +446,8 @@ impl<'a> Node<'a> {
                 let mut sub_block = Compilation::new_child(cur_block);
                 if let &mut Some(ref mut outs) = outputs {
                     for out in outs {
-                        out.gather_equalities(interner, cur_block);
+                        let result = out.gather_equalities(interner, cur_block);
+                        if let Some(reg) = result { cur_block.provide(reg); }
                     };
                 }
                 for branch in branches {
@@ -416,30 +458,35 @@ impl<'a> Node<'a> {
                 None
             },
             &mut Node::Search(ref mut statements) => {
+                cur_block.mode = CompilationMode::Search;
                 for s in statements {
                     s.gather_equalities(interner, cur_block);
                 };
                 None
             },
             &mut Node::Bind(ref mut statements) => {
+                cur_block.mode = CompilationMode::Output;
                 for s in statements {
                     s.gather_equalities(interner, cur_block);
                 };
                 None
             },
             &mut Node::Commit(ref mut statements) => {
+                cur_block.mode = CompilationMode::Output;
                 for s in statements {
                     s.gather_equalities(interner, cur_block);
                 };
                 None
             },
             &mut Node::Project(ref mut values) => {
+                cur_block.mode = CompilationMode::Output;
                 for v in values {
                     v.gather_equalities(interner, cur_block);
                 };
                 None
             },
             &mut Node::Watch(_, ref mut values) => {
+                cur_block.mode = CompilationMode::Output;
                 for v in values {
                     v.gather_equalities(interner, cur_block);
                 };
@@ -463,8 +510,8 @@ impl<'a> Node<'a> {
             &Node::Integer(v) => { Some(interner.number(v as f32)) }
             &Node::Float(v) => { Some(interner.number(v)) },
             &Node::RawString(v) => { Some(interner.string(v)) },
-            &Node::Variable(v) => { Some(cur_block.get_unified_register(v)) },
-            &Node::GeneratedVariable(ref v) => { Some(cur_block.get_unified_register(v)) },
+            &Node::Variable(v) => { Some(get_provided!(cur_block, span, v)) },
+            &Node::GeneratedVariable(ref v) => { Some(get_provided!(cur_block, span, v)) },
             // &Node::AttributeEquality(a, ref v) => { v.compile(interner, comp, cur_block) },
             &Node::Equality {ref left, ref right} => {
                 left.compile(interner, cur_block, span);
@@ -473,13 +520,15 @@ impl<'a> Node<'a> {
             },
             &Node::AttributeAccess(ref items) => {
                 let mut final_var = "attr_access".to_string();
-                let mut parent = cur_block.get_unified_register(items[0]);
+                let mut parent = get_provided!(cur_block, span, items[0]);
                 final_var.push_str("|");
                 final_var.push_str(items[0]);
                 for item in items[1..].iter() {
                     final_var.push_str("|");
                     final_var.push_str(item);
-                    let next = cur_block.get_unified_register(&final_var.to_string());
+                    let reg = cur_block.get_register(&final_var);
+                    cur_block.provide(reg);
+                    let next = get_provided!(cur_block, span, &final_var);
                     cur_block.constraints.push(make_scan(parent, interner.string(item), next));
                     parent = next;
                 }
@@ -487,12 +536,14 @@ impl<'a> Node<'a> {
             },
             &Node::MutatingAttributeAccess(ref items) => {
                 let mut final_var = "attr_access".to_string();
-                let mut parent = cur_block.get_unified_register(items[0]);
+                let mut parent = get_provided!(cur_block, span, items[0]);
                 if items.len() > 2 {
                     for item in items[1..items.len()-2].iter() {
                         final_var.push_str("|");
                         final_var.push_str(item);
-                        let next = cur_block.get_unified_register(&final_var.to_string());
+                        let reg = cur_block.get_register(&final_var);
+                        cur_block.provide(reg);
+                        let next = get_provided!(cur_block, span, &final_var);
                         cur_block.constraints.push(make_scan(parent, interner.string(item), next));
                         parent = next;
                     }
@@ -545,7 +596,13 @@ impl<'a> Node<'a> {
                 }
             },
             &Node::RecordFunction { ref op, ref params, ref outputs} => {
-                let info = FUNCTION_INFO.get(*op).expect(&format!("Unknown function: {}", op));
+                let info = match FUNCTION_INFO.get(*op) {
+                    Some(v) => v,
+                    None => {
+                        cur_block.error(span, error::Error::UnknownFunction(op.to_string()));
+                        return None;
+                    }
+                };
                 let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
                 let mut cur_params = vec![Field::Value(0); info.params.len()];
                 let mut group = vec![];
@@ -575,7 +632,9 @@ impl<'a> Node<'a> {
                                 match (info.is_aggregate, a) {
                                     (true, "per") => { group.push(v) }
                                     (true, "for") => { projection.push(v) }
-                                    _ => panic!("Invalid parameter for function: {:?} - {:?}", op, a)
+                                    _ => {
+                                        cur_block.error(span, error::Error::UnknownFunctionParam(op.to_string(), a.to_string()));
+                                    }
                                 }
                             }
                         }
@@ -644,7 +703,7 @@ impl<'a> Node<'a> {
 
                 for attr in attrs {
                     match attr.unwrap_ref_pos() {
-                        &Node::Attribute("entity") => { entity = Some(cur_block.get_unified_register("entity")); },
+                        &Node::Attribute("entity") => { entity = Some(get_provided!(cur_block, span, "entity")); },
                         &Node::AttributeEquality("entity", ref v) => { entity = v.compile(interner, cur_block, span); }
                         _ => {}
                     }
@@ -659,7 +718,7 @@ impl<'a> Node<'a> {
 
                 for attr in attrs {
                     let (a, v) = match attr.unwrap_ref_pos() {
-                        &Node::Attribute(a) => { (a, Some(cur_block.get_unified_register(a))) },
+                        &Node::Attribute(a) => { (a, Some(get_provided!(cur_block, span, a))) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result = match *v.unwrap_ref_pos() {
                                 Node::RecordSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
@@ -703,14 +762,14 @@ impl<'a> Node<'a> {
             },
             &Node::Record(ref var, ref attrs) => {
                 let reg = if let &Some(ref name) = var {
-                    cur_block.get_unified_register(name)
+                    get_provided!(cur_block, span, name)
                 } else {
                     panic!("Record missing a var {:?}", var)
                 };
                 for attr in attrs {
                     let (a, v) = match attr.unwrap_ref_pos() {
                         &Node::Tag(t) => { (interner.string("tag"), interner.string(t)) },
-                        &Node::Attribute(a) => { (interner.string(a), cur_block.get_unified_register(a)) },
+                        &Node::Attribute(a) => { (interner.string(a), get_provided!(cur_block, span, a)) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result_a = interner.string(a);
                             let result = match *v.unwrap_ref_pos() {
@@ -733,7 +792,7 @@ impl<'a> Node<'a> {
                             (result_a, result)
                         },
                         &Node::AttributeInequality {ref attribute, ref op, ref right } => {
-                            let reg = cur_block.get_unified_register(attribute);
+                            let reg = get_provided!(cur_block, span, attribute);
                             let right_value = right.compile(interner, cur_block, span);
                             match right_value {
                                 Some(r) => {
@@ -751,7 +810,12 @@ impl<'a> Node<'a> {
             },
             &Node::OutputRecord(ref var, ref attrs, ref output_type) => {
                 let (reg, needs_id) = if let &Some(ref name) = var {
-                    (cur_block.get_unified_register(name), !cur_block.is_provided(name))
+                    let provided = cur_block.is_provided(name);
+                    if !provided {
+                        let reg = cur_block.get_register(name);
+                        cur_block.provide(reg);
+                    }
+                    (get_provided!(cur_block, span, name), !provided)
                 } else {
                     panic!("Record missing a var {:?}", var)
                 };
@@ -765,7 +829,7 @@ impl<'a> Node<'a> {
                     }
                     let (a, v) = match attr.unwrap_ref_pos() {
                         &Node::Tag(t) => { (interner.string("tag"), interner.string(t)) },
-                        &Node::Attribute(a) => { (interner.string(a), cur_block.get_unified_register(a)) },
+                        &Node::Attribute(a) => { (interner.string(a), get_provided!(cur_block, span, a)) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result_a = interner.string(a);
                             let result = match *v.unwrap_ref_pos() {
@@ -812,7 +876,7 @@ impl<'a> Node<'a> {
                         (parent.unwrap(), Some(items[items.len() - 1]))
                     },
                     Node::Variable(v) => {
-                        (cur_block.get_unified_register(v), None)
+                        (get_provided!(cur_block, span, v), None)
                     },
                     _ => panic!("Invalid record on {:?}", self)
                 };
@@ -896,11 +960,13 @@ impl<'a> Node<'a> {
                             Some(val @ Field::Value(_)) => {
                                 let result_name = format!("__eve_if_output{}", cur_block.id);
                                 let out_reg = cur_block.get_register(&result_name);
+                                cur_block.provide(out_reg);
                                 cur_block.id += 1;
                                 cur_block.constraints.push(make_filter("=", out_reg, val));
                                 out_reg
                             },
                             Some(reg @ Field::Register(_)) => {
+                                cur_block.provide(reg);
                                 let cur_value = if let Some(val @ &Field::Value(_)) = cur_block.var_values.get(&reg) {
                                     *val
                                 } else {
@@ -969,7 +1035,12 @@ impl<'a> Node<'a> {
                 None
             },
             &Node::Block{ref search, ref update, ref errors, ..} => {
-                if errors.len() > 0 { return None; }
+                if errors.len() > 0 {
+                    for error in errors {
+                        cur_block.errors.push(error::from_parse_error(error))
+                    }
+                    return None;
+                }
 
                 if let Some(ref s) = **search {
                     s.compile(interner, cur_block, span);
@@ -1179,7 +1250,20 @@ pub fn get_input_constraints_transitive(needles:&HashSet<Field>, haystack:&Vec<C
 }
 
 #[derive(Debug, Clone)]
+pub enum Provided {
+    Yes(Field),
+    No(Field),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum CompilationMode {
+    Search,
+    Output,
+}
+
+#[derive(Debug, Clone)]
 pub struct Compilation {
+    mode: CompilationMode,
     block_name: String,
     vars: HashMap<String, usize>,
     var_values: HashMap<Field, Field>,
@@ -1191,11 +1275,12 @@ pub struct Compilation {
     required_fields: Vec<Field>,
     is_child: bool,
     id: usize,
+    errors: Vec<CompileError>
 }
 
 impl Compilation {
     pub fn new(block_name:String) -> Compilation {
-        Compilation { vars:HashMap::new(), var_values:HashMap::new(), unified_registers:HashMap::new(), provided_registers:HashSet::new(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false }
+        Compilation { mode: CompilationMode::Search, vars:HashMap::new(), var_values:HashMap::new(), unified_registers:HashMap::new(), provided_registers:HashSet::new(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false, errors: vec![] }
     }
 
     pub fn new_child(parent:&Compilation) -> Compilation {
@@ -1205,17 +1290,26 @@ impl Compilation {
         child
     }
 
+    pub fn error(&mut self, span:&Span, error:error::Error) {
+        self.errors.push(CompileError { span:span.clone(), error });
+    }
+
     pub fn get_register(&mut self, name: &str) -> Field {
         let ref mut id = self.id;
         let ix = *self.vars.entry(name.to_string()).or_insert_with(|| { *id += 1; *id });
         register(ix)
     }
 
-    pub fn get_unified_register(&mut self, name: &str) -> Field {
+    pub fn get_unified_register(&mut self, name: &str) -> Provided {
         let reg = self.get_register(name);
-        match self.unified_registers.get(&reg) {
+        let unified = match self.unified_registers.get(&reg) {
             Some(&Field::Register(cur)) => Field::Register(cur),
             _ => reg.clone()
+        };
+        if !self.provided_registers.contains(&reg) {
+            Provided::No(unified)
+        } else {
+            Provided::Yes(unified)
         }
     }
 
@@ -1296,7 +1390,6 @@ impl Compilation {
 }
 
 pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block> {
-    let mut blocks = vec![];
     let mut state = ParseState::new(content);
     let parsed = block(&mut state);
     let mut comp = Compilation::new(name.to_string());
@@ -1314,29 +1407,18 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     for c in comp.constraints.iter() {
         println!("{:?}", c);
     }
-    let sub_ix = 0;
-    let mut subs:Vec<&mut SubBlock> = comp.sub_blocks.iter_mut().collect();
-    while subs.len() > 0 {
-        let mut cur = subs.pop().unwrap();
-        let mut sub_comp = cur.get_mut_compilation();
-        if sub_comp.constraints.len() > 0 {
-            sub_comp.finalize();
-            println!("    SubBlock");
-            for c in sub_comp.constraints.iter() {
-                println!("        {:?}", c);
-            }
-            blocks.push(Block::new(&format!("block|{}|sub_block|{}", name, sub_ix), sub_comp.constraints.clone()));
-        }
-        subs.extend(sub_comp.sub_blocks.iter_mut());
-    }
-
-    blocks.push(Block::new(name, comp.constraints));
-    blocks
+    compilation_to_blocks(comp)
 }
 
 pub fn compilation_to_blocks(mut comp:Compilation) -> Vec<Block> {
-    let block_name = &comp.block_name;
     let mut compilation_blocks = vec![];
+    if comp.errors.len() > 0 {
+        report_errors(&comp.errors);
+        return compilation_blocks;
+    }
+
+    let block_name = &comp.block_name;
+
     let mut sub_ix = 0;
     let mut subs:Vec<&mut SubBlock> = comp.sub_blocks.iter_mut().collect();
     while subs.len() > 0 {
@@ -1376,6 +1458,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 block.gather_equalities(interner, &mut comp);
                 block.unify(&mut comp);
                 block.compile(interner, &mut comp, &EMPTY_SPAN);
+
                 comp.finalize();
                 println!("---------------------- Block {} ---------------------------", block_name);
                 if let &mut Node::Block { code, ..} = block {

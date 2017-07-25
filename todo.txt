@@ -52,8 +52,10 @@ Errors
     - To the console
     - In eve
   - Compiler errors
-    - unknown functions
-    - unprovided vars
+    x unknown functions
+    x unknown function params
+    - missing function params
+    x unprovided vars
   - Parse errors
     - Empty searches and updates
     - Missing brackets
