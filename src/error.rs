@@ -24,6 +24,30 @@ pub enum Error {
     ParseError(ParseError),
 }
 
+fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
+    let start = &span.start;
+    let stop = &span.stop;
+    let mut part = {
+        let start_line = start.line;
+        let stop_line = stop.line;
+        let mut parts = String::new();
+        for line_ix in start_line..stop_line+1 {
+            parts.push_str(&format!("{}| ", line_ix + 1));
+            parts.push_str(lines[line_ix]);
+            parts.push_str("\n");
+        }
+        parts.pop();
+        parts
+    };
+    if span.single_line() {
+        part.push_str("\n   ");
+        for _ in 0..start.ch { part.push_str(" "); }
+        part.push_str("^");
+        for _ in start.ch..stop.ch - 1 { part.push_str("-"); }
+    }
+    part
+}
+
 pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
     match error {
         &ParseResult::Error(ref info, err) => {
@@ -35,6 +59,18 @@ pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
 
 }
 
-pub fn report_errors(errors: &Vec<CompileError>) {
-    println!("ERRORS {:?}", errors);
+pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
+    let lines:Vec<&str> = source.split("\n").collect();
+    for error in errors {
+        let error_source = format_error_source(&error.span, &lines);
+        let open = format!("\n-- ERROR -------------------------------- {}\n", path);
+        println!("{}", open);
+        println!("{:?}\n", error.error);
+        println!("{}", error_source);
+
+        let mut close = String::with_capacity(open.len());
+        for _ in 0..open.len() - 1 { close.push_str("-"); }
+        println!("\n{}", close);
+
+    }
 }

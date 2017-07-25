@@ -1,6 +1,6 @@
 
 search
-  foo = math/sin[a: 3]
+  foo = [#foo]
 bind
-  [#zomg]
+  [#woah] [#zomg x]
 end

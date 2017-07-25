@@ -177,7 +177,7 @@ impl Watcher for CompilerWatcher {
             let constraints = self.blocks_to_constraints.get(block).unwrap();
             comp.constraints.extend(constraints.iter().cloned());
             comp.finalize();
-            added_blocks.extend(compilation_to_blocks(comp));
+            added_blocks.extend(compilation_to_blocks(comp, "compiler_watcher", ""));
         }
         println!("got some blocks? {:?}", added_blocks);
         self.outgoing.send(RunLoopMessage::CodeTransaction(added_blocks, vec![])).unwrap();

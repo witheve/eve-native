@@ -270,6 +270,7 @@ macro_rules! pos_result (($state:ident, $value:expr) => (
 #[macro_export]
 macro_rules! parser (($name:ident( $state:ident $(, $arg:ident : $type:ty)* ) -> $out:ty $body:block) => (
         pub fn $name<'a>($state:&mut ParseState<'a> $(, $arg:$type)*) -> ParseResult<'a, $out> {
+            $state.eat_space();
             $state.mark(stringify!($name));
             $state.ignore_space(true);
             $body
@@ -322,6 +323,16 @@ pub struct Pos {
 pub struct Span {
     pub start: Pos,
     pub stop: Pos,
+}
+
+impl Span {
+    pub fn get<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.start.pos+1..self.stop.pos+1]
+    }
+
+    pub fn single_line(&self) -> bool {
+        self.start.line == self.stop.line
+    }
 }
 
 pub const EMPTY_SPAN:Span = Span { start: Pos {line:0, ch:0, pos:0}, stop: Pos {line:0, ch:0, pos:0} };

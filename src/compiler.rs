@@ -190,6 +190,13 @@ impl<'a> Node<'a> {
         }
     }
 
+    pub fn to_pos_ref<'t>(&'t self, cur_span:&'t Span) -> (&'t Span, &Node<'a>) {
+        match self {
+            &Node::Pos(ref span, box ref node) => (span, node),
+            _ => (cur_span, &self)
+        }
+    }
+
     pub fn unify(&self, comp:&mut Compilation) {
         {
             let ref mut values:HashMap<Field, Field> = comp.var_values;
@@ -609,17 +616,19 @@ impl<'a> Node<'a> {
                 let mut projection = vec![];
                 for param in params {
                     let mut compiled_params = vec![];
-                    match param.unwrap_ref_pos() {
+                    let (_, unwrapped) = param.to_pos_ref(span);
+                    match unwrapped {
                         &Node::Attribute(a) => {
                             compiled_params.push((a, cur_block.get_value(a)))
                         }
                         &Node::AttributeEquality(a, ref v) => {
-                            if let Node::ExprSet(ref items) = *v.unwrap_ref_pos() {
+                            let (local_pos, unwrapped) = v.to_pos_ref(span);
+                            if let &Node::ExprSet(ref items) = unwrapped {
                                 for item in items {
-                                    compiled_params.push((a, item.compile(interner, cur_block, span).unwrap()))
+                                    compiled_params.push((a, item.compile(interner, cur_block, local_pos).unwrap()))
                                 }
                             } else {
-                                compiled_params.push((a, v.compile(interner, cur_block, span).unwrap()))
+                                compiled_params.push((a, v.compile(interner, cur_block, local_pos).unwrap()))
                             }
                         }
                         _ => { panic!("invalid function param: {:?}", param) }
@@ -702,9 +711,10 @@ impl<'a> Node<'a> {
                 let mut value = None;
 
                 for attr in attrs {
-                    match attr.unwrap_ref_pos() {
-                        &Node::Attribute("entity") => { entity = Some(get_provided!(cur_block, span, "entity")); },
-                        &Node::AttributeEquality("entity", ref v) => { entity = v.compile(interner, cur_block, span); }
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    match unwrapped {
+                        &Node::Attribute("entity") => { entity = Some(get_provided!(cur_block, local_span, "entity")); },
+                        &Node::AttributeEquality("entity", ref v) => { entity = v.compile(interner, cur_block, local_span); }
                         _ => {}
                     }
                 }
@@ -717,13 +727,15 @@ impl<'a> Node<'a> {
                 }
 
                 for attr in attrs {
-                    let (a, v) = match attr.unwrap_ref_pos() {
-                        &Node::Attribute(a) => { (a, Some(get_provided!(cur_block, span, a))) },
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    let (a, v) = match unwrapped {
+                        &Node::Attribute(a) => { (a, Some(get_provided!(cur_block, local_span, a))) },
                         &Node::AttributeEquality(a, ref v) => {
-                            let result = match *v.unwrap_ref_pos() {
-                                Node::RecordSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
-                                Node::ExprSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
-                                _ => v.compile(interner, cur_block, span)
+                            let (local_span, unwrapped) = v.to_pos_ref(span);
+                            let result = match unwrapped {
+                                &Node::RecordSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
+                                &Node::ExprSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
+                                _ => v.compile(interner, cur_block, local_span)
                             };
                             (a, result)
                         },
@@ -767,33 +779,35 @@ impl<'a> Node<'a> {
                     panic!("Record missing a var {:?}", var)
                 };
                 for attr in attrs {
-                    let (a, v) = match attr.unwrap_ref_pos() {
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    let (a, v) = match unwrapped {
                         &Node::Tag(t) => { (interner.string("tag"), interner.string(t)) },
-                        &Node::Attribute(a) => { (interner.string(a), get_provided!(cur_block, span, a)) },
+                        &Node::Attribute(a) => { (interner.string(a), get_provided!(cur_block, local_span, a)) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result_a = interner.string(a);
-                            let result = match *v.unwrap_ref_pos() {
-                                Node::RecordSet(ref records) => {
+                            let (local_span, unwrapped) = v.to_pos_ref(span);
+                            let result = match unwrapped {
+                                &Node::RecordSet(ref records) => {
                                     for record in records[1..].iter() {
-                                        let cur_v = record.compile(interner, cur_block, span).unwrap();
+                                        let cur_v = record.compile(interner, cur_block, local_span).unwrap();
                                         cur_block.constraints.push(make_scan(reg, result_a, cur_v));
                                     }
-                                    records[0].compile(interner, cur_block, span).unwrap()
+                                    records[0].compile(interner, cur_block, local_span).unwrap()
                                 },
-                                Node::ExprSet(ref items) => {
+                                &Node::ExprSet(ref items) => {
                                     for value in items[1..].iter() {
-                                        let cur_v = value.compile(interner, cur_block, span).unwrap();
+                                        let cur_v = value.compile(interner, cur_block, local_span).unwrap();
                                         cur_block.constraints.push(make_scan(reg, result_a, cur_v));
                                     }
-                                    items[0].compile(interner, cur_block, span).unwrap()
+                                    items[0].compile(interner, cur_block, local_span).unwrap()
                                 },
-                                _ => v.compile(interner, cur_block, span).unwrap()
+                                _ => v.compile(interner, cur_block, local_span).unwrap()
                             };
                             (result_a, result)
                         },
                         &Node::AttributeInequality {ref attribute, ref op, ref right } => {
                             let reg = get_provided!(cur_block, span, attribute);
-                            let right_value = right.compile(interner, cur_block, span);
+                            let right_value = right.compile(interner, cur_block, local_span);
                             match right_value {
                                 Some(r) => {
                                     cur_block.constraints.push(make_filter(op, reg, r));
@@ -827,31 +841,33 @@ impl<'a> Node<'a> {
                         identity_contributing = false;
                         continue;
                     }
-                    let (a, v) = match attr.unwrap_ref_pos() {
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    let (a, v) = match unwrapped {
                         &Node::Tag(t) => { (interner.string("tag"), interner.string(t)) },
-                        &Node::Attribute(a) => { (interner.string(a), get_provided!(cur_block, span, a)) },
+                        &Node::Attribute(a) => { (interner.string(a), get_provided!(cur_block, local_span, a)) },
                         &Node::AttributeEquality(a, ref v) => {
                             let result_a = interner.string(a);
-                            let result = match *v.unwrap_ref_pos() {
-                                Node::RecordSet(ref records) => {
+                            let (local_span, unwrapped) = v.to_pos_ref(span);
+                            let result = match unwrapped {
+                                &Node::RecordSet(ref records) => {
                                     let auto_index = interner.string("eve-auto-index");
                                     for (ix, record) in records[1..].iter().enumerate() {
-                                        let cur_v = record.compile(interner, cur_block, span).unwrap();
+                                        let cur_v = record.compile(interner, cur_block, local_span).unwrap();
                                         cur_block.constraints.push(Constraint::Insert{e:cur_v, a:auto_index, v:interner.number((ix + 2) as f32), commit});
                                         cur_block.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
                                     }
-                                    let sub_record = records[0].compile(interner, cur_block, span).unwrap();
+                                    let sub_record = records[0].compile(interner, cur_block, local_span).unwrap();
                                     cur_block.constraints.push(Constraint::Insert{e:sub_record, a:auto_index, v:interner.number(1 as f32), commit});
                                     sub_record
                                 },
-                                Node::ExprSet(ref items) => {
+                                &Node::ExprSet(ref items) => {
                                     for value in items[1..].iter() {
-                                        let cur_v = value.compile(interner, cur_block, span).unwrap();
+                                        let cur_v = value.compile(interner, cur_block, local_span).unwrap();
                                         cur_block.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
                                     }
-                                    items[0].compile(interner, cur_block, span).unwrap()
+                                    items[0].compile(interner, cur_block, local_span).unwrap()
                                 },
-                                _ => v.compile(interner, cur_block, span).unwrap()
+                                _ => v.compile(interner, cur_block, local_span).unwrap()
                             };
 
                             (result_a, result)
@@ -870,18 +886,19 @@ impl<'a> Node<'a> {
             },
             &Node::RecordUpdate {ref record, ref op, ref value, ref output_type} => {
                 // @TODO: compile attribute access correctly
-                let (reg, attr) = match *record.unwrap_ref_pos() {
-                    Node::MutatingAttributeAccess(ref items) => {
-                        let parent = record.compile(interner, cur_block, span);
+                let (local_span, unwrapped) = record.to_pos_ref(span);
+                let (reg, attr) = match unwrapped {
+                    &Node::MutatingAttributeAccess(ref items) => {
+                        let parent = record.compile(interner, cur_block, local_span);
                         (parent.unwrap(), Some(items[items.len() - 1]))
                     },
-                    Node::Variable(v) => {
-                        (get_provided!(cur_block, span, v), None)
+                    &Node::Variable(v) => {
+                        (get_provided!(cur_block, local_span, v), None)
                     },
                     _ => panic!("Invalid record on {:?}", self)
                 };
                 let commit = *output_type == OutputType::Commit;
-                let ref val = *value.unwrap_ref_pos();
+                let (local_span, val) = value.to_pos_ref(span);
                 let mut avs = vec![];
                 match (attr, val) {
                     (None, &Node::Tag(t)) => { avs.push((interner.string("tag"), interner.string(t))) },
@@ -889,17 +906,17 @@ impl<'a> Node<'a> {
                     (Some(attr), &Node::NoneValue) => { avs.push((interner.string(attr), Field::Value(0))) }
                     (Some(attr), &Node::ExprSet(ref nodes)) => {
                         for node in nodes {
-                            avs.push((interner.string(attr), node.compile(interner, cur_block, span).unwrap()))
+                            avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
                         }
                     },
                     (Some(attr), v) => {
-                        avs.push((interner.string(attr), v.compile(interner, cur_block, span).unwrap()))
+                        avs.push((interner.string(attr), v.compile(interner, cur_block, local_span).unwrap()))
                     },
                     // @TODO: this doesn't handle the case where you do
                     // foo.bar <- [#zomg a]
                     (None, &Node::OutputRecord(..)) => {
                         match op {
-                            &"<-" => { val.compile(interner, cur_block, span); }
+                            &"<-" => { val.compile(interner, cur_block, local_span); }
                             _ => panic!("Invalid {:?}", self)
                         }
                     }
@@ -941,12 +958,13 @@ impl<'a> Node<'a> {
                     for item in body {
                         item.compile(interner, sub_block, span);
                     };
-                    if let &Node::ExprSet(ref nodes) = result.unwrap_ref_pos() {
+                    let (local_span, unwrapped) = result.to_pos_ref(span);
+                    if let &Node::ExprSet(ref nodes) = unwrapped {
                         for node in nodes {
-                            result_fields.push(node.compile(interner, sub_block, span).unwrap());
+                            result_fields.push(node.compile(interner, sub_block, local_span).unwrap());
                         }
                     } else {
-                        result_fields.push(result.compile(interner, sub_block, span).unwrap());
+                        result_fields.push(result.compile(interner, sub_block, local_span).unwrap());
                     }
                 } else {
                     panic!("Wrong SubBlock type for Not");
@@ -1025,9 +1043,10 @@ impl<'a> Node<'a> {
             },
             &Node::Watch(ref name, ref values) => {
                 for value in values {
-                    if let &Node::ExprSet(ref items) = value.unwrap_ref_pos() {
+                    let (local_span, unwrapped) = value.to_pos_ref(span);
+                    if let &Node::ExprSet(ref items) = unwrapped {
                         let registers = items.iter()
-                            .map(|v| v.compile(interner, cur_block, span).unwrap())
+                            .map(|v| v.compile(interner, cur_block, local_span).unwrap())
                             .collect();
                         cur_block.constraints.push(Constraint::Watch {name:name.to_string(), registers});
                     }
@@ -1407,13 +1426,13 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     for c in comp.constraints.iter() {
         println!("{:?}", c);
     }
-    compilation_to_blocks(comp)
+    compilation_to_blocks(comp, name, content)
 }
 
-pub fn compilation_to_blocks(mut comp:Compilation) -> Vec<Block> {
+pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> Vec<Block> {
     let mut compilation_blocks = vec![];
     if comp.errors.len() > 0 {
-        report_errors(&comp.errors);
+        report_errors(&comp.errors, path, source);
         return compilation_blocks;
     }
 
@@ -1467,7 +1486,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 for c in comp.constraints.iter() {
                     println!("   {:?}", c);
                 }
-                program_blocks.extend(compilation_to_blocks(comp));
+                program_blocks.extend(compilation_to_blocks(comp, path, content));
             }
             program_blocks
         } else {
