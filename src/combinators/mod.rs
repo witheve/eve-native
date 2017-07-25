@@ -1,4 +1,5 @@
 use super::compiler::OutputType;
+use super::error::*;
 
 //--------------------------------------------------------------------
 // Combinator Macros
@@ -278,15 +279,6 @@ macro_rules! whitespace_parser (($name:ident( $state:ident $(, $arg:ident : $typ
 //--------------------------------------------------------------------
 // Parse Result and Errors
 //--------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub enum ParseError {
-    EmptySearch,
-    EmptyUpdate,
-    InvalidBlock,
-    MissingEnd,
-    MissingUpdate,
-}
 
 #[derive(Debug, Clone)]
 pub enum ParseResult<'a, T> {

@@ -34,6 +34,7 @@ pub mod indexes;
 pub mod hash;
 pub mod compiler;
 pub mod parser;
+pub mod error;
 
 pub mod watcher;
 pub mod numerics;
