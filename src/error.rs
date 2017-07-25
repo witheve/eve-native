@@ -96,9 +96,9 @@ fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
     if span.single_line() {
         part.push_str(&format!("{}", Color::Red));
         part.push_str("\n   ");
-        for _ in 0..start.ch { part.push_str(" "); }
+        for _ in 0..start.ch + 1 { part.push_str(" "); }
         part.push_str("^");
-        for _ in start.ch..stop.ch - 1 { part.push_str("-"); }
+        for _ in 0..(stop.ch - start.ch - 1) { part.push_str("-"); }
         part.push_str(&format!("{}", Color::Normal));
     }
     part
@@ -117,15 +117,15 @@ pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
 
 pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
     let lines:Vec<&str> = source.split("\n").collect();
+    let mut final_open_len = 0;
     for error in errors {
         let error_source = format_error_source(&error.span, &lines);
         let open = format!("\n-- ERROR -------------------------------- {}\n", path);
         println!("{}{}{}", Color::Cyan, open, Color::Normal);
         println!("{}\n", error.error);
         println!("{}", error_source);
-
-        let close = "-".repeat(open.len() - 1);
-        println!("\n{}{}{}", Color::Cyan, close, Color::Normal);
-
+        final_open_len = open.len();
     }
+    let close = "-".repeat(final_open_len - 1);
+    println!("\n{}{}{}\n", Color::Cyan, close, Color::Normal);
 }

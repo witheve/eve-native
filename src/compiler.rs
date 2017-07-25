@@ -526,8 +526,12 @@ impl<'a> Node<'a> {
             &Node::GeneratedVariable(ref v) => { Some(get_provided!(cur_block, span, v)) },
             // &Node::AttributeEquality(a, ref v) => { v.compile(interner, comp, cur_block) },
             &Node::Equality {ref left, ref right} => {
-                left.compile(interner, cur_block, span);
+                // we do the right first, since it could be an OutputRecord that is going to find
+                // out that it provides its ID. If it does, and we compiled the left first, we
+                // wouldn't know about the provision and incorrectly declare that nothing provides
+                // the left.
                 right.compile(interner, cur_block, span);
+                left.compile(interner, cur_block, span);
                 None
             },
             &Node::AttributeAccess(ref items) => {
@@ -834,7 +838,9 @@ impl<'a> Node<'a> {
                         let reg = cur_block.get_register(name);
                         cur_block.provide(reg);
                     }
-                    (get_provided!(cur_block, span, name), !provided)
+                    let unified = get_provided!(cur_block, span, name);
+                    cur_block.provide(unified);
+                    (unified, !provided)
                 } else {
                     panic!("Record missing a var {:?}", var)
                 };
@@ -1330,7 +1336,7 @@ impl Compilation {
             Some(&Field::Register(cur)) => Field::Register(cur),
             _ => reg.clone()
         };
-        if !self.provided_registers.contains(&reg) {
+        if !self.provided_registers.contains(&reg) && !self.provided_registers.contains(&unified) {
             Provided::No(unified)
         } else {
             Provided::Yes(unified)
@@ -1428,9 +1434,9 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     }
 
     comp.finalize();
-    for c in comp.constraints.iter() {
-        println!("{:?}", c);
-    }
+    // for c in comp.constraints.iter() {
+    //     println!("{:?}", c);
+    // }
     compilation_to_blocks(comp, name, content)
 }
 
@@ -1451,16 +1457,16 @@ pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> V
         let mut sub_comp = cur.get_mut_compilation();
         if sub_comp.constraints.len() > 0 {
             sub_comp.finalize();
-            println!("       SubBlock: {}", sub_name);
-            for c in sub_comp.constraints.iter() {
-                println!("            {:?}", c);
-            }
+            // println!("       SubBlock: {}", sub_name);
+            // for c in sub_comp.constraints.iter() {
+            //     println!("            {:?}", c);
+            // }
             compilation_blocks.push(Block::new(&sub_name, sub_comp.constraints.clone()));
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
-    println!("");
+    // println!("");
     compilation_blocks.push(Block::new(&block_name, comp.constraints));
     compilation_blocks
 }
@@ -1474,8 +1480,6 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
             let mut program_blocks = vec![];
             let mut ix = 0;
             for block in blocks {
-                // println!("\n\nBLOCK!");
-                // println!("  {:?}\n", block);
                 ix += 1;
                 let block_name = format!("{}|block|{}", path, ix);
                 let mut comp = Compilation::new(block_name.to_string());
@@ -1484,13 +1488,13 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 block.compile(interner, &mut comp, &EMPTY_SPAN);
 
                 comp.finalize();
-                println!("---------------------- Block {} ---------------------------", block_name);
-                if let &mut Node::Block { code, ..} = block {
-                    println!("{}\n\n => \n", code);
-                }
-                for c in comp.constraints.iter() {
-                    println!("   {:?}", c);
-                }
+                // println!("---------------------- Block {} ---------------------------", block_name);
+                // if let &mut Node::Block { code, ..} = block {
+                //     println!("{}\n\n => \n", code);
+                // }
+                // for c in comp.constraints.iter() {
+                //     println!("   {:?}", c);
+                // }
                 program_blocks.extend(compilation_to_blocks(comp, path, content));
             }
             program_blocks
