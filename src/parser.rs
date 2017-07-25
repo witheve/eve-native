@@ -1,6 +1,7 @@
 use compiler::{Node, OutputType};
 use std::str::FromStr;
 use combinators::*;
+use error::{ParseError};
 
 //--------------------------------------------------------------------
 // Constants
