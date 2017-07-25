@@ -395,7 +395,7 @@ parser!(output_equality(state) -> Node<'a> {
 //--------------------------------------------------------------------
 
 parser!(not_statement(state) -> Node<'a> {
-    let item = alt!(state, [ lookup multi_function_equality inequality record equality attribute_access ]);
+    let item = alt!(state, [ lookup multi_function_equality inequality record_function record equality attribute_access ]);
     pos_result!(state, item)
 });
 
@@ -444,7 +444,7 @@ parser!(if_else_branch(state) -> Node<'a> {
 });
 
 parser!(if_branch_statement(state) -> Node<'a> {
-    let item = alt!(state, [ lookup multi_function_equality not_form inequality record equality attribute_access ]);
+    let item = alt!(state, [ lookup multi_function_equality not_form inequality record_function record equality attribute_access ]);
     result!(state, item)
 });
 
@@ -478,7 +478,7 @@ parser!(if_expression(state) -> Node<'a> {
 
 parser!(search_section_statement(state) -> Node<'a> {
     let item = alt!(state, [ not_form lookup multi_function_equality if_expression inequality
-                             record equality attribute_access ]);
+                             record_function record equality attribute_access ]);
     pos_result!(state, item)
 });
 
