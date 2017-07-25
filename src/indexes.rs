@@ -487,6 +487,18 @@ impl HashIndex {
         }
     }
 
+    pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
+        if e == 0 || a == 0 || v == 0 {
+            panic!("Can't check availability of an unformed EAV ({}, {}, {})", e, a, v);
+        }
+        match self.eavs.get(&(e,a,v)) {
+            Some(rounds) => {
+                rounds.rounds.iter().fold(0, |prev, x| prev + x) > 0
+            }
+            None => false,
+        }
+    }
+
     pub fn get(&self, e:Interned, a:Interned, v:Interned) -> Option<HashIndexIter> {
         if a == 0 {
             if self.a.len() > 0 {

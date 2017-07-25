@@ -16,7 +16,26 @@ macro_rules! s (($p:ident, $i:expr) => ({ $p.state.interner.string_id(&$i) }));
 // }));
 macro_rules! valid (($blocks:tt) => ({
     let mut program = blocks!($blocks);
-    assert!(program.state.index.check(0, s!(program, "tag"), s!(program, "success")), "No success record");
+    let a = s!(program, "tag");
+    let v = s!(program, "success");
+    let mut found = false;
+    match program.state.index.get(0, a, v) {
+        Some(mut iter) => {
+            loop {
+                match iter.next() {
+                    Some(e) => {
+                        if program.state.index.is_available(e,a,v) {
+                            found = true;
+                            break;
+                        }
+                    },
+                    None => { break; }
+                }
+            }
+        }
+        None => {}
+    }
+    assert!(found, "No success record");
 }));
 
 macro_rules! blocks (($info:tt) => ({
