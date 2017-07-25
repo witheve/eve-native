@@ -422,7 +422,7 @@ impl<'a> ParseState<'a> {
         for c in remaining.chars() {
             match c {
                 '\n' => { self.line += 1; self.ch = 0; self.pos += 1; break }
-                _ => { self.ch += 1; self.pos += 1; }
+                _ => { self.ch += 1; self.pos += c.len_utf8(); }
             }
         }
     }
@@ -433,9 +433,9 @@ impl<'a> ParseState<'a> {
         if remaining.len() == 0 { return Err(()); }
         let start = self.pos;
         for c in remaining.chars() {
-            if chars.find(c) != None { break; }
+            if chars.find(c).is_some() { break; }
             self.ch += 1;
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         if self.pos != start {
             Ok(&self.input[start..self.pos])
@@ -452,7 +452,7 @@ impl<'a> ParseState<'a> {
         for c in remaining.chars() {
             if chars.find(c) == None { break; }
             self.ch += 1;
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         if self.pos != start {
             Ok(&self.input[start..self.pos])
@@ -474,7 +474,7 @@ impl<'a> ParseState<'a> {
             } else {
                 self.ch += 1;
             }
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         if self.pos != start {
             Ok(&self.input[start..self.pos])
@@ -519,7 +519,7 @@ impl<'a> ParseState<'a> {
             } else {
                 self.ch += 1;
             }
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         (Ok(&self.input[start..self.pos]), ParseResult::Fail(MatchType::ConsumeUntil))
     }

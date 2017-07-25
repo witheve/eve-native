@@ -57,11 +57,7 @@ test!(parse_error_empty_search, {
 
 #[test]
 pub fn parser_combinator() {
-    let mut state = ParseState::new("z = if x = 3 then \"medium\"
-            else if x = 10 then \"large\"
-            else \"too big\"
-");
-
-    let result = if_expression(&mut state);
+    let mut state = ParseState::new("\"a̐éö̲\"");
+    let result = string(&mut state);
     println!("{:?}", result);
 }

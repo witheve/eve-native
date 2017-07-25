@@ -1,6 +1,7 @@
 
 search
   foo = [#foo]
+  [#input zeeb: "a̐éö̲"]
 bind
-  [#woah] [#zomg x]
+  [#woah] [#zomg foo]
 end
