@@ -21,7 +21,7 @@ impl fmt::Display for ParseError {
             &ParseError::EmptySearch => { write!(f, "Looks like this block has an empty search.") }
             &ParseError::EmptyUpdate => { write!(f, "Looks like this block doesn't have any actions in it.") }
             &ParseError::InvalidBlock => { write!(f, "This block is invalid, but unfortunately I don't have a lot of information about why.") }
-            &ParseError::MissingEnd => { write!(f, "Looks like the end keyword is missing for this block.") }
+            &ParseError::MissingEnd => { write!(f, "Looks like the `end` keyword is missing for this block.") }
             &ParseError::MissingUpdate => { write!(f, "Looks like this block doesn't have an action section.") }
         }
     }
