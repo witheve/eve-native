@@ -100,6 +100,18 @@ impl Watcher for PrintWatcher {
     }
 }
 
+pub struct PrintDiffWatcher { }
+
+impl Watcher for PrintDiffWatcher {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+        for remove in diff.removes {
+            println!("Printer: - {:?}", remove.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+        }
+        for add in diff.adds {
+            println!("Printer: + {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+        }
+    }
+}
 
 // pub enum RawConstraint {
 //     Scan{e:Internable, a:Internable, v:Internable},
