@@ -81,7 +81,7 @@ pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
             let mut parts = String::new();
             for line_ix in start_line..stop_line+1 {
                 println!("{}{}{}", BrightYellow.paint(line_ix + 1),BrightYellow.paint("|"),lines[line_ix]);
-                parts.push_str(&format!("{}{}{}", BrightYellow.paint(line_ix + 1),BrightYellow.paint("|"),lines[line_ix]));
+                parts.push_str(&format!("{}{}{}", Yellow.paint(line_ix + 1),BrightYellow.paint("|"),lines[line_ix]));
             }
             parts.pop();
             parts
@@ -92,9 +92,8 @@ pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
             for _ in start.ch..stop.ch - 1 { part.push_str("-"); }
         }
         let close = "-".repeat(open.len() - 1);
-        println!("\n{}", BrightCyan.paint(close));
-
+        println!("\n{}\n", BrightCyan.paint(close));
     }
     let close = "-".repeat(final_open_len - 1);
-    println!("\n{}{}{}\n", Color::Cyan, close, Color::Normal);
+    println!("\n{}\n", BrightCyan.paint(close));
 }
