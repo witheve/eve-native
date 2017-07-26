@@ -1,6 +1,10 @@
+extern crate term_painter;
+
 use combinators::{Span, ParseResult, Pos};
 use compiler::{Node};
 use std::fmt;
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ParseError {
@@ -48,62 +52,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Debug,PartialEq, Eq)]
-pub enum Color {
-    Normal,
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-}
-
-impl fmt::Display for Color {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let color_code = match self {
-            &Color::Normal => "0",
-            &Color::Black => "30",
-            &Color::Red => "31",
-            &Color::Green => "32",
-            &Color::Yellow => "33",
-            &Color::Blue => "34",
-            &Color::Magenta => "35",
-            &Color::Cyan => "36",
-            &Color::White => "37",
-        };
-        write!(f, "\x1B[{}m", color_code)
-    }
-}
-
-fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
-    let start = &span.start;
-    let stop = &span.stop;
-    let mut part = {
-        let start_line = start.line;
-        let stop_line = stop.line;
-        let mut parts = String::new();
-        for line_ix in start_line..stop_line+1 {
-            parts.push_str(&format!("{}{}|{} ", Color::Yellow, line_ix + 1, Color::Normal));
-            parts.push_str(lines[line_ix]);
-            parts.push_str("\n");
-        }
-        parts.pop();
-        parts
-    };
-    if span.single_line() {
-        part.push_str(&format!("{}", Color::Red));
-        part.push_str("\n   ");
-        for _ in 0..start.ch { part.push_str(" "); }
-        part.push_str("^");
-        for _ in start.ch..stop.ch - 1 { part.push_str("-"); }
-        part.push_str(&format!("{}", Color::Normal));
-    }
-    part
-}
-
 pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
     match error {
         &ParseResult::Error(ref info, err) => {
@@ -118,14 +66,29 @@ pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
 pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
     let lines:Vec<&str> = source.split("\n").collect();
     for error in errors {
-        let error_source = format_error_source(&error.span, &lines);
         let open = format!("\n-- ERROR -------------------------------- {}\n", path);
-        println!("{}{}{}", Color::Cyan, open, Color::Normal);
+        println!("{}", BrightCyan.paint(&open));
         println!("{}\n", error.error);
-        println!("{}", error_source);
-
+        let start = &error.span.start;
+        let stop = &error.span.stop;
+        let mut part = {
+            let start_line = start.line;
+            let stop_line = stop.line;
+            let mut parts = String::new();
+            for line_ix in start_line..stop_line+1 {
+                println!("{}{}{}", BrightYellow.paint(line_ix + 1),BrightYellow.paint("|"),lines[line_ix]);
+                parts.push_str(&format!("{}{}{}", BrightYellow.paint(line_ix + 1),BrightYellow.paint("|"),lines[line_ix]));
+            }
+            parts.pop();
+            parts
+        };
+        if error.span.single_line() {
+            for _ in 0..start.ch { print!(" "); }
+            print!("{}",BrightRed.paint("  ^"));
+            for _ in start.ch..stop.ch - 1 { part.push_str("-"); }
+        }
         let close = "-".repeat(open.len() - 1);
-        println!("\n{}{}{}", Color::Cyan, close, Color::Normal);
+        println!("\n{}", BrightCyan.paint(close));
 
     }
 }
