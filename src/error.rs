@@ -68,7 +68,7 @@ pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
 
 pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
     let lines:Vec<&str> = source.split("\n").collect();
-    let mut final_open_len = 0;
+    let final_open_len = 0;
     for error in errors {
         let open = format!("\n-- ERROR -------------------------------- {}\n", path);
         println!("{}", BrightCyan.paint(&open));
