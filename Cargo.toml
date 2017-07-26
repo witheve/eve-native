@@ -26,4 +26,8 @@ walkdir = "1"
 num = "0.1.39"
 bincode = "0.8"
 clap = "2.25"
+<<<<<<< HEAD
 term-painter = "0.2.3"
+=======
+unicode-segmentation = "1.1.0"
+>>>>>>> refs/remotes/origin/master

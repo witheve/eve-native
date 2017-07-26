@@ -26,6 +26,8 @@ extern crate serde_derive;
 extern crate tokio_timer;
 extern crate futures;
 
+extern crate unicode_segmentation;
+
 pub mod ops;
 
 #[macro_use]
@@ -40,3 +42,5 @@ pub mod error;
 pub mod watcher;
 pub mod numerics;
 
+#[macro_use]
+pub mod test_util;

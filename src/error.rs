@@ -55,8 +55,11 @@ impl fmt::Display for Error {
 pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
     match error {
         &ParseResult::Error(ref info, err) => {
-            let pos = Pos { line:info.line, ch:info.ch, pos:info.pos };
-            CompileError { span: Span {start: pos.clone(), stop: pos} , error: Error::ParseError(err) }
+            let start = Pos { line:info.line, ch:info.ch, pos:info.pos };
+            let mut stop = start.clone();
+            stop.ch += 1;
+            stop.pos += 1;
+            CompileError { span: Span {start, stop} , error: Error::ParseError(err) }
         }
         _ => { panic!("Passed non-parse error to from_parse_error"); }
     }
@@ -65,6 +68,7 @@ pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
 
 pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
     let lines:Vec<&str> = source.split("\n").collect();
+    let mut final_open_len = 0;
     for error in errors {
         let open = format!("\n-- ERROR -------------------------------- {}\n", path);
         println!("{}", BrightCyan.paint(&open));
@@ -91,4 +95,6 @@ pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
         println!("\n{}", BrightCyan.paint(close));
 
     }
+    let close = "-".repeat(final_open_len - 1);
+    println!("\n{}{}{}\n", Color::Cyan, close, Color::Normal);
 }
