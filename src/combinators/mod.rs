@@ -63,6 +63,19 @@ macro_rules! any_except (($name:ident, $chars:expr) => (
 ));
 
 #[macro_export]
+macro_rules! one_except (($name:ident, $chars:expr) => (
+        {
+            let v = $chars;
+            match $name.one_except(v) {
+                Ok(cur) => cur,
+                Err(_) => {
+                    return $name.fail(MatchType::AnyExcept(v));
+                }
+            }
+        }
+));
+
+#[macro_export]
 macro_rules! any (($name:ident, $chars:expr) => (
         {
             let v = $chars;
@@ -441,6 +454,21 @@ impl<'a> ParseState<'a> {
             Ok(&self.input[start..self.pos])
         } else {
             Err(())
+        }
+    }
+
+    pub fn one_except(&mut self, chars:&str) -> Result<&'a str, ()> {
+        if self.ignore_space { self.eat_space(); }
+        let remaining = &self.input[self.pos..];
+        if remaining.len() == 0 { return Err(()); }
+        let start = self.pos;
+        let c = remaining.chars().next().unwrap();
+        if chars.find(c).is_some() {
+            Err(())
+        } else {
+            self.ch += 1;
+            self.pos += c.len_utf8();
+            Ok(&self.input[start..self.pos])
         }
     }
 

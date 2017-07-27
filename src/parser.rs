@@ -8,19 +8,26 @@ use error::{ParseError};
 //--------------------------------------------------------------------
 
 const BREAK_CHARS:&'static str = "#\\.,()[]{}:=\"|; \r\n\t";
+const BREAK_CHARS_AND_NUMBERS:&'static str = "012345679#\\.,()[]{}:=\"|; \r\n\t";
 
 //--------------------------------------------------------------------
 // Identifiers and variables
 //--------------------------------------------------------------------
 
-parser!(identifier(state) -> Node<'a> {
-    let v = any_except!(state, BREAK_CHARS);
-    pos_result!(state, Node::Identifier(v))
+whitespace_parser!(identifier(state) -> Node<'a> {
+    state.eat_space();
+    let start = state.pos;
+    one_except!(state, BREAK_CHARS_AND_NUMBERS);
+    state.consume_except(BREAK_CHARS);
+    pos_result!(state, Node::Identifier(state.capture(start)))
 });
 
-parser!(variable(state) -> Node<'a> {
-    let v = any_except!(state, BREAK_CHARS);
-    pos_result!(state, Node::Variable(v))
+whitespace_parser!(variable(state) -> Node<'a> {
+    state.eat_space();
+    let start = state.pos;
+    one_except!(state, BREAK_CHARS_AND_NUMBERS);
+    state.consume_except(BREAK_CHARS);
+    pos_result!(state, Node::Variable(state.capture(start)))
 });
 
 //--------------------------------------------------------------------
@@ -47,7 +54,7 @@ whitespace_parser!(integer(state) -> Node<'a> {
 
 parser!(number(state) -> Node<'a> {
     let num = alt!(state, [float integer]);
-    pos_result!(state, num)
+    result!(state, num)
 });
 
 //--------------------------------------------------------------------
@@ -112,7 +119,7 @@ parser!(wrapped_expression(state) -> Node<'a> {
     tag!(state, "(");
     let value = call!(state, expression);
     tag!(state, ")");
-    pos_result!(state, value)
+    result!(state, value)
 });
 
 parser!(expression(state) -> Node<'a> {
@@ -241,7 +248,7 @@ parser!(wrapped_record_set(state) -> Node<'a> {
     tag!(state, "(");
     let set = call!(state, record_set);
     tag!(state, ")");
-    pos_result!(state, set)
+    result!(state, set)
 });
 
 //--------------------------------------------------------------------
@@ -292,7 +299,7 @@ parser!(multi_function_equality(state) -> Node<'a> {
         }
         _ => unreachable!()
     };
-    pos_result!(state, func)
+    result!(state, func)
 });
 
 //--------------------------------------------------------------------
@@ -375,12 +382,12 @@ parser!(update_remove(state) -> Node<'a> {
 
 parser!(bind_update(state) -> Node<'a> {
     let result = alt!(state, [ update_add update_merge ]);
-    pos_result!(state, result)
+    result!(state, result)
 });
 
 parser!(commit_update(state) -> Node<'a> {
     let result = alt!(state, [ update_add update_merge update_set update_remove ]);
-    pos_result!(state, result)
+    result!(state, result)
 });
 
 parser!(output_equality(state) -> Node<'a> {
@@ -395,8 +402,8 @@ parser!(output_equality(state) -> Node<'a> {
 //--------------------------------------------------------------------
 
 parser!(not_statement(state) -> Node<'a> {
-    let item = alt!(state, [ lookup multi_function_equality inequality record_function record equality attribute_access ]);
-    pos_result!(state, item)
+    let item = alt!(state, [ not_form lookup multi_function_equality inequality record_function record equality attribute_access ]);
+    result!(state, item)
 });
 
 parser!(not_form(state) -> Node<'a> {
@@ -479,7 +486,7 @@ parser!(if_expression(state) -> Node<'a> {
 parser!(search_section_statement(state) -> Node<'a> {
     let item = alt!(state, [ not_form lookup multi_function_equality if_expression inequality
                              record_function record equality attribute_access ]);
-    pos_result!(state, item)
+    result!(state, item)
 });
 
 parser!(search_section(state) -> Node<'a> {
@@ -491,7 +498,7 @@ parser!(search_section(state) -> Node<'a> {
 
 parser!(bind_section_statement(state) -> Node<'a> {
     let item = alt!(state, [ output_equality record bind_update ]);
-    pos_result!(state, item)
+    result!(state, item)
 });
 
 parser!(bind_section(state) -> Node<'a> {
@@ -503,7 +510,7 @@ parser!(bind_section(state) -> Node<'a> {
 
 parser!(commit_section_statement(state) -> Node<'a> {
     let item = alt!(state, [ output_equality record commit_update ]);
-    pos_result!(state, item)
+    result!(state, item)
 });
 
 parser!(commit_section(state) -> Node<'a> {
@@ -542,7 +549,7 @@ parser!(block_end(state) -> () {
 
 parser!(block_update_section(state) -> Node<'a> {
     let update = alt!(state, [ bind_section commit_section project_section watch_section ]);
-    pos_result!(state, update)
+    result!(state, update)
 });
 
 parser!(block(state) -> Node<'a> {
