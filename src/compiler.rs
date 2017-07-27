@@ -1,5 +1,6 @@
 extern crate time;
 extern crate walkdir;
+extern crate term_painter;
 
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
@@ -13,6 +14,8 @@ use self::walkdir::WalkDir;
 use parser::{embedded_blocks, block};
 use combinators::{ParseResult, ParseState, Span, EMPTY_SPAN};
 use error::{self, CompileError, report_errors};
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
 
 macro_rules! get_provided (
     ($comp:ident, $span:ident, $value:expr) => ({
@@ -1533,6 +1536,7 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
     }
     let mut blocks = vec![];
     for cur_path in paths {
+        println!("{} {}", Green.paint("Compiling:"), cur_path.replace("\\","/"));
         let mut file = File::open(&cur_path).expect("Unable to open the file");
         let mut contents = String::new();
         file.read_to_string(&mut contents).expect("Unable to read the file");
