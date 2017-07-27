@@ -146,25 +146,46 @@ impl Watcher for ConsoleWarnWatcher {
 // File Watcher
 //-------------------------------------------------------------------------
 
-pub struct FileReadWatcher { }
+pub struct FileReadWatcher { 
+    outgoing: Sender<RunLoopMessage>,
+}
+
+impl FileReadWatcher {
+    pub fn new(outgoing: Sender<RunLoopMessage>) -> FileReadWatcher {
+        FileReadWatcher { outgoing }
+    }
+}
+
 
 impl Watcher for FileReadWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
-            let raw_path = Internable::to_string(interner.get_value(add[0]));
+            let file_id = Internable::to_string(interner.get_value(add[0]));
+            let raw_path = Internable::to_string(interner.get_value(add[1]));
             let path = Path::new(raw_path);
             let mut file = match File::open(&path) {
-                Err(why) => panic!("couldn't write to file"),
+                Err(why) => panic!("couldn't read from file:, {}", why),
                 Ok(file) => file,
             };
-            let mut s = String::new();
-            match file.read_to_string(&mut s) {
-                Err(why) => panic!("couldn't write to file"),
-                Ok(_) => print!("{} contains:\n{}", display, s),
+            let mut contents = String::new();
+            match file.read_to_string(&mut contents) {
+                Err(why) => panic!("couldn't read from file:, {}", why),
+                Ok(_) => {
+                    let id = Internable::String(format!("file/read/change/{}", add[0]));
+                    let changes = vec![
+                        RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("file/read/change".to_string()), n: Internable::String("file/read".to_string()), count: 1},
+                        RawChange {e: id.clone(), a: Internable::String("file".to_string()), v: Internable::String(file_id.to_string()), n: Internable::String("file/read".to_string()), count: 1},
+                        RawChange {e: id.clone(), a: Internable::String("contents".to_string()), v: Internable::String(contents.clone()), n: Internable::String("file/read".to_string()), count: 1},
+                    ];
+                    match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
+                        Err(_) => {
+                            println!("Failure");
+                            break
+                        },
+                        _ => { println!("Success"); }
+                    }
+                },
             }
-            println!("{:?}",s);
-
-
         }
     }
 }
@@ -172,17 +193,17 @@ impl Watcher for FileReadWatcher {
 pub struct FileWriteWatcher { }
 
 impl Watcher for FileWriteWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let raw_path = Internable::to_string(interner.get_value(add[0]));
             let path = Path::new(raw_path);
             let contents = Internable::to_string(interner.get_value(add[1]));
             let mut file = match File::create(&path) {
-                Err(why) => panic!("couldn't write to file"),
+                Err(why) => panic!("couldn't write to file:, {}", why),
                 Ok(file) => file,
             };
             match file.write_all(contents.as_bytes()) {
-                Err(why) => println!("couldn't write to file"),
+                Err(why) => panic!("couldn't write to file:, {}", why),
                 Ok(_) => println!("successfully wrote file"),
             }
         }

@@ -11,7 +11,16 @@ end
 ## Reading Files
 
 search
-  [#file/read path]
+  f = [#file/read path]
 watch file/read
-  (path)
+  (f, path)
+end
+
+When a file read change event comes around, set the contents of the file.
+
+search
+  t = [#file/read/change file contents]
+  file = [#file/read]
+commit
+  file.contents := contents
 end
