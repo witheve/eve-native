@@ -44,9 +44,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &Error::Unprovided(ref var) => { write!(f, "Nothing in the block is providing `{}`", var) }
+            &Error::Unprovided(ref var) => { write!(f, "Nothing in the block is providing `{}`. You can search for\n something that provides `{}`, or bind a constant.\n e.g. `{}: \"Hello\"`", var, var, var) }
             &Error::UnknownFunction(ref func) => { write!(f, "I don't know the `{}` function, so I'm not sure what to execute.", func) }
-            &Error::UnknownFunctionParam(ref func, ref param) => { write!(f, "The `{}` function doesn't seem to have a `{}` attribute.", func, param) }
+            &Error::UnknownFunctionParam(ref func, ref param) => { write!(f, "The `{}` function doesn't have a `{}` attribute.", func, param) }
             &Error::ParseError(ref err) => { write!(f, "{}", err) }
         }
     }
@@ -91,14 +91,12 @@ pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
 
 pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
     let lines:Vec<&str> = source.split("\n").collect();
-    let mut final_open_len = 0;
     let open = format!("\n----------------------------------------- {}\n", path);
+    let close = "-".repeat(open.len() - 2);
     println!("{}", BrightCyan.paint(&open));
     for error in errors {
         println!(" {}\n", error.error);
         format_error_source(&error.span, &lines);
-        final_open_len = open.len();
+        println!("{}\n", BrightCyan.paint(&close));
     }
-    let close = "-".repeat(final_open_len - 2);
-    println!("{}\n", BrightCyan.paint(close));
 }
