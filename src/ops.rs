@@ -916,6 +916,7 @@ pub struct Counters {
     accept: u64,
     accept_bail: u64,
     accept_ns: u64,
+    inserts: u64,
     considered: u64,
 }
 
@@ -949,7 +950,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new() -> Frame {
-        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
+        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> Interned {
@@ -1397,6 +1398,7 @@ pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
+                frame.counters.inserts += 1;
                 program.index.distinct(output, rounds);
             }
         },
@@ -1416,6 +1418,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count);
+                frame.counters.inserts += 1;
                 // if program.debug { println!("     -> Commit {:?}", output); }
                 rounds.commit(output, ChangeType::Insert)
             }
@@ -1427,6 +1430,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1437,6 +1441,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1447,6 +1452,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1465,6 +1471,7 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
             for &(round, count) in program.rounds.get_output_rounds().iter() {
+                frame.counters.inserts += 1;
                 program.intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
@@ -1475,6 +1482,7 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
             for &(round, count) in program.rounds.get_output_rounds().iter() {
                 let action = if count < 0 { remove } else { add };
+                frame.counters.inserts += 1;
                 program.intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
             }
         },
@@ -1501,6 +1509,7 @@ pub fn watch(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fram
             for &(_, count) in program.rounds.get_output_rounds().iter() {
                 total += count;
             }
+            frame.counters.inserts += 1;
             program.watch(name, resolved, total);
         },
         _ => unreachable!()
@@ -3426,7 +3435,8 @@ impl ProgramRunner {
                         };
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
-                        println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+                        let time = (end_ns - start_ns) as f64;
+                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
                     Ok(RunLoopMessage::Stop) => {
                         break 'outer;
