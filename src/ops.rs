@@ -9,6 +9,7 @@ extern crate bincode;
 use unicode_segmentation::UnicodeSegmentation;
 
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
+use watcher::{WatcherLibrary};
 use compiler::{make_block, parse_file};
 use hash::map::{DangerousKeys};
 use std::collections::HashMap;
@@ -3000,8 +3001,10 @@ impl Program {
         self.register_block(block);
     }
 
-    pub fn attach(&mut self, name:&str, watcher:Box<Watcher + Send>) {
-        self.watchers.insert(name.to_string(), watcher);
+    pub fn attach(&mut self, watchers: Vec<WatcherLibrary>) {
+        for watcher in watchers {
+            self.watchers.insert(watcher.name, watcher.watcher);
+        }
     }
 
     pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Vec<Instruction>>) {
