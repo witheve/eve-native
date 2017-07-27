@@ -6,6 +6,8 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
 use hash::map::{DangerousKeys};
@@ -19,7 +21,7 @@ use std::collections::HashSet;
 use std::iter::Iterator;
 use std::fmt;
 use watcher::{Watcher};
-use std::sync::mpsc::{SyncSender, Sender, Receiver};
+use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use serde::ser::{Serialize, Serializer};
 use serde::de::{Deserialize, Deserializer, Visitor};
@@ -1447,7 +1449,7 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                program.intermediates.buffer(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
+                program.intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
         &Constraint::Aggregate {ref group, ref params, ref output_key, ref add, ref remove, ..} => {
@@ -1456,7 +1458,6 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let resolved_params:Vec<Internable> = { params.iter().map(|v| interner.get_value(frame.resolve(v)).clone()).collect() };
             let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                // @TODO: do aggregates need to be buffered as well?
                 let action = if count < 0 { remove } else { add };
                 program.intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
             }
@@ -2078,6 +2079,10 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "math/sin" => math_sin,
         "math/cos" => math_cos,
         "string/replace" => string_replace,
+        "string/contains" => string_contains,
+        "string/lowercase" => string_lowercase,
+        "string/uppercase" => string_uppercase,
+        "string/length" => string_length,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -2090,6 +2095,7 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
     let func = match op {
         "string/split" => string_split,
+        "string/index-of" => string_index_of,
         _ => panic!("Unknown multi function: {:?}", op)
     };
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
@@ -2116,7 +2122,6 @@ pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
         ">=" => gte,
         "<" => lt,
         "<=" => lte,
-        "contains" => string_contains,
         _ => panic!("Unknown filter {:?}", op)
     };
     Constraint::Filter {op:op.to_string(), func, left, right, param_mask }
@@ -2156,15 +2161,6 @@ numeric_filter!(gt, >);
 numeric_filter!(gte, >=);
 numeric_filter!(lt, <);
 numeric_filter!(lte, <=);
-
-pub fn string_contains(haystack:&Internable, needle:&Internable) -> bool {
-    match (haystack, needle) {
-        (&Internable::String(ref a), &Internable::String(ref b)) => {
-            a.contains(b)
-        },
-        _ => { false }
-    }
-}
 
 //-------------------------------------------------------------------------
 // Functions
@@ -2215,6 +2211,54 @@ pub fn string_replace(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref replace), &Internable::String(ref with)] => {
             Some(Internable::String(text.replace(replace, with)))
+        },
+        _ => { None }
+    }
+}
+
+pub fn string_contains(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref substring)] => {
+            if text.contains(substring) {
+                Some(Internable::String("true".to_string()))
+            } else {
+                None
+            }
+        },
+        _ => { None }
+    }
+}
+
+pub fn string_lowercase(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(text.to_lowercase())),
+        _ => None
+    }
+}
+
+pub fn string_uppercase(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(text.to_uppercase())),
+        _ => None
+    }
+}
+
+pub fn string_length(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => {
+            Some(Internable::from_number(UnicodeSegmentation::graphemes(text.as_str(), true).count() as f32))
+        },
+        _ => None
+    }
+}
+
+pub fn string_index_of(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref substring)] => {
+            let results = text.match_indices(substring).map(|(ix, _)| {
+                vec![Internable::from_number((ix + 1) as f32)]
+            }).collect();
+            Some(results)
         },
         _ => { None }
     }
@@ -2840,12 +2884,18 @@ impl BlockInfo {
 
 }
 
+pub enum RunLoopMessage {
+    Stop,
+    Transaction(Vec<RawChange>),
+    CodeTransaction(Vec<Block>, Vec<String>)
+}
+
 pub struct Program {
     pub state: RuntimeState,
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher + Send>>,
-    pub incoming: Receiver<Vec<RawChange>>,
-    pub outgoing: SyncSender<Vec<RawChange>>,
+    pub incoming: Receiver<RunLoopMessage>,
+    pub outgoing: Sender<RunLoopMessage>,
 }
 
 impl Program {
@@ -2860,7 +2910,7 @@ impl Program {
         let pipe_lookup = HashMap::new();
         let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
-        let (outgoing, incoming) = mpsc::sync_channel(1);
+        let (outgoing, incoming) = mpsc::channel();
         let state = RuntimeState { debug:false, rounds, index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
@@ -2909,8 +2959,8 @@ impl Program {
         self.block_info.blocks.push(block);
     }
 
-    pub fn unregister_block(&mut self, block:&Block) {
-        println!("Unregister: {}", block.name);
+    pub fn unregister_block(&mut self, name:String) {
+        println!("Unregister: {}", name);
         unimplemented!();
     }
 
@@ -3030,60 +3080,62 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
 }
 
 fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut Program) {
-    let mut pipes = vec![];
-    let mut next_frame = true;
+    {
+        let mut pipes = vec![];
+        let mut next_frame = true;
 
-    while next_frame {
-        let mut current_round = 0;
-        let mut max_round:Round = program.state.rounds.max_round as Round;
-        let mut items = program.state.rounds.iter();
-        while current_round <= max_round {
-            let round = items.get_round(&mut program.state.rounds, current_round);
-            for change in round.iter() {
-                // println!("{}", change.print(&program));
-                // If this is an add, we want to do it *before* we start running pipes.
-                // This ensures that if there are two constraints in a single block that
-                // would both match the given input, they both have a chance to see this
-                // new triple at the same time. Doing so, means we don't have to go through
-                // every possible combination of the inputs, e.g. A, B, and AB. Instead we
-                // do AB and BA. To make sure that removes correctly cancel out, we don't
-                // want to do a real remove until *after* the pipes have run. Hence, the
-                // separation of insert and remove.
-                if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v, change.round);
+        while next_frame {
+            let mut current_round = 0;
+            let mut max_round:Round = program.state.rounds.max_round as Round;
+            let mut items = program.state.rounds.iter();
+            while current_round <= max_round {
+                let round = items.get_round(&mut program.state.rounds, current_round);
+                for change in round.iter() {
+                    // println!("{}", change.print(&program));
+                    // If this is an add, we want to do it *before* we start running pipes.
+                    // This ensures that if there are two constraints in a single block that
+                    // would both match the given input, they both have a chance to see this
+                    // new triple at the same time. Doing so, means we don't have to go through
+                    // every possible combination of the inputs, e.g. A, B, and AB. Instead we
+                    // do AB and BA. To make sure that removes correctly cancel out, we don't
+                    // want to do a real remove until *after* the pipes have run. Hence, the
+                    // separation of insert and remove.
+                    if change.count > 0 {
+                        program.state.index.insert(change.e, change.a, change.v, change.round);
+                    }
+                    pipes.clear();
+                    program.get_pipes(&program.block_info, change, &mut pipes);
+                    frame.reset();
+                    frame.input = Some(*change);
+                    for pipe in pipes.iter() {
+                        // print_pipe(pipe, &program.block_info, &mut program.state);
+                        frame.row.reset();
+                        interpret(&mut program.state, &program.block_info, frame, pipe);
+                        // if program.state.debug {
+                        //     program.state.debug = false;
+                        //     println!("\n---------------------------------\n");
+                        // }
+                    }
+                    // as stated above, we want to do removes after so that when we look
+                    // for AB and BA, they find the same values as when they were added.
+                    if change.count < 0 {
+                        program.state.index.remove(change.e, change.a, change.v, change.round);
+                    }
+                    if current_round == 0 { commits.push(change.clone()); }
                 }
-                pipes.clear();
-                program.get_pipes(&program.block_info, change, &mut pipes);
-                frame.reset();
-                frame.input = Some(*change);
-                for pipe in pipes.iter() {
-                    // print_pipe(pipe, &program.block_info, &mut program.state);
-                    frame.row.reset();
-                    interpret(&mut program.state, &program.block_info, frame, pipe);
-                    // if program.state.debug {
-                    //     program.state.debug = false;
-                    //     println!("\n---------------------------------\n");
-                    // }
-                }
-                // as stated above, we want to do removes after so that when we look
-                // for AB and BA, they find the same values as when they were added.
-                if change.count < 0 {
-                    program.state.index.remove(change.e, change.a, change.v, change.round);
-                }
-                if current_round == 0 { commits.push(change.clone()); }
+                intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
+                max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
+                current_round += 1;
             }
-            intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
-            max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
-            current_round += 1;
+            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
         }
-        next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
     }
 
     for (name, index) in program.state.watch_indexes.iter_mut() {
         if index.dirty() {
             let diff = index.reconcile();
-            if let Some(watcher) = program.watchers.get(name) {
-                watcher.on_diff(&program.state.interner, diff);
+            if let Some(watcher) = program.watchers.get_mut(name) {
+                watcher.on_diff(&mut program.state.interner, diff);
             }
         }
     }
@@ -3157,7 +3209,7 @@ impl CodeTransaction {
         self.changes.push(change);
     }
 
-    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
+    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<String>) {
         let ref mut frame = self.frame;
 
         for add in to_add {
@@ -3167,11 +3219,19 @@ impl CodeTransaction {
             interpret(&mut program.state, &program.block_info, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
         }
 
-        for remove in to_remove {
-            frame.reset();
-            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
-            interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
-            program.unregister_block(remove);
+        for name in to_remove {
+            {
+                let block_ix = match program.block_info.block_names.get(&name) {
+                    Some(v) => *v,
+                    _ => panic!("Unable to find block to remove: '{}'", name)
+                };
+
+                let remove = &program.block_info.blocks[block_ix];
+                frame.reset();
+                frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
+                interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
+            }
+            program.unregister_block(name);
         }
 
         let mut max_round = 0;
@@ -3278,8 +3338,7 @@ impl Persister {
 
 pub struct RunLoop {
     thread: JoinHandle<()>,
-    close_message: RawChange,
-    outgoing: SyncSender<Vec<RawChange>>,
+    outgoing: Sender<RunLoopMessage>,
 }
 
 impl RunLoop {
@@ -3288,10 +3347,10 @@ impl RunLoop {
     }
 
     pub fn close(&self) {
-        self.outgoing.send(vec![self.close_message.clone()]).unwrap();
+        self.outgoing.send(RunLoopMessage::Stop).unwrap();
     }
 
-    pub fn send(&self, msg: Vec<RawChange>) {
+    pub fn send(&self, msg: RunLoopMessage) {
         self.outgoing.send(msg).unwrap();
     }
 }
@@ -3299,15 +3358,13 @@ impl RunLoop {
 pub struct ProgramRunner {
     pub program: Program,
     paths: Vec<String>,
-    close_message: RawChange,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
 }
 
 impl ProgramRunner {
     pub fn new() -> ProgramRunner {
-        let close_message = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
-        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
+        ProgramRunner {paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -3321,37 +3378,49 @@ impl ProgramRunner {
 
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
-        let close_message = self.close_message.clone();
-        let close_message2 = self.close_message.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
         let initial_commits = self.initial_commits;
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
+            let mut start_ns = time::precise_time_ns();
             for path in paths {
                 blocks.extend(parse_file(&mut program, &path));
             }
+            let mut end_ns = time::precise_time_ns();
+            println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
+            start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
             for initial in initial_commits {
                 txn.input_change(initial.to_change(&mut program.state.interner));
             }
             txn.exec(&mut program, blocks, vec![]);
+            end_ns = time::precise_time_ns();
+            println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
             println!("Starting run loop.");
+
             'outer: loop {
                 match program.incoming.recv() {
-                    Ok(v) => {
+                    Ok(RunLoopMessage::Transaction(v)) => {
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new();
                         for cur in v {
-                            if cur == close_message2 { break 'outer; }
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+                    }
+                    Ok(RunLoopMessage::Stop) => {
+                        break 'outer;
+                    }
+                    Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                        let mut tx = CodeTransaction::new();
+                        println!("Got Code Transaction! {:?} {:?}", adds, removes);
+                        tx.exec(&mut program, adds, removes);
                     }
                     Err(_) => { break; }
                 }
@@ -3362,7 +3431,7 @@ impl ProgramRunner {
             println!("Closing run loop.");
         });
 
-        RunLoop { thread, outgoing, close_message }
+        RunLoop { thread, outgoing }
     }
 
 }

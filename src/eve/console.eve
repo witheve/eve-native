@@ -1,0 +1,31 @@
+# Console
+
+## Console Log
+
+Logs are written to stdout
+
+search
+  [#console/log text]
+watch console/log
+  (text)
+end
+
+## Console Warn
+
+Warnings are also written to stdout, but are tagged differently
+
+search
+  [#console/warn text]
+watch console/warn
+  (text)
+end
+
+## Console Error
+
+Errors are written to std-err and cause the program to exit
+
+search
+  [#console/error text]
+watch console/error
+  (text)
+end

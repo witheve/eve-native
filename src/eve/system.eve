@@ -11,50 +11,11 @@ watch system/timer
 end
 
 search
-  t = [#system/timer/change for hours minutes seconds]
+  t = [#system/timer/change resolution hours minutes seconds]
+  for = [#system/timer resolution]
 commit
   for.minutes := minutes
   for.seconds := seconds
   for.hours := hours
   t := none
-end
-
-## Console
-
-Logs are written to stdout
-
-search
-  [#console/log text]
-watch console/log
-  (text)
-end
-
-Warnings are also written to stdout, but are tagged differently
-
-search
-  [#console/warn text]
-watch console/warn
-  (text)
-end
-
-Errors are written to std-err and cause the program to exit
-
-search
-  [#console/error text]
-watch console/error
-  (text)
-end
-
-## File
-
-search
-  [#file/write path contents]
-watch file/write
-  (path, contents)
-end
-
-search
-  [#file/read path]
-watch file/read
-  (path)
 end

@@ -1,0 +1,17 @@
+# File
+
+## Writing Files
+
+search
+  [#file/write path contents]
+watch file/write
+  (path, contents)
+end
+
+## Reading Files
+
+search
+  [#file/read path]
+watch file/read
+  (path)
+end

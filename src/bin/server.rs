@@ -22,9 +22,9 @@ use serde_json::{Error};
 extern crate eve;
 extern crate time;
 
-use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Interner, Persister, JSONInternable};
+use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
 use eve::indexes::{WatchDiff};
-use eve::watcher::{SystemTimerWatcher, Watcher};
+use eve::watcher::{SystemTimerWatcher, CompilerWatcher, Watcher};
 
 //-------------------------------------------------------------------------
 // Websocket client handler
@@ -48,7 +48,8 @@ impl ClientHandler {
 
         let mut runner = ProgramRunner::new();
         let outgoing = runner.program.outgoing.clone();
-        runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
+        runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing.clone())));
+        runner.program.attach("eve/compiler", Box::new(CompilerWatcher::new(outgoing)));
         runner.program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out.clone())));
 
         if let Some(persist_file) = persist {
@@ -82,7 +83,7 @@ impl Handler for ClientHandler {
                     raw_changes.extend(removes.into_iter().map(|(e,a,v)| {
                         RawChange { e:e.into(), a:a.into(), v:v.into(), n:Internable::String("input".to_string()),count:-1 }
                     }));
-                    self.running.send(raw_changes);
+                    self.running.send(RunLoopMessage::Transaction(raw_changes));
                 }
                 _ => { }
             }
@@ -113,7 +114,7 @@ impl WebsocketClientWatcher {
 }
 
 impl Watcher for WebsocketClientWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         let adds:Vec<Vec<JSONInternable>> = diff.adds.iter().map(|row| {
             row.iter().map(|v| interner.get_value(*v).into()).collect()
         }).collect();
