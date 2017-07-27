@@ -18,7 +18,9 @@ whitespace_parser!(identifier(state) -> Node<'a> {
     state.eat_space();
     let start = state.pos;
     one_except!(state, BREAK_CHARS_AND_NUMBERS);
-    state.consume_except(BREAK_CHARS);
+    match state.consume_except(BREAK_CHARS) {
+        _ => {}
+    }
     pos_result!(state, Node::Identifier(state.capture(start)))
 });
 
@@ -26,7 +28,9 @@ whitespace_parser!(variable(state) -> Node<'a> {
     state.eat_space();
     let start = state.pos;
     one_except!(state, BREAK_CHARS_AND_NUMBERS);
-    state.consume_except(BREAK_CHARS);
+    match state.consume_except(BREAK_CHARS) {
+        _ => {}
+    }
     pos_result!(state, Node::Variable(state.capture(start)))
 });
 
