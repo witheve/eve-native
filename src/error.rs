@@ -1,6 +1,10 @@
+extern crate term_painter;
+
 use combinators::{Span, ParseResult, Pos};
 use compiler::{Node};
 use std::fmt;
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ParseError {
@@ -14,11 +18,11 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &ParseError::EmptySearch => { write!(f, "Looks like this block has an empty search.") }
-            &ParseError::EmptyUpdate => { write!(f, "Looks like this block doesn't have any actions in it.") }
+            &ParseError::EmptySearch => { write!(f, "This block has an empty search. If you want a block to run\n unconditionally, you can omit the search section.") }
+            &ParseError::EmptyUpdate => { write!(f, "This block doesn't have any actions in it.") }
             &ParseError::InvalidBlock => { write!(f, "This block is invalid, but unfortunately I don't have a lot of information about why.") }
-            &ParseError::MissingEnd => { write!(f, "Looks like the end keyword is missing for this block.") }
-            &ParseError::MissingUpdate => { write!(f, "Looks like this block doesn't have an action section.") }
+            &ParseError::MissingEnd => { write!(f, "The `end` keyword is missing for this block.") }
+            &ParseError::MissingUpdate => { write!(f, "This block is missing either a `bind` or `commit` section.") }
         }
     }
 }
@@ -40,7 +44,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &Error::Unprovided(ref var) => { write!(f, "Looks like nothing in the block is providing `{}`", var) }
+            &Error::Unprovided(ref var) => { write!(f, "Nothing in the block is providing `{}`", var) }
             &Error::UnknownFunction(ref func) => { write!(f, "I don't know the `{}` function, so I'm not sure what to execute.", func) }
             &Error::UnknownFunctionParam(ref func, ref param) => { write!(f, "The `{}` function doesn't seem to have a `{}` attribute.", func, param) }
             &Error::ParseError(ref err) => { write!(f, "{}", err) }
@@ -48,60 +52,27 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Debug,PartialEq, Eq)]
-pub enum Color {
-    Normal,
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-}
 
-impl fmt::Display for Color {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let color_code = match self {
-            &Color::Normal => "0",
-            &Color::Black => "30",
-            &Color::Red => "31",
-            &Color::Green => "32",
-            &Color::Yellow => "33",
-            &Color::Blue => "34",
-            &Color::Magenta => "35",
-            &Color::Cyan => "36",
-            &Color::White => "37",
-        };
-        write!(f, "\x1B[{}m", color_code)
-    }
-}
-
-fn format_error_source(span:&Span, lines:&Vec<&str>) -> String {
+fn format_error_source(span:&Span, lines:&Vec<&str>) {
     let start = &span.start;
     let stop = &span.stop;
-    let mut part = {
-        let start_line = start.line;
-        let stop_line = stop.line;
-        let mut parts = String::new();
-        for line_ix in start_line..stop_line+1 {
-            parts.push_str(&format!("{}{}|{} ", Color::Yellow, line_ix + 1, Color::Normal));
-            parts.push_str(lines[line_ix]);
-            parts.push_str("\n");
-        }
-        parts.pop();
-        parts
-    };
-    if span.single_line() {
-        part.push_str(&format!("{}", Color::Red));
-        part.push_str("\n   ");
-        for _ in 0..start.ch + 1 { part.push_str(" "); }
-        part.push_str("^");
-        for _ in 0..(stop.ch - start.ch - 1) { part.push_str("-"); }
-        part.push_str(&format!("{}", Color::Normal));
+    let start_line = start.line;
+    let stop_line = stop.line;
+    let mut line_marker = String::new();
+    for line_ix in start_line..stop_line+1 {
+        line_marker.push_str(&format!(" {}| ", line_ix + 1));
+        print!("{}", BrightYellow.paint(&line_marker[..]));
+        print!("{}",lines[line_ix]);
+        print!("\n");
+        
     }
-    part
+    if span.single_line() {
+        for _ in 0..line_marker.len() - 1 { print!(" "); }
+        for _ in 0..start.ch + 1 { print!(" "); }
+        print!("{}",BrightRed.paint("^"));
+        for _ in 0..(stop.ch - start.ch - 1) { print!("{}", BrightRed.paint("-")); }
+        print!("\n");
+    }
 }
 
 pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
@@ -121,14 +92,13 @@ pub fn from_parse_error<'a>(error: &ParseResult<Node<'a>>) -> CompileError {
 pub fn report_errors(errors: &Vec<CompileError>, path:&str, source:&str) {
     let lines:Vec<&str> = source.split("\n").collect();
     let mut final_open_len = 0;
+    let open = format!("\n----------------------------------------- {}\n", path);
+    println!("{}", BrightCyan.paint(&open));
     for error in errors {
-        let error_source = format_error_source(&error.span, &lines);
-        let open = format!("\n-- ERROR -------------------------------- {}\n", path);
-        println!("{}{}{}", Color::Cyan, open, Color::Normal);
-        println!("{}\n", error.error);
-        println!("{}", error_source);
+        println!(" {}\n", error.error);
+        format_error_source(&error.span, &lines);
         final_open_len = open.len();
     }
-    let close = "-".repeat(final_open_len - 1);
-    println!("\n{}{}{}\n", Color::Cyan, close, Color::Normal);
+    let close = "-".repeat(final_open_len - 2);
+    println!("{}\n", BrightCyan.paint(close));
 }
