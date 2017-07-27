@@ -1,4 +1,5 @@
-use super::compiler::OutputType;
+use super::compiler::{OutputType, Node};
+use super::error::*;
 
 //--------------------------------------------------------------------
 // Combinator Macros
@@ -53,6 +54,19 @@ macro_rules! any_except (($name:ident, $chars:expr) => (
         {
             let v = $chars;
             match $name.consume_except(v) {
+                Ok(cur) => cur,
+                Err(_) => {
+                    return $name.fail(MatchType::AnyExcept(v));
+                }
+            }
+        }
+));
+
+#[macro_export]
+macro_rules! one_except (($name:ident, $chars:expr) => (
+        {
+            let v = $chars;
+            match $name.one_except(v) {
                 Ok(cur) => cur,
                 Err(_) => {
                     return $name.fail(MatchType::AnyExcept(v));
@@ -258,8 +272,18 @@ macro_rules! result (($state:ident, $value:expr) => (
 ));
 
 #[macro_export]
+macro_rules! pos_result (($state:ident, $value:expr) => (
+        {
+            let wrapped = $state.wrap_pos($value);
+            $state.pop();
+            ParseResult::Ok(wrapped)
+        }
+));
+
+#[macro_export]
 macro_rules! parser (($name:ident( $state:ident $(, $arg:ident : $type:ty)* ) -> $out:ty $body:block) => (
         pub fn $name<'a>($state:&mut ParseState<'a> $(, $arg:$type)*) -> ParseResult<'a, $out> {
+            $state.eat_space();
             $state.mark(stringify!($name));
             $state.ignore_space(true);
             $body
@@ -280,15 +304,6 @@ macro_rules! whitespace_parser (($name:ident( $state:ident $(, $arg:ident : $typ
 //--------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub enum ParseError {
-    EmptySearch,
-    EmptyUpdate,
-    InvalidBlock,
-    MissingEnd,
-    MissingUpdate,
-}
-
-#[derive(Debug, Clone)]
 pub enum ParseResult<'a, T> {
     Ok(T),
     Error(FrozenParseState, ParseError),
@@ -305,6 +320,35 @@ pub enum MatchType<'a> {
     AnyExcept(&'a str),
     Many(usize),
 }
+
+//--------------------------------------------------------------------
+// Pos and Span
+//--------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct Pos {
+    pub line: usize,
+    pub ch: usize,
+    pub pos: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Span {
+    pub start: Pos,
+    pub stop: Pos,
+}
+
+impl Span {
+    pub fn get<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.start.pos+1..self.stop.pos+1]
+    }
+
+    pub fn single_line(&self) -> bool {
+        self.start.line == self.stop.line
+    }
+}
+
+pub const EMPTY_SPAN:Span = Span { start: Pos {line:0, ch:0, pos:0}, stop: Pos {line:0, ch:0, pos:0} };
 
 //--------------------------------------------------------------------
 // Parse State
@@ -341,6 +385,12 @@ impl<'a> ParseState<'a> {
 
     pub fn mark(&mut self, frame:&'a str) {
         self.stack.push((frame, self.line, self.ch, self.pos, self.ignore_space));
+    }
+
+    pub fn wrap_pos(&self, node: Node<'a>) -> Node<'a> {
+        let &(_, line, ch, pos, _) = self.stack.last().unwrap();
+        let span = Span { start: Pos {line, ch, pos}, stop: Pos {line:self.line, ch:self.ch, pos:self.pos}};
+        Node::Pos(span, Box::new(node))
     }
 
     pub fn pop(&mut self) {
@@ -385,7 +435,7 @@ impl<'a> ParseState<'a> {
         for c in remaining.chars() {
             match c {
                 '\n' => { self.line += 1; self.ch = 0; self.pos += 1; break }
-                _ => { self.ch += 1; self.pos += 1; }
+                _ => { self.ch += 1; self.pos += c.len_utf8(); }
             }
         }
     }
@@ -396,14 +446,29 @@ impl<'a> ParseState<'a> {
         if remaining.len() == 0 { return Err(()); }
         let start = self.pos;
         for c in remaining.chars() {
-            if chars.find(c) != None { break; }
+            if chars.find(c).is_some() { break; }
             self.ch += 1;
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         if self.pos != start {
             Ok(&self.input[start..self.pos])
         } else {
             Err(())
+        }
+    }
+
+    pub fn one_except(&mut self, chars:&str) -> Result<&'a str, ()> {
+        if self.ignore_space { self.eat_space(); }
+        let remaining = &self.input[self.pos..];
+        if remaining.len() == 0 { return Err(()); }
+        let start = self.pos;
+        let c = remaining.chars().next().unwrap();
+        if chars.find(c).is_some() {
+            Err(())
+        } else {
+            self.ch += 1;
+            self.pos += c.len_utf8();
+            Ok(&self.input[start..self.pos])
         }
     }
 
@@ -415,7 +480,7 @@ impl<'a> ParseState<'a> {
         for c in remaining.chars() {
             if chars.find(c) == None { break; }
             self.ch += 1;
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         if self.pos != start {
             Ok(&self.input[start..self.pos])
@@ -437,7 +502,7 @@ impl<'a> ParseState<'a> {
             } else {
                 self.ch += 1;
             }
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         if self.pos != start {
             Ok(&self.input[start..self.pos])
@@ -482,7 +547,7 @@ impl<'a> ParseState<'a> {
             } else {
                 self.ch += 1;
             }
-            self.pos += 1;
+            self.pos += c.len_utf8();
         }
         (Ok(&self.input[start..self.pos]), ParseResult::Fail(MatchType::ConsumeUntil))
     }
