@@ -102,9 +102,9 @@ impl Change {
     pub fn with_round_count(&self, round:Round, count:Count) -> Change {
         Change {e: self.e, a: self.a, v: self.v, n: self.n, round, transaction: self.transaction, count}
     }
-    pub fn print(&self, prog:&Program) -> String {
-        let a = prog.state.interner.get_value(self.a).print();
-        let mut v = prog.state.interner.get_value(self.v).print();
+    pub fn print(&self, interner:&Interner) -> String {
+        let a = interner.get_value(self.a).print();
+        let mut v = interner.get_value(self.v).print();
         v = if v.contains("|") { format!("<{}>", self.v) } else { v };
         format!("Change (<{}>, {:?}, {})  {}:{}:{}", self.e, a, v, self.transaction, self.round, self.count)
     }
@@ -703,7 +703,7 @@ impl EstimateIterPool {
     }
 
     pub fn get_multi_func(&mut self) -> EstimateIter {
-        match self.available_funcs.pop() {
+        match self.available_multi_funcs.pop() {
             Some(iter) => iter,
             None => EstimateIter::MultiFunction { estimate:0, results:None, outputs:None, ix: 0, constraint:0 },
         }
@@ -741,6 +741,19 @@ impl EstimateIterPool {
         match neue {
             Some(_) => { self.iters[ix] = neue; },
             None => {},
+        }
+    }
+
+    pub fn clear(&mut self) {
+        let mut to_release = vec![];
+        for iter in self.iters.iter_mut() {
+            if iter.is_some() {
+                let prev = iter.take();
+                to_release.push(prev.unwrap());
+            }
+        }
+        for iter in to_release {
+            self.release(iter);
         }
     }
 
@@ -1078,7 +1091,8 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                         } else {
                             panic!("Function output is not a register");
                         };
-                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ..} = iter {
+                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ref mut constraint, ..} = iter {
+                            *constraint = cur_constraint;
                             *estimate = 1;
                             *result = id;
                             *output = reg;
@@ -1107,7 +1121,8 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                 let mut iter = iter_pool.get_multi_func();
                 match result {
                     Some(mut result_values) => {
-                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ..} = iter {
+                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ref mut constraint, ..} = iter {
+                            *constraint = cur_constraint;
                             *estimate = 1;
                             *results = Some(result_values.drain(..).map(|mut row| {
                                 row.drain(..).map(|field| program.interner.internable_to_id(field)).collect()
@@ -1175,6 +1190,7 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
         // println!("Iter Next: {:?}", iter);
         match iter {
             Some(ref mut cur) => {
+                // if program.debug { println!("iter next: {:?} -> estimate {:?}", cur.constraint(), cur.estimate()); }
                 match cur.next(&mut frame.row, iterator) {
                     false => {
                         if cur.estimate() != 0 {
@@ -1250,7 +1266,7 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             let checked = program.index.check(resolved_e, resolved_a, resolved_v);
-            if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
+            // if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
             if checked { 1 } else { bail }
         },
         &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, .. } => {
@@ -2213,7 +2229,7 @@ pub fn string_contains(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref substring)] => {
             if text.contains(substring) {
-                Some(Internable::String("true".to_string()))
+                Some(Internable::String("true".to_owned()))
             } else {
                 None
             }
@@ -2415,7 +2431,7 @@ pub fn check_bit(solved:u64, bit:u32) -> bool {
 
 #[inline(never)]
 pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    // println!("Doing work");
+    iter_pool.clear();
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     while pointer < len {
@@ -3084,7 +3100,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
             while current_round <= max_round {
                 let round = items.get_round(&mut program.state.rounds, current_round);
                 for change in round.iter() {
-                    // println!("{}", change.print(&program));
+                    // println!("{}", change.print(&program.state.interner));
                     // If this is an add, we want to do it *before* we start running pipes.
                     // This ensures that if there are two constraints in a single block that
                     // would both match the given input, they both have a chance to see this
