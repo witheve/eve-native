@@ -102,9 +102,9 @@ impl Change {
     pub fn with_round_count(&self, round:Round, count:Count) -> Change {
         Change {e: self.e, a: self.a, v: self.v, n: self.n, round, transaction: self.transaction, count}
     }
-    pub fn print(&self, prog:&Program) -> String {
-        let a = prog.state.interner.get_value(self.a).print();
-        let mut v = prog.state.interner.get_value(self.v).print();
+    pub fn print(&self, interner:&Interner) -> String {
+        let a = interner.get_value(self.a).print();
+        let mut v = interner.get_value(self.v).print();
         v = if v.contains("|") { format!("<{}>", self.v) } else { v };
         format!("Change (<{}>, {:?}, {})  {}:{}:{}", self.e, a, v, self.transaction, self.round, self.count)
     }
@@ -703,7 +703,7 @@ impl EstimateIterPool {
     }
 
     pub fn get_multi_func(&mut self) -> EstimateIter {
-        match self.available_funcs.pop() {
+        match self.available_multi_funcs.pop() {
             Some(iter) => iter,
             None => EstimateIter::MultiFunction { estimate:0, results:None, outputs:None, ix: 0, constraint:0 },
         }
@@ -741,6 +741,19 @@ impl EstimateIterPool {
         match neue {
             Some(_) => { self.iters[ix] = neue; },
             None => {},
+        }
+    }
+
+    pub fn clear(&mut self) {
+        let mut to_release = vec![];
+        for iter in self.iters.iter_mut() {
+            if iter.is_some() {
+                let prev = iter.take();
+                to_release.push(prev.unwrap());
+            }
+        }
+        for iter in to_release {
+            self.release(iter);
         }
     }
 
@@ -903,6 +916,7 @@ pub struct Counters {
     accept: u64,
     accept_bail: u64,
     accept_ns: u64,
+    inserts: u64,
     considered: u64,
 }
 
@@ -936,7 +950,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new() -> Frame {
-        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
+        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> Interned {
@@ -1078,7 +1092,8 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                         } else {
                             panic!("Function output is not a register");
                         };
-                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ..} = iter {
+                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ref mut constraint, ..} = iter {
+                            *constraint = cur_constraint;
                             *estimate = 1;
                             *result = id;
                             *output = reg;
@@ -1107,7 +1122,8 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                 let mut iter = iter_pool.get_multi_func();
                 match result {
                     Some(mut result_values) => {
-                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ..} = iter {
+                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ref mut constraint, ..} = iter {
+                            *constraint = cur_constraint;
                             *estimate = 1;
                             *results = Some(result_values.drain(..).map(|mut row| {
                                 row.drain(..).map(|field| program.interner.internable_to_id(field)).collect()
@@ -1175,6 +1191,7 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
         // println!("Iter Next: {:?}", iter);
         match iter {
             Some(ref mut cur) => {
+                // if program.debug { println!("iter next: {:?} -> estimate {:?}", cur.constraint(), cur.estimate()); }
                 match cur.next(&mut frame.row, iterator) {
                     false => {
                         if cur.estimate() != 0 {
@@ -1250,7 +1267,7 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             let checked = program.index.check(resolved_e, resolved_a, resolved_v);
-            if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
+            // if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
             if checked { 1 } else { bail }
         },
         &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, .. } => {
@@ -1381,6 +1398,7 @@ pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
+                frame.counters.inserts += 1;
                 program.index.distinct(output, rounds);
             }
         },
@@ -1400,6 +1418,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count);
+                frame.counters.inserts += 1;
                 // if program.debug { println!("     -> Commit {:?}", output); }
                 rounds.commit(output, ChangeType::Insert)
             }
@@ -1411,6 +1430,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1421,6 +1441,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1431,6 +1452,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1449,6 +1471,7 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
             for &(round, count) in program.rounds.get_output_rounds().iter() {
+                frame.counters.inserts += 1;
                 program.intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
@@ -1459,6 +1482,7 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
             for &(round, count) in program.rounds.get_output_rounds().iter() {
                 let action = if count < 0 { remove } else { add };
+                frame.counters.inserts += 1;
                 program.intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
             }
         },
@@ -1485,6 +1509,7 @@ pub fn watch(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fram
             for &(_, count) in program.rounds.get_output_rounds().iter() {
                 total += count;
             }
+            frame.counters.inserts += 1;
             program.watch(name, resolved, total);
         },
         _ => unreachable!()
@@ -2213,7 +2238,7 @@ pub fn string_contains(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref substring)] => {
             if text.contains(substring) {
-                Some(Internable::String("true".to_string()))
+                Some(Internable::String("true".to_owned()))
             } else {
                 None
             }
@@ -2414,9 +2439,8 @@ pub fn check_bit(solved:u64, bit:u32) -> bool {
 //-------------------------------------------------------------------------
 
 #[inline(never)]
-pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    let mut iter_pool = EstimateIterPool::new();
-    // println!("Doing work");
+pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
+    iter_pool.clear();
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     while pointer < len {
@@ -2436,14 +2460,14 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
                 accept_intermediate_field(program, frame, from, value, bail)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
-                get_iterator(program, block_info, &mut iter_pool, frame, iterator, constraint, bail)
+                get_iterator(program, block_info, iter_pool, frame, iterator, constraint, bail)
             },
             Instruction::IteratorNext { iterator, bail, finished_mask } => {
-                iterator_next(program, &mut iter_pool, frame, iterator, bail, finished_mask)
+                iterator_next(program, iter_pool, frame, iterator, bail, finished_mask)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();
-                let next = accept(program, block_info, &mut iter_pool, frame, constraint, iterator, bail);
+                let next = accept(program, block_info, iter_pool, frame, constraint, iterator, bail);
                 // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
                 next
             },
@@ -2916,9 +2940,10 @@ impl Program {
     #[allow(dead_code)]
     pub fn exec_query(&mut self, name:&str) -> Vec<Interned> {
         let mut frame = Frame::new();
+        let mut iter_pool = EstimateIterPool::new();
         // let start_ns = time::precise_time_ns();
         let pipe = self.block_info.get_block(name).pipes[0].clone();
-        interpret(&mut self.state, &mut self.block_info, &mut frame, &pipe);
+        interpret(&mut self.state, &mut self.block_info, &mut iter_pool, &mut frame, &pipe);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
         // println!("counters: {:?}", frame.counters);
         return frame.results;
@@ -3041,7 +3066,7 @@ impl Program {
 // Transaction
 //-------------------------------------------------------------------------
 
-fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round, max_round:&mut Round) {
+fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, current_round:Round, max_round:&mut Round) {
     let mut intermediate_max = state.intermediates.consume_round();
     *max_round = cmp::max(*max_round, intermediate_max);
     if let Some(_) = state.intermediates.rounds.get(&current_round) {
@@ -3057,7 +3082,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
                     for pipe in actives.iter() {
                         // print_pipe(pipe, block_info, state);
                         frame.row.reset();
-                        interpret(state, block_info, frame, pipe);
+                        interpret(state, block_info, iter_pool, frame, pipe);
                         // if state.debug {
                         //     state.debug = false;
                         //     println!("\n---------------------------------\n");
@@ -3072,7 +3097,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
     }
 }
 
-fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut Program) {
+fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
     {
         let mut pipes = vec![];
         let mut next_frame = true;
@@ -3084,7 +3109,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
             while current_round <= max_round {
                 let round = items.get_round(&mut program.state.rounds, current_round);
                 for change in round.iter() {
-                    // println!("{}", change.print(&program));
+                    // println!("{}", change.print(&program.state.interner));
                     // If this is an add, we want to do it *before* we start running pipes.
                     // This ensures that if there are two constraints in a single block that
                     // would both match the given input, they both have a chance to see this
@@ -3103,7 +3128,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
                     for pipe in pipes.iter() {
                         // print_pipe(pipe, &program.block_info, &mut program.state);
                         frame.row.reset();
-                        interpret(&mut program.state, &program.block_info, frame, pipe);
+                        interpret(&mut program.state, &program.block_info, iter_pool, frame, pipe);
                         // if program.state.debug {
                         //     program.state.debug = false;
                         //     println!("\n---------------------------------\n");
@@ -3116,7 +3141,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
                     }
                     if current_round == 0 { commits.push(change.clone()); }
                 }
-                intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
+                intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, current_round, &mut max_round);
                 max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
                 current_round += 1;
             }
@@ -3137,6 +3162,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
 pub struct Transaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
+    iter_pool: EstimateIterPool,
     collapsed_commits: CollapsedChanges,
     frame: Frame,
 }
@@ -3144,7 +3170,8 @@ pub struct Transaction {
 impl Transaction {
     pub fn new() -> Transaction {
         let frame = Frame::new();
-        Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame}
+        let iter_pool = EstimateIterPool::new();
+        Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame, iter_pool}
     }
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
@@ -3160,7 +3187,7 @@ impl Transaction {
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, program);
+        transaction_flow(&mut self.commits, &mut self.frame, &mut self.iter_pool, program);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -3189,13 +3216,15 @@ impl Transaction {
 pub struct CodeTransaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
+    iter_pool: EstimateIterPool,
     frame: Frame,
 }
 
 impl CodeTransaction {
     pub fn new() -> CodeTransaction {
         let frame = Frame::new();
-        CodeTransaction { changes: vec![], commits:vec![], frame}
+        let iter_pool = EstimateIterPool::new();
+        CodeTransaction { changes: vec![], commits:vec![], frame, iter_pool}
     }
 
     pub fn input_change(&mut self, change: Change) {
@@ -3204,12 +3233,13 @@ impl CodeTransaction {
 
     pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<String>) {
         let ref mut frame = self.frame;
+        let ref mut iter_pool = self.iter_pool;
 
         for add in to_add {
             frame.reset();
             frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:1 });
             program.register_block(add);
-            interpret(&mut program.state, &program.block_info, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
+            interpret(&mut program.state, &program.block_info, iter_pool, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
         }
 
         for name in to_remove {
@@ -3222,19 +3252,19 @@ impl CodeTransaction {
                 let remove = &program.block_info.blocks[block_ix];
                 frame.reset();
                 frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
-                interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
+                interpret(&mut program.state, &program.block_info, iter_pool, frame, &remove.pipes[0]);
             }
             program.unregister_block(name);
         }
 
         let mut max_round = 0;
-        intermediate_flow(frame, &mut program.state, &program.block_info, 0, &mut max_round);
+        intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, 0, &mut max_round);
 
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
 
-        transaction_flow(&mut self.commits, frame, program);
+        transaction_flow(&mut self.commits, frame, iter_pool, program);
     }
 }
 
@@ -3405,7 +3435,8 @@ impl ProgramRunner {
                         };
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
-                        println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+                        let time = (end_ns - start_ns) as f64;
+                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
                     Ok(RunLoopMessage::Stop) => {
                         break 'outer;
