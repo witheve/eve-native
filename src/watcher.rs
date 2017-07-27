@@ -95,9 +95,28 @@ impl Watcher for SystemTimerWatcher {
     }
 }
 
+pub fn make_system_watcher(outgoing: Sender<RunLoopMessage>) -> Vec<WatcherLibrary> {
+    vec![
+        WatcherLibrary { name: "system/timer".to_string(), watcher: Box::new(SystemTimerWatcher::new(outgoing)) },
+    ]
+}
+
 //-------------------------------------------------------------------------
 // Console Watcher
 //-------------------------------------------------------------------------
+
+pub struct WatcherLibrary {
+    pub name: String,
+    pub watcher: Box<Watcher + Send>,
+}
+
+pub fn make_console_watcher() -> Vec<WatcherLibrary> {
+    vec![
+        WatcherLibrary { name: "console/log".to_string(), watcher: Box::new(ConsoleLogWatcher{}) },
+        WatcherLibrary { name: "console/warn".to_string(), watcher: Box::new(ConsoleWarnWatcher{}) },
+        WatcherLibrary { name: "console/error".to_string(), watcher: Box::new(ConsoleErrorWatcher{}) },
+    ]
+}
 
 pub struct ConsoleLogWatcher { }
 
