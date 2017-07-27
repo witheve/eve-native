@@ -3377,15 +3377,21 @@ impl ProgramRunner {
         let initial_commits = self.initial_commits;
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
+            let mut start_ns = time::precise_time_ns();
             for path in paths {
                 blocks.extend(parse_file(&mut program, &path));
             }
+            let mut end_ns = time::precise_time_ns();
+            println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
+            start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
             for initial in initial_commits {
                 txn.input_change(initial.to_change(&mut program.state.interner));
             }
             txn.exec(&mut program, blocks, vec![]);
+            end_ns = time::precise_time_ns();
+            println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
             println!("Starting run loop.");
 

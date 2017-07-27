@@ -294,7 +294,7 @@ impl HashIndexLevel {
 // Generic distinct
 //-------------------------------------------------------------------------
 
-pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_round:Round, mut insert:F, handle_commits: bool)
+pub fn generic_distinct<F>(counts:&mut Vec<Count>, mut input_count:Count, input_round:Round, mut insert:F, handle_commits: bool)
     where F: FnMut(Round, Count)
 {
     ensure_len(counts, (input_round + 1) as usize);
@@ -307,7 +307,9 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, input_count:Count, input_roun
 
     // handle Infinity/-Infinity for commits at round 0
     if handle_commits && input_round == 0 {
-        if input_count < 0 {
+        if cur_count == 0 && input_count < 0 {
+            input_count = 0;
+        } else if input_count < 0 {
             cur_count = input_count.abs();
             counts[input_round as usize] = cur_count; // Cancel out the addition we do below.
         } else if cur_count < 0 {
