@@ -9,12 +9,17 @@ use ops::{make_scan, Constraint, Interned, Internable, Interner, Field, RawChang
 use compiler::{Compilation, compilation_to_blocks};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self};
+use std::process;
 use std::collections::{HashMap};
 use std::collections::hash_map::{Entry};
 
 pub trait Watcher {
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff);
 }
+
+//-------------------------------------------------------------------------
+// System Watcher
+//-------------------------------------------------------------------------
 
 pub struct SystemTimerWatcher {
     outgoing: Sender<RunLoopMessage>,
@@ -90,12 +95,46 @@ impl Watcher for SystemTimerWatcher {
     }
 }
 
-pub struct PrintWatcher { }
+//-------------------------------------------------------------------------
+// Console Watcher
+//-------------------------------------------------------------------------
 
-impl Watcher for PrintWatcher {
+pub struct ConsoleLogWatcher { }
+
+impl Watcher for ConsoleLogWatcher {
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
-            println!("Printer: {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
+            for t in text {
+                println!("{}",t);
+            }
+        }
+    }
+}
+
+pub struct ConsoleErrorWatcher { }
+
+impl Watcher for ConsoleErrorWatcher {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+        for add in diff.adds {
+            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
+            for t in text {
+                eprintln!("{}", t);
+                process::exit(1);
+            }
+        }
+    }
+}
+
+pub struct ConsoleWarnWatcher { }
+
+impl Watcher for ConsoleWarnWatcher {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+        for add in diff.adds {
+            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
+            for t in text {
+                println!("{}",t);
+            }
         }
     }
 }

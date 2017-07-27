@@ -1,3 +1,9 @@
+# System
+
+This is a collection of watchers relating to sytem-level tasks that are loaded by default when Eve main or server starts.
+
+## Timer
+
 search
   t = [#system/timer resolution]
 watch system/timer
@@ -13,3 +19,4 @@ commit
   for.hours := hours
   t := none
 end
+
