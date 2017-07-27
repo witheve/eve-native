@@ -1414,15 +1414,16 @@ test!(base_aggregate_in_choose_simple_rounds, {
 
 test!(base_aggregate_in_choose_rounds_retraction, {
     search
-        foo = [#foo]
+        foo = [#zomg]
         total = if b = [#bar] then gather!/count![for: b]
                 else 0
     bind
-        [#total total]
+        [#total | total]
     end
 
     commit
         [#foo]
+        [#zomg]
     end
 
     search
@@ -1434,7 +1435,7 @@ test!(base_aggregate_in_choose_rounds_retraction, {
     search
         [#bar value]
         value < 5
-    commit
+    bind
         [#bar value: value + 1]
     end
 
