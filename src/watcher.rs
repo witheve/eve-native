@@ -9,12 +9,9 @@ use ops::{make_scan, Constraint, Interned, Internable, Interner, Field, RawChang
 use compiler::{Compilation, compilation_to_blocks};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self};
-<<<<<<< HEAD
 use std::process;
-=======
 use std::collections::{HashMap};
 use std::collections::hash_map::{Entry};
->>>>>>> refs/remotes/origin/master
 
 pub trait Watcher {
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff);
@@ -105,7 +102,7 @@ impl Watcher for SystemTimerWatcher {
 pub struct ConsoleLogWatcher { }
 
 impl Watcher for ConsoleLogWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
             for t in text {
@@ -118,7 +115,7 @@ impl Watcher for ConsoleLogWatcher {
 pub struct ConsoleErrorWatcher { }
 
 impl Watcher for ConsoleErrorWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
             for t in text {
@@ -132,7 +129,7 @@ impl Watcher for ConsoleErrorWatcher {
 pub struct ConsoleWarnWatcher { }
 
 impl Watcher for ConsoleWarnWatcher {
-    fn on_diff(&self, interner:&Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
             for t in text {
