@@ -1502,7 +1502,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 // for c in comp.constraints.iter() {
                 //     println!("   {:?}", c);
                 // }
-                program_blocks.extend(compilation_to_blocks(comp, path, content));
+                program_blocks.extend(compilation_to_blocks(comp, &block_name[..], content));
             }
             program_blocks
         } else {
