@@ -57,7 +57,7 @@ test!(parse_error_empty_search, {
 
 #[test]
 pub fn parser_combinator() {
-    let mut state = ParseState::new("\"a̐éö̲\"");
-    let result = string(&mut state);
+    let mut state = ParseState::new("(value, 1) = string!/split![text:\"hey dude\", by: \" \"]");
+    let result = search_section_statement(&mut state);
     println!("{:?}", result);
 }
