@@ -2414,8 +2414,7 @@ pub fn check_bit(solved:u64, bit:u32) -> bool {
 //-------------------------------------------------------------------------
 
 #[inline(never)]
-pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    let mut iter_pool = EstimateIterPool::new();
+pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
     // println!("Doing work");
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
@@ -2436,14 +2435,14 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
                 accept_intermediate_field(program, frame, from, value, bail)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
-                get_iterator(program, block_info, &mut iter_pool, frame, iterator, constraint, bail)
+                get_iterator(program, block_info, iter_pool, frame, iterator, constraint, bail)
             },
             Instruction::IteratorNext { iterator, bail, finished_mask } => {
-                iterator_next(program, &mut iter_pool, frame, iterator, bail, finished_mask)
+                iterator_next(program, iter_pool, frame, iterator, bail, finished_mask)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();
-                let next = accept(program, block_info, &mut iter_pool, frame, constraint, iterator, bail);
+                let next = accept(program, block_info, iter_pool, frame, constraint, iterator, bail);
                 // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
                 next
             },
@@ -2916,9 +2915,10 @@ impl Program {
     #[allow(dead_code)]
     pub fn exec_query(&mut self, name:&str) -> Vec<Interned> {
         let mut frame = Frame::new();
+        let mut iter_pool = EstimateIterPool::new();
         // let start_ns = time::precise_time_ns();
         let pipe = self.block_info.get_block(name).pipes[0].clone();
-        interpret(&mut self.state, &mut self.block_info, &mut frame, &pipe);
+        interpret(&mut self.state, &mut self.block_info, &mut iter_pool, &mut frame, &pipe);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
         // println!("counters: {:?}", frame.counters);
         return frame.results;
@@ -3041,7 +3041,7 @@ impl Program {
 // Transaction
 //-------------------------------------------------------------------------
 
-fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round, max_round:&mut Round) {
+fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, current_round:Round, max_round:&mut Round) {
     let mut intermediate_max = state.intermediates.consume_round();
     *max_round = cmp::max(*max_round, intermediate_max);
     if let Some(_) = state.intermediates.rounds.get(&current_round) {
@@ -3057,7 +3057,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
                     for pipe in actives.iter() {
                         // print_pipe(pipe, block_info, state);
                         frame.row.reset();
-                        interpret(state, block_info, frame, pipe);
+                        interpret(state, block_info, iter_pool, frame, pipe);
                         // if state.debug {
                         //     state.debug = false;
                         //     println!("\n---------------------------------\n");
@@ -3072,7 +3072,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
     }
 }
 
-fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut Program) {
+fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
     {
         let mut pipes = vec![];
         let mut next_frame = true;
@@ -3103,7 +3103,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
                     for pipe in pipes.iter() {
                         // print_pipe(pipe, &program.block_info, &mut program.state);
                         frame.row.reset();
-                        interpret(&mut program.state, &program.block_info, frame, pipe);
+                        interpret(&mut program.state, &program.block_info, iter_pool, frame, pipe);
                         // if program.state.debug {
                         //     program.state.debug = false;
                         //     println!("\n---------------------------------\n");
@@ -3116,7 +3116,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
                     }
                     if current_round == 0 { commits.push(change.clone()); }
                 }
-                intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
+                intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, current_round, &mut max_round);
                 max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
                 current_round += 1;
             }
@@ -3137,6 +3137,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
 pub struct Transaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
+    iter_pool: EstimateIterPool,
     collapsed_commits: CollapsedChanges,
     frame: Frame,
 }
@@ -3144,7 +3145,8 @@ pub struct Transaction {
 impl Transaction {
     pub fn new() -> Transaction {
         let frame = Frame::new();
-        Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame}
+        let iter_pool = EstimateIterPool::new();
+        Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame, iter_pool}
     }
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
@@ -3160,7 +3162,7 @@ impl Transaction {
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, program);
+        transaction_flow(&mut self.commits, &mut self.frame, &mut self.iter_pool, program);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -3189,13 +3191,15 @@ impl Transaction {
 pub struct CodeTransaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
+    iter_pool: EstimateIterPool,
     frame: Frame,
 }
 
 impl CodeTransaction {
     pub fn new() -> CodeTransaction {
         let frame = Frame::new();
-        CodeTransaction { changes: vec![], commits:vec![], frame}
+        let iter_pool = EstimateIterPool::new();
+        CodeTransaction { changes: vec![], commits:vec![], frame, iter_pool}
     }
 
     pub fn input_change(&mut self, change: Change) {
@@ -3204,12 +3208,13 @@ impl CodeTransaction {
 
     pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<String>) {
         let ref mut frame = self.frame;
+        let ref mut iter_pool = self.iter_pool;
 
         for add in to_add {
             frame.reset();
             frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:1 });
             program.register_block(add);
-            interpret(&mut program.state, &program.block_info, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
+            interpret(&mut program.state, &program.block_info, iter_pool, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
         }
 
         for name in to_remove {
@@ -3222,19 +3227,19 @@ impl CodeTransaction {
                 let remove = &program.block_info.blocks[block_ix];
                 frame.reset();
                 frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
-                interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
+                interpret(&mut program.state, &program.block_info, iter_pool, frame, &remove.pipes[0]);
             }
             program.unregister_block(name);
         }
 
         let mut max_round = 0;
-        intermediate_flow(frame, &mut program.state, &program.block_info, 0, &mut max_round);
+        intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, 0, &mut max_round);
 
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
 
-        transaction_flow(&mut self.commits, frame, program);
+        transaction_flow(&mut self.commits, frame, iter_pool, program);
     }
 }
 
