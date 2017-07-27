@@ -1449,7 +1449,7 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                program.intermediates.buffer(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
+                program.intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
         &Constraint::Aggregate {ref group, ref params, ref output_key, ref add, ref remove, ..} => {
@@ -1458,7 +1458,6 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let resolved_params:Vec<Internable> = { params.iter().map(|v| interner.get_value(frame.resolve(v)).clone()).collect() };
             let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                // @TODO: do aggregates need to be buffered as well?
                 let action = if count < 0 { remove } else { add };
                 program.intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
             }
@@ -3378,15 +3377,21 @@ impl ProgramRunner {
         let initial_commits = self.initial_commits;
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
+            let mut start_ns = time::precise_time_ns();
             for path in paths {
                 blocks.extend(parse_file(&mut program, &path));
             }
+            let mut end_ns = time::precise_time_ns();
+            println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
+            start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
             for initial in initial_commits {
                 txn.input_change(initial.to_change(&mut program.state.interner));
             }
             txn.exec(&mut program, blocks, vec![]);
+            end_ns = time::precise_time_ns();
+            println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
             println!("Starting run loop.");
 

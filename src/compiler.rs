@@ -375,10 +375,16 @@ impl<'a> Node<'a> {
                     cur_block.id += 1;
                 }
                 let first = outputs[0].gather_equalities(interner, cur_block);
-                if let Some(reg) = first { cur_block.provide(reg, true); }
+                if let Some(reg @ Field::Register(_)) = first {
+                    cur_block.provide(reg, true);
+                    cur_block.required_fields.push(reg);
+                }
                 for out in outputs[1..].iter_mut() {
                     let result = out.gather_equalities(interner, cur_block);
-                    if let Some(reg) = result { cur_block.provide(reg, true); }
+                    if let Some(reg @ Field::Register(_)) = result {
+                        cur_block.provide(reg, true);
+                        cur_block.required_fields.push(reg);
+                    }
                 }
                 first
             },
@@ -867,7 +873,9 @@ impl<'a> Node<'a> {
                                         cur_block.constraints.push(Constraint::Insert{e:reg, a:result_a, v:cur_v, commit});
                                     }
                                     let sub_record = records[0].compile(interner, cur_block, local_span).unwrap();
-                                    cur_block.constraints.push(Constraint::Insert{e:sub_record, a:auto_index, v:interner.number(1 as f32), commit});
+                                    if records.len() > 1 {
+                                        cur_block.constraints.push(Constraint::Insert{e:sub_record, a:auto_index, v:interner.number(1 as f32), commit});
+                                    }
                                     sub_record
                                 },
                                 &Node::ExprSet(ref items) => {
