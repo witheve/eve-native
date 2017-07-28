@@ -755,6 +755,70 @@ test!(base_choose_not_joinless_failure, {
     end
 });
 
+test!(base_choose_lookup, {
+    search
+        f = [#foo]
+        type = if lookup![entity: f] then "record"
+               else "value"
+    bind
+        [#value type]
+    end
+
+    commit
+        [#foo zomg: 4]
+        [#app bar: 3]
+    end
+
+    search
+        [#value type: "record"]
+        not([#value type: "value"])
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_lookup_rounds, {
+    search
+        [#foo value]
+        type = if lookup![entity: value] then "record"
+               else "value"
+    bind
+        [#value type]
+    end
+
+    commit
+        [#foo value: [#zomg]]
+        [#app bar: 3]
+    end
+
+    search
+        f = [#foo]
+    commit
+        f.value := none
+    end
+
+    search
+        f = [#foo]
+        not(f.value)
+    bind
+        f.blah += "woot|a"
+    end
+
+    search
+        f = [#foo blah]
+    bind
+        [#foo value: f]
+        [#foo d:"yo" value: f]
+    end
+
+    search
+        [#value type: "record"]
+        not([#value type: "value"])
+    bind
+        [#success]
+    end
+});
+
 //--------------------------------------------------------------------
 // Union
 //--------------------------------------------------------------------
