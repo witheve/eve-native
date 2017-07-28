@@ -621,7 +621,7 @@ impl<'a> Node<'a> {
                     Some(v) => v,
                     None => {
                         cur_block.error(span, error::Error::UnknownFunction(op.to_string()));
-                        return None;
+                        return Some(Field::Value(0));
                     }
                 };
                 let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
