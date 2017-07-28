@@ -75,7 +75,6 @@ impl Handler for ClientHandler {
             // println!("deserialized = {:?}", deserialized);
             match deserialized {
                 Ok(ClientMessage::Transaction { adds, removes }) => {
-                    println!("Got transaction!");
                     let mut raw_changes = vec![];
                     raw_changes.extend(adds.into_iter().map(|(e,a,v)| {
                         RawChange { e:e.into(), a:a.into(), v:v.into(), n:Internable::String("input".to_string()),count:1 }

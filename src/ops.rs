@@ -1504,7 +1504,7 @@ pub fn watch(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fram
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Watch { ref registers, ..} => {
-            let resolved = registers.iter().map(|x| frame.resolve(x)).collect();
+            let resolved:Vec<Interned> = registers.iter().map(|x| frame.resolve(x)).collect();
             let mut total = 0;
             for &(_, count) in program.rounds.get_output_rounds().iter() {
                 total += count;
@@ -2510,6 +2510,8 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&
 // Round holder
 //-------------------------------------------------------------------------
 
+type RoundCount = (Round, Count);
+
 #[derive(Debug)]
 pub enum RoundState {
     Equal,
@@ -2518,8 +2520,8 @@ pub enum RoundState {
 }
 
 pub struct RoundHolder {
-    pub output_rounds: Vec<(Round, Count)>,
-    prev_output_rounds: Vec<(Round, Count)>,
+    pub output_rounds: Vec<RoundCount>,
+    prev_output_rounds: Vec<RoundCount>,
     rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
     commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
     staged_commit_keys: Vec<(Interned, Interned, Interned, Interned)>,
@@ -2527,12 +2529,20 @@ pub struct RoundHolder {
     pub max_round: usize,
 }
 
-pub fn move_output_round(info:&Option<(Round, Count)>, round:&mut Round, count:&mut Count) {
-    if let &Some((r, c)) = info {
-        *round = r;
-        *count += c;
+fn collapse_rounds(results:&Vec<RoundCount>, collapsed: &mut Vec<RoundCount>) {
+    collapsed.clear();
+    let mut prev = (0,0);
+    for &(round, count) in results {
+        if round == prev.0 {
+            prev.1 += count;
+        } else {
+            if prev.1 != 0 { collapsed.push(prev); }
+            prev = (round, count);
+        }
     }
+    if prev.1 != 0 { collapsed.push(prev); }
 }
+
 
 impl RoundHolder {
     pub fn new() -> RoundHolder {
@@ -2543,7 +2553,7 @@ impl RoundHolder {
         RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), staged_commit_keys:vec![], collapsed_commits:CollapsedChanges::new(), max_round: 0 }
     }
 
-    pub fn get_output_rounds(&self) -> &Vec<(Round, Count)> {
+    pub fn get_output_rounds(&self) -> &Vec<RoundCount> {
         match (self.output_rounds.len(), self.prev_output_rounds.len()) {
             (0, _) => &self.prev_output_rounds,
             (_, 0) => &self.output_rounds,
@@ -2551,148 +2561,63 @@ impl RoundHolder {
         }
     }
 
-
-    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F)
-        where F: FnMut(RoundState, &mut Vec<(Round, Count)>, Option<(Round, Count)>, Round, Count, Option<(Round, Count)>, Round, Count)
-    {
-        let (neue, current) = match (self.output_rounds.len(), self.prev_output_rounds.len()) {
+    fn fetch_neue_current(&mut self) -> (&mut Vec<RoundCount>, &mut Vec<RoundCount>) {
+        match (self.output_rounds.len(), self.prev_output_rounds.len()) {
             (0, _) => (&mut self.output_rounds, &mut self.prev_output_rounds),
             (_, 0) => (&mut self.prev_output_rounds, &mut self.output_rounds),
             (_, _) => panic!("neither round array is empty"),
-        };
-        {
-            // let len = self.output_rounds.len();
-            let mut left_iter = current.drain(..);
-            let mut left_round = 0;
-            let mut left_count = 0;
-            let mut right_round = 0;
-            let mut right_count = 0;
-            let mut left = None;
-            let mut right = None;
-            let mut next_left = left_iter.next();
-            let mut next_right = right_iter.next();
-            let mut keep_running = true;
-            // move_output_round(&left, &mut left_round, &mut left_count);
-            // move_output_round(&right, &mut right_round, &mut right_count);
-            while keep_running {
-                // println!("left: {:?}, right {:?}", left, right);
-                let state = if left_round == right_round {
-                    RoundState::Equal
-                } else if left_round > right_round {
-                    while next_right != None && next_right.unwrap().0 < left_round {
-                        right = next_right;
-                        next_right = right_iter.next();
-                        move_output_round(&right, &mut right_round, &mut right_count);
-                    }
-                    RoundState::Right
-                } else {
-                    while next_left != None && next_left.unwrap().0 < right_round {
-                        left = next_left;
-                        next_left = left_iter.next();
-                        move_output_round(&left, &mut left_round, &mut left_count);
-                    }
-                    RoundState::Left
-                };
-                action(state, neue, left, left_round, left_count, right, right_round, right_count);
-                match (next_left, next_right) {
-                    (None, None) => { break; },
-                    (None, Some(_)) => {
-                        right = next_right;
-                        next_right = right_iter.next();
-                        move_output_round(&right, &mut right_round, &mut right_count);
-                    },
-                    (Some(_), None) => {
-                        left = next_left;
-                        next_left = left_iter.next();
-                        move_output_round(&left, &mut left_round, &mut left_count);
-                    },
-                    (Some((next_left_round, _)), Some((next_right_round, _))) => {
-                        if next_left_round < next_right_round {
-                            left = next_left;
-                            next_left = left_iter.next();
-                            move_output_round(&left, &mut left_round, &mut left_count);
-                        } else if next_left_round == next_right_round {
-                            left = next_left;
-                            next_left = left_iter.next();
-                            move_output_round(&left, &mut left_round, &mut left_count);
-                            right = next_right;
-                            next_right = right_iter.next();
-                            move_output_round(&right, &mut right_round, &mut right_count);
-                        } else {
-                            right = next_right;
-                            next_right = right_iter.next();
-                            move_output_round(&right, &mut right_round, &mut right_count);
-                        }
-                    }
-                }
-                keep_running = left != None || right != None;
-            }
         }
     }
 
     pub fn compute_anti_output_rounds(&mut self, right_iter: DistinctIter) {
-        let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
-            match state {
-                RoundState::Equal => {
-                    if let Some((_, count)) = left {
-                        if right_count == 0 && count != 0 {
-                            neue.push((left_round, count));
-                        }
-                    }
-                },
-                RoundState::Right => {
-                    if let Some((_, count)) = left {
-                        if right_count == 0 {
-                            neue.push((left_round, count));
-                        }
-                    }
-                },
-                RoundState::Left => {
-                    if let Some((_, count)) = right {
-                        let total = (count * -1) * left_count;
-                        if total != 0 {
-                            neue.push((right_round, total));
-                        }
-                    }
+        let (neue, current) = self.fetch_neue_current();
+        let mut result = vec![];
+
+        let mut ran = false;
+        let mut first_y = (0,0);
+        for (x_round, x_count) in current.drain(..) {
+            let mut y_total = 0;
+            for (y_round, y_count) in right_iter.clone() {
+                if !ran {
+                    ran = true;
+                    first_y.0 = y_round;
+                    first_y.1 = y_count;
                 }
+                if y_count < 0 {
+                    let round = cmp::max(x_round, y_round);
+                    result.push((round, -1 * y_count * x_count));
+                }
+                if y_count > 0 && y_round > x_round && y_total <= 0 {
+                    let round = cmp::max(x_round, y_round);
+                    result.push((round, -1 * y_count * x_count));
+                }
+                y_total += y_count;
             }
-        };
-        self._compute_output_rounds(right_iter, action);
+            if !ran {
+                result.push((x_round, x_count));
+            }
+            if first_y.0 > x_round {
+                result.push((x_round, x_count));
+            }
+        }
+        result.sort();
+
+        collapse_rounds(&result, neue);
     }
 
     pub fn compute_output_rounds(&mut self, right_iter: DistinctIter) {
-        let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
-            match state {
-                RoundState::Equal => {
-                    if let Some((_, count)) = left {
-                        let total = count * right_count;
-                        if total != 0 {
-                            neue.push((left_round, total));
-                        } else if left_count == 0 && right_count == 0 {
-                            neue.push((left_round, count));
-                        }
-                    }
+        let (neue, current) = self.fetch_neue_current();
+        let mut result = vec![];
 
-                },
-                RoundState::Right => {
-                    if let Some((_, count)) = left {
-                        let total = count * right_count;
-                        if total != 0 {
-                            neue.push((left_round, total));
-                        }
-                    }
-                },
-                RoundState::Left => {
-                    if let Some((_, count)) = right {
-                        let total = count * left_count;
-                        if total != 0 {
-                            neue.push((right_round, total));
-                        }
-                    }
-                }
+        for x in current.drain(..) {
+            for y in right_iter.clone() {
+                let round = cmp::max(x.0, y.0);
+                let count = x.1 * y.1;
+                result.push((round, count))
             }
-        };
-        self._compute_output_rounds(right_iter, action);
+        }
+        result.sort();
+        collapse_rounds(&result, neue);
     }
 
     pub fn insert(&mut self, change:Change) {
