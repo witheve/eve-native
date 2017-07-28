@@ -1,0 +1,54 @@
+# SVG
+
+SVG Elements are HTML Elements in the SVG namespace.
+~~~ eve
+search
+  elem = [#svg/element]
+bind
+  elem += #html/element
+  elem.ns += "http://www.w3.org/2000/svg"
+end
+~~~
+
+SVG Roots are SVG elements and HTML roots.
+~~~ eve
+search
+  root = [#svg/root]
+bind
+  root += #svg/element
+  root += #html/root
+  root.tagname += "svg"
+end
+~~~
+
+Convenience SVG elements.
+~~~ eve
+commit
+  [#svg/shortcut-tagname | tagname: (
+    "line"
+    "circle"
+    "rect"
+    "text"
+    "image"
+    "g")]
+end
+~~~
+
+Map shortcut tagnames to tags.
+~~~ eve
+search
+  [#svg/shortcut-tagname tagname]
+bind
+  [#svg/shortcut-tag tag-text: "svg/{{tagname}}" tagname]
+end
+~~~
+
+Decorate shortcut elements as svg.
+~~~ eve
+search
+  [#svg/shortcut-tag tag-text: tag tagname]
+  element = [tag]
+bind
+  element <- [#svg/element tagname]
+end
+~~~
