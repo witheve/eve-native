@@ -608,6 +608,7 @@ impl HashIndex {
 // Distinct Iter
 //-------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct DistinctIter<'a> {
     ix: usize,
     len: usize,
