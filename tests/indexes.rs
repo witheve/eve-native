@@ -652,7 +652,7 @@ fn distinct_anti_simple_retraction_same_end() {
     test_anti_distinct(
         vec![(1,1), (6,-1)],
         vec![(1,1), (6,-1)],
-        vec![(6,-1)]
+        vec![]
         );
 }
 
@@ -662,7 +662,7 @@ fn distinct_anti_simple_retraction_same_end2() {
     test_anti_distinct(
         vec![(1,1), (6,-1)],
         vec![(2,1), (6,-1)],
-        vec![(1,1), (2,-1), (6,-1)]
+        vec![(1,1), (2,-1)]
         );
 }
 

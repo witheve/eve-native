@@ -142,16 +142,20 @@ parser!(expression_set(state) -> Node<'a> {
 // Infix
 //--------------------------------------------------------------------
 
-parser!(infix_addition(state) -> Node<'a> {
+whitespace_parser!(infix_addition(state) -> Node<'a> {
     let left = alt!(state, [ infix_multiplication value ]);
+    tag!(state, " ");
     let op = alt_tag!(state, [ "+" "-" ]);
+    tag!(state, " ");
     let right = call!(state, expression);
     pos_result!(state, Node::Infix { result:None, left:Box::new(left), right:Box::new(right), op })
 });
 
-parser!(infix_multiplication(state) -> Node<'a> {
+whitespace_parser!(infix_multiplication(state) -> Node<'a> {
     let left = call!(state, value);
+    tag!(state, " ");
     let op = alt_tag!(state, [ "*" "/" ]);
+    tag!(state, " ");
     let right = alt!(state, [ infix_multiplication value ]);
     pos_result!(state, Node::Infix { result:None, left:Box::new(left), right:Box::new(right), op })
 });
@@ -285,14 +289,13 @@ whitespace_parser!(record_function(state) -> Node<'a> {
 });
 
 parser!(multi_equality_left(state) -> Node<'a> {
-    let part = alt!(state, [ expression_set variable ]);
+    let part = alt!(state, [ expression_set ]);
     result!(state, part)
 });
 
 parser!(multi_function_equality(state) -> Node<'a> {
     let neue_outputs = match call!(state, multi_equality_left).unwrap_pos() {
         Node::ExprSet(items) => items,
-        me @ Node::Variable(_) => vec![me],
         _ => unreachable!()
     };
     tag!(state, "=");
