@@ -289,7 +289,7 @@ whitespace_parser!(record_function(state) -> Node<'a> {
 });
 
 parser!(multi_equality_left(state) -> Node<'a> {
-    let part = alt!(state, [ expression_set ]);
+    let part = call!(state, expression_set);
     result!(state, part)
 });
 

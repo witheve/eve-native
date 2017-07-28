@@ -1,0 +1,323 @@
+# UI
+
+~~~ eve
+commit
+  [#ui/shortcut-tagname | tagname: (
+    "row"
+    "column"
+    "spacer"
+    "text"
+    "div"
+    "span"
+    "button"
+    "link"
+    "input"
+    "a"
+    "style"
+    )]
+end
+~~~
+
+~~~ eve
+search
+  [#ui/shortcut-tagname tagname]
+bind
+  [#ui/shortcut-tag tag-text: "ui/{{tagname}}" tagname]
+end
+~~~
+
+Decorate shortcut elements as html.
+~~~ eve
+search
+  [#ui/shortcut-tag tag-text: tag tagname]
+  element = [tag]
+bind
+  element <- [#html/element tagname]
+end
+~~~
+
+## Buttons
+
+Give button elements icons if specified.
+~~~ eve
+search
+  element = [#ui/button icon]
+bind
+  element.class += "iconic"
+  element.class += "ion-{{icon}}"
+end
+~~~
+
+## Autocomplete
+
+### Setup
+
+Decorate autocompletes.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete]
+bind
+  autocomplete <- [#ui/column children:
+    [#ui/input #ui/autocomplete/input sort: 1 autocomplete]]
+end
+~~~
+
+Copy input placeholder.
+~~~ eve
+search
+  input = [#ui/autocomplete/input autocomplete]
+bind
+  input.placeholder += autocomplete.placeholder
+end
+~~~
+
+Copy input initial.
+~~~ eve
+search
+  input = [#ui/autocomplete/input autocomplete]
+bind
+  input.initial += autocomplete.initial
+end
+~~~
+
+Copy trigger focus.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete #html/event/trigger-focus]
+  input = [#ui/autocomplete/input autocomplete]
+bind
+  input += #html/event/trigger-focus
+end
+~~~
+
+Copy autosize input.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete #html/autosize-input]
+  input = [#ui/autocomplete/input autocomplete]
+bind
+  input += #html/autosize-input
+end
+~~~
+
+An autocomplete's value is its input's.
+~~~ eve
+search
+  input = [#ui/autocomplete/input autocomplete]
+  value = if v = input.value then v else ""
+bind
+  autocomplete.value += value
+end
+~~~
+
+If an autocomplete's value disagrees with its selected, clear the selected.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete value selected]
+  selected.text != value
+commit
+  autocomplete.selected := none
+end
+~~~
+
+Completions that match the current input value are matches.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete value completion]
+  string/index-of[text: completion.text substring: string/lowercase[text: value]]
+bind
+  autocomplete.match += completion
+end
+~~~
+
+Matches are sorted by length.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete match]
+  sort = string/length[text: match.text]
+bind
+  match.sort += sort
+end
+~~~
+
+Show the matches in a popout beneath the input.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete match]
+bind
+  autocomplete.children += [#ui/autocomplete/matches #ui/column sort: 2 autocomplete | children: match]
+  match <- [#ui/autocomplete/match #ui/text autocomplete]
+end
+~~~
+
+### Interaction
+
+Clicking a match updates the selected and value of the autocomplete.
+~~~ eve
+search
+  match = [#ui/autocomplete/match autocomplete]
+  [#html/event/mouse-down element: match]
+commit
+  [#ui/event/select autocomplete selected: match]
+end
+~~~
+
+Focusing an autocomplete input opens it.
+~~~ eve
+search
+  input = [#ui/autocomplete/input autocomplete]
+  [#html/event/focus element: input]
+commit
+  [#ui/event/open autocomplete]
+end
+~~~
+
+Blurring an autocomplete input opens it.
+~~~ eve
+search
+  input = [#ui/autocomplete/input autocomplete]
+  [#html/event/blur element: input]
+commit
+  [#ui/event/close autocomplete]
+end
+~~~
+
+If the value matches perfectly on blur, select that match.
+~~~ eve
+search
+  input = [#ui/autocomplete/input autocomplete]
+  [#html/event/blur element: input value]
+  match = autocomplete.match
+  lower = string/lowercase[text: match.text]
+  lower = string/lowercase[text: value]
+commit
+  [#ui/event/select autocomplete selected: match]
+end
+~~~
+
+Pressing escape in an open autocomplete closes it.
+~~~ eve
+search
+  [#ui/autocomplete open: "true"]
+  [#html/event/key-down key: "escape" element: autocomplete]
+commit
+  [#ui/event/close autocomplete]
+end
+~~~
+
+Pressing enter in an open autocomplete submits it.
+~~~ eve
+search
+  [#ui/autocomplete open: "true"]
+  [#html/event/key-down key: "enter" element: autocomplete]
+commit
+  [#ui/event/submit autocomplete]
+  [#ui/event/close autocomplete]
+end
+~~~
+
+Pressing tab in an open autocomplete submits it.
+~~~ eve
+// search
+//   [#ui/autocomplete open: "true" match]
+//   [#html/event/key-down key: "tab" element: autocomplete]
+//   1 == gather/sort[for: match.sort per: autocomplete]
+// commit
+//   [#ui/event/select autocomplete selected: match]
+//   [#ui/event/close autocomplete]
+// end
+~~~
+
+### Events
+
+Clear the specified autocomplete.
+~~~ eve
+search
+  event = [#ui/event/clear autocomplete]
+  input = [#ui/autocomplete/input autocomplete]
+commit
+  input.value := none
+  event := none
+end
+~~~
+
+When an autocomplete is opened, store its previous value.
+~~~ eve
+search
+  event = [#ui/event/open autocomplete]
+  input = [#ui/autocomplete/input autocomplete]
+  value = if v = input.value then v else ""
+commit
+  autocomplete.open := "true"
+  autocomplete.previous := value
+  input -= #html/trigger/blur
+  event := none
+end
+~~~
+
+When an autocomplete is closed, erase its previous value.
+~~~ eve
+search
+  event = [#ui/event/close autocomplete]
+  input = [#ui/autocomplete/input autocomplete]
+commit
+  autocomplete.open := none
+  autocomplete.previous := none
+  input += #html/trigger/blur
+  input -= #html/trigger/focus
+  event := none
+end
+~~~
+
+When an autocomplete is closed and its value is changed, emit a change event.
+~~~ eve
+search
+  event = [#ui/event/close autocomplete]
+  autocomplete.value != autocomplete.previous
+commit
+  [#ui/event/change autocomplete value: autocomplete.value]
+end
+~~~
+
+When a selection is made that differs from the previous value, emit a change event.
+~~~ eve
+search
+  event = [#ui/event/select autocomplete selected]
+  selected.text != autocomplete.previous
+commit
+  [#ui/event/change autocomplete value: selected.text]
+end
+~~~
+
+
+Selecting a completion updates the autocomplete.
+~~~ eve
+search
+  event = [#ui/event/select autocomplete selected]
+  input = [#ui/autocomplete/input autocomplete]
+commit
+  input.value := selected.text
+  autocomplete.selected := selected
+  event := none
+end
+~~~
+
+Clear the autocomplete change event.
+~~~ eve
+search
+  event = [#ui/event/change autocomplete]
+commit
+  event := none
+end
+~~~
+
+
+
+
+Todo:
+ - [X] string/index-of[text substring] match_indices(pattern)
+- [X] string/contains[text substring] contains(pattern)
+- [X] string/lowercase[text] to_lowercase
+- [X] string/uppercase[text] to_uppercase
+- [X] string/length[text]
+- [ ] Highlight functions
