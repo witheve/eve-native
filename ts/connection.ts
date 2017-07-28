@@ -22,7 +22,9 @@ export class Connection {
 
   }
   send(type:string, data:any) {
+    console.groupCollapsed("Sent");
     console.log(type, data);
+    console.groupEnd();
     // This... feels weird. Do we actually expect to pack multiple message types in very frequently?
     let payload = JSON.stringify({[type]: data});
     this._queue.push(payload);
@@ -50,7 +52,7 @@ export class Connection {
   }
 
   protected _messaged = (payload:string) => {
-    console.group();
+    console.groupCollapsed("Received");
     let parsed:Message;
     try {
       parsed = JSON.parse(payload);
