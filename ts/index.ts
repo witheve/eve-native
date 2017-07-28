@@ -1,5 +1,5 @@
 export {Library, Program} from "./library";
-export {RawValue, RawTuple, RawEAV, RawMap, RawRecord} from "./library"; // Value types
+export {RawValue, RawTuple, RawEAV, RawMap, RawRecord, asValue} from "./library"; // Value types
 export {Diff, DiffHandler, EAVDiffHandler, RecordDiffHandler} from "./library"; // Diff types
 export {handleTuples, handleEAVs, handleRecords} from "./library"; // Diff handlers
 export {createId, tupleToRecord, recordToTuples} from "./library"; // Helper functions

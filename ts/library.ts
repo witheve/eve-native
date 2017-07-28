@@ -30,7 +30,6 @@ export interface Program {
 // Library
 ////////////////////////////////////////////////////////////////////////////////
 
-
 export class Library {
   protected static _registry:{[id:string]: typeof Library} = {};
 
@@ -122,6 +121,14 @@ export function handleRecords<T extends RawRecord>(attributes: string[], handler
 ////////////////////////////////////////////////////////////////////////////////
 // Helpers
 ////////////////////////////////////////////////////////////////////////////////
+
+export function asValue(value:RawValue|undefined) {
+  if(typeof value == "string") {
+    if(value == "true") return true;
+    if(value == "false") return false;
+  }
+  return value;
+}
 
 export function createId() {
   return "|" + uuid();
