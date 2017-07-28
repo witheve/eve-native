@@ -1869,7 +1869,17 @@ impl Constraint {
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::Filter {ref left, ref right, ..} => { filter_registers(&vec![left, right]) }
             &Constraint::AntiScan {ref key, ..} => { filter_registers(&key.iter().collect()) }
-            &Constraint::IntermediateScan {ref full_key, ..} => { filter_registers(&full_key.iter().collect()) }
+            &Constraint::IntermediateScan {ref full_key, ref value, ..} => {
+                // Not's filter based on their key, but chooses and aggregates should filter based
+                // on their values. If we return the full key when there's a value produced, that
+                // means we'll end up creating loops between nots and chooses. This happened in TTT
+                // where we say not(board.winner) and we use the board in the choose.
+                if value.len() > 0 {
+                    filter_registers(&value.iter().collect())
+                } else {
+                    filter_registers(&full_key.iter().collect())
+                }
+            }
             _ => { vec![] }
         }
     }
