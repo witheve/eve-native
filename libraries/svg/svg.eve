@@ -10,13 +10,12 @@ bind
 end
 ~~~
 
-SVG Roots are SVG elements and HTML roots.
+SVG Roots are SVG elements.
 ~~~ eve
 search
   root = [#svg/root]
 bind
   root += #svg/element
-  root += #html/root
   root.tagname += "svg"
 end
 ~~~
