@@ -6,7 +6,6 @@ extern crate clap;
 use clap::{Arg, App};
 
 extern crate ws;
-
 use ws::{listen, Message, Sender, Handler, CloseCode};
 
 #[macro_use]
@@ -14,17 +13,25 @@ extern crate serde_derive;
 
 #[macro_use]
 extern crate serde_json;
-
 extern crate serde;
-
 use serde_json::{Error};
 
 extern crate eve;
 extern crate time;
-
 use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
 use eve::indexes::{WatchDiff};
 use eve::watcher::{SystemTimerWatcher, CompilerWatcher, Watcher};
+
+extern crate hyper;
+use hyper::header::ContentLength;
+use hyper::server::{Http, Request, Response, Service};
+use std::thread;
+use std::thread::sleep;
+use std::time::Duration;
+
+extern crate term_painter;
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
 
 //-------------------------------------------------------------------------
 // Websocket client handler
@@ -68,6 +75,12 @@ impl ClientHandler {
 }
 
 impl Handler for ClientHandler {
+    
+    fn on_request(&mut self, req: &ws::Request) -> Result<ws::Response,ws::Error> {
+        println!("Handler received request:\n{:?}", req);
+        ws::Response::from_request(req)    
+    }
+
     fn on_message(&mut self, msg: Message) -> Result<(), ws::Error> {
         // println!("Server got message '{}'. ", msg);
         if let Message::Text(s) = msg {
@@ -130,6 +143,25 @@ impl Watcher for WebsocketClientWatcher {
 //-------------------------------------------------------------------------
 
 fn main() {
+    let addr = "0.0.0.0:8080".parse().unwrap();
+    print!("{} HTTP Server at {}... ", Green.paint("Starting:"), addr);
+    let http_server = thread::spawn(move || {
+        let server = Http::new().bind(&addr, || Ok(StaticFileServer)).unwrap();
+		server.run().unwrap();
+	});
+    print!("done.\n");
+    let ws_addr = "0.0.0.0:3012";
+    sleep(Duration::from_millis(1000));
+    print!("{} Websocket Server at {}... ", Green.paint("Starting:"), ws_addr);
+    let ws_server = thread::spawn(move || {
+        listen(ws_addr, |out| {
+            Server { out: out }
+        }).unwrap()
+    });
+    print!("done.\n");
+    loop {}
+
+    /*
     let matches = App::new("Eve")
                           .version("0.4")
                           .author("Kodowa Inc.")
@@ -156,9 +188,57 @@ fn main() {
         None => vec![]
     };
     let persist = matches.value_of("persist");
-    let address = format!("127.0.0.1:{}", port);
-
-    listen(address, |out| {
+    let address = format!("0.0.0.0:{}", port);
+    println!("Listening for messages at {}", address);
+    listen(address, |out| {    
         ClientHandler::new(out, &files, persist)
     }).unwrap()
+    */
+}
+
+
+
+
+struct StaticFileServer;
+
+const PHRASE: &'static str = "Hello, World!";
+
+impl Service for StaticFileServer {
+    // boilerplate hooking up hyper's server types
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+    // The future representing the eventual Response your call will
+    // resolve to. This can change to whatever Future you need.
+    type Future = futures::future::FutureResult<Self::Response, Self::Error>;
+
+    fn call(&self, req: Request) -> Self::Future {
+        match (req.method(), req.path()) {
+            (method, path) => println!("{},{}",method,path),
+        };
+        futures::future::ok(
+            Response::new()
+                .with_header(ContentLength(PHRASE.len() as u64))
+                .with_body(PHRASE)
+        )
+    }
+}
+
+
+struct Server {
+    out: Sender,
+}
+
+impl Handler for Server {
+
+    fn on_message(&mut self, msg: Message) -> Result<(),ws::Error> {
+        println!("Server got message '{}'. ", msg);
+        self.out.send(msg)
+    }
+
+    fn on_close(&mut self, code: CloseCode, reason: &str) {
+        println!("WebSocket closing for ({:?}) {}", code, reason);
+        println!("Shutting down server after first connection closes.");
+        self.out.shutdown().unwrap();
+    }
 }
