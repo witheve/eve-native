@@ -201,7 +201,7 @@ parser!(attribute_equality(state) -> Node<'a> {
         _ => unreachable!(),
     };
     alt_tag!(state, [ ":" "=" ]);
-    let value = alt!(state, [ record_set expression expression_set ]);
+    let value = alt!(state, [ record_set wrapped_record_set expression expression_set ]);
     pos_result!(state, Node::AttributeEquality(attr, Box::new(value)))
 });
 
