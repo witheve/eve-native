@@ -136,11 +136,12 @@ macro_rules! many_n (
     ($state:ident, $n:expr, $err:ident, $func:ident) => ({
             let mut items = vec![];
             loop {
+                $state.mark("many_n");
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { $state.pop(); return result; }
-                    ParseResult::Ok(value) => { items.push(value); }
-                    ParseResult::Fail(..) => { break }
+                    ParseResult::Error(..) => { $state.pop(); $state.pop(); return result; }
+                    ParseResult::Ok(value) => { $state.pop(); items.push(value); }
+                    ParseResult::Fail(..) => { $state.backtrack(); break }
                 }
             }
             if items.len() < $n {
@@ -152,11 +153,12 @@ macro_rules! many_n (
     ($state:ident, $n:expr, $func:ident) => ({
             let mut items = vec![];
             loop {
+                $state.mark("many_n");
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { $state.pop(); return result; }
-                    ParseResult::Ok(value) => { items.push(value); }
-                    ParseResult::Fail(..) => { break }
+                    ParseResult::Error(..) => { $state.pop(); $state.pop(); return result; }
+                    ParseResult::Ok(value) => { $state.pop(); items.push(value); }
+                    ParseResult::Fail(..) => { $state.backtrack(); break }
                 }
             }
             if items.len() < $n {
@@ -168,11 +170,12 @@ macro_rules! many_n (
     ($state:ident, $func:ident) => ({
             let mut items = vec![];
             loop {
+                $state.mark("many_n");
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { $state.pop(); return result; }
-                    ParseResult::Ok(value) => { items.push(value); }
-                    ParseResult::Fail(..) => { break }
+                    ParseResult::Error(..) => { $state.pop(); $state.pop(); return result; }
+                    ParseResult::Ok(value) => { $state.pop(); items.push(value); }
+                    ParseResult::Fail(..) => { $state.backtrack(); break }
                 }
             }
             items
@@ -412,20 +415,26 @@ impl<'a> ParseState<'a> {
 
     pub fn eat_space(&mut self) {
         let remaining = &self.input[self.pos..];
+        let mut maybe_comment = false;
         for c in remaining.chars() {
-            match c {
-                // eat comments
-                '/' => {
-                    if &self.input[self.pos + 1..self.pos + 2] == "/" {
+            if maybe_comment {
+                match c {
+                    '/' => {
                         self.consume_line();
                         self.eat_space();
-                    }
-                    break;
+                        return;
+                    },
+                    _ => { self.ch -= 1; self.pos -= 1; break; }
                 }
-                ' ' | '\t' | ',' => { self.ch += 1; self.pos += 1; }
-                '\n' => { self.line += 1; self.ch = 0; self.pos += 1; }
-                '\r' => { self.ch += 1; self.pos += 1; }
-                _ => { break }
+            } else {
+                match c {
+                    // eat comments
+                    '/' => { self.ch += 1; self.pos += 1; maybe_comment = true; }
+                    ' ' | '\t' | ',' => { self.ch += 1; self.pos += 1; }
+                    '\n' => { self.line += 1; self.ch = 0; self.pos += 1; }
+                    '\r' => { self.ch += 1; self.pos += 1; }
+                    _ => { break }
+                }
             }
         }
     }
@@ -531,23 +540,29 @@ impl<'a> ParseState<'a> {
 
     pub fn consume_until<T>(&mut self, pred:fn(&mut ParseState<'a>) -> ParseResult<'a, T>) -> (Result<&'a str, ()>, ParseResult<'a, T>) {
         if self.ignore_space { self.eat_space(); }
-        let remaining = &self.input[self.pos..];
+        let len = self.input.len();
         let start = self.pos;
-        for c in remaining.chars() {
-            let pre_check_pos = self.pos;
-            let result = pred(self);
-            match result {
-                ParseResult::Ok(..) => return (Ok(&self.input[start..pre_check_pos]), result),
-                ParseResult::Error(..) => return (Ok(&self.input[start..pre_check_pos]), result),
-                _ => {}
-            }
-            if c == '\n' {
-                self.ch = 0;
-                self.line += 1;
+        while self.pos < len {
+            if let &Some(c) = &self.input[self.pos..].chars().next() {
+                let pre_check_pos = self.pos;
+                let result = pred(self);
+                match result {
+                    ParseResult::Ok(..) => return (Ok(&self.input[start..pre_check_pos]), result),
+                    ParseResult::Error(..) => return (Ok(&self.input[start..pre_check_pos]), result),
+                    _ => {}
+                }
+                if pre_check_pos == self.pos {
+                    if c == '\n' {
+                        self.ch = 0;
+                        self.line += 1;
+                    } else {
+                        self.ch += 1;
+                    }
+                    self.pos += c.len_utf8();
+                }
             } else {
-                self.ch += 1;
+                break;
             }
-            self.pos += c.len_utf8();
         }
         (Ok(&self.input[start..self.pos]), ParseResult::Fail(MatchType::ConsumeUntil))
     }
