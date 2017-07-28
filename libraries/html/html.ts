@@ -293,7 +293,7 @@ export class HTML extends Library {
     "export attributes": handleTuples(({adds, removes}) => {
       for(let [e, a, v] of removes || EMPTY) {
         let instance = this._instances[e];
-        if(!instance || a === "tagname" || a === "children" || a === "tag" || a === "sort" || a === "eve-auto-index") continue;
+        if(!instance || a === "tagname" || a === "children" || a === "tag" || a === "ns" || a === "sort" || a === "eve-auto-index") continue;
         else if(a === "text") instance.textContent = null
         else if(a === "style") instance.classList.remove(this.styleToClass(v));
         else if(a === "class") instance.classList.remove(""+v);
@@ -302,7 +302,7 @@ export class HTML extends Library {
       for(let [e, a, v] of adds || EMPTY) {
         let instance = this._instances[e];
         if(!instance) throw new Error(`Unable to add attribute to nonexistent instance '${e}'`);
-        if(a === "tagname" || a === "children" || a === "tag") continue;
+        if(a === "tagname" || a === "children" || a === "tag" || a === "ns") continue;
         else if(a === "text") instance.textContent = ""+v;
         else if(a === "style") instance.classList.add(this.styleToClass(v));
         else if(a === "class") instance.classList.add(""+v);
