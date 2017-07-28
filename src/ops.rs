@@ -2960,11 +2960,21 @@ impl Program {
             None => {},
         }
         // lookup the tags for this e
-        //  for each tag, lookup (e, a, 0) and (e, a, v)
+        //  for each tag, lookup (e, 0, 0), (e, a, 0) and (e, a, v)
         if let Some(tags) = self.state.index.get(input.e, TAG_INTERNED_ID, 0) {
             for tag in tags {
                 tuple.0 = tag;
+                tuple.1 = 0;
                 tuple.2 = 0;
+                match pipe_lookup.get(&tuple) {
+                    Some(found) => {
+                        for pipe in found.iter() {
+                            pipes.push(pipe);
+                        }
+                    },
+                    None => {},
+                }
+                tuple.1 = input.a;
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {

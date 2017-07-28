@@ -1156,7 +1156,7 @@ impl<'a> Node<'a> {
             &mut SubBlock::Not(ref mut cur_block) => {
                 self.sub_blocks(interner, cur_block);
                 let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
-                let mut related = get_input_constraints(&inputs, &valid_ancestors);
+                let mut related = get_input_constraints_transitive(&inputs, &valid_ancestors);
                 related.extend(cur_block.constraints.iter().cloned());
                 let block_name = cur_block.block_name.to_string();
                 let tag_value = interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
@@ -1201,7 +1201,7 @@ impl<'a> Node<'a> {
             &mut SubBlock::If(ref mut cur_block, _, exclusive) => {
                 // get related constraints for all the inputs
                 let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
-                let related = get_input_constraints(&inputs, &valid_ancestors);
+                let related = get_input_constraints_transitive(&inputs, &valid_ancestors);
                 let block_name = cur_block.block_name.to_string();
                 let if_id = interner.string(&format!("{}|sub_block|if|{}", block_name, ix));
 
