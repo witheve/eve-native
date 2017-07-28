@@ -2,7 +2,7 @@ import md5 from "md5";
 import "setimmediate";
 import {Program, Library, createId, RawValue, RawEAV, RawMap, handleTuples} from "../../ts";
 
-const EMPTY:any[] = [];
+const EMPTY:never[] = [];
 
 export interface Instance extends HTMLElement {
   __element: RawValue,
@@ -27,6 +27,57 @@ let naturalComparator = new Intl.Collator("en", {numeric: true}).compare;
 
 export class HTML extends Library {
   static id = "html";
+
+  //////////////////////////////////////////////////////////////////////
+  // Public API
+  //////////////////////////////////////////////////////////////////////
+
+  addExternalRoot(tag:string, element:HTMLElement) {
+    let elemId = createId();
+    let eavs:RawEAV[] = [
+      [elemId, "tag", tag],
+      [elemId, "tag", "html/root/external"]
+    ];
+
+    this._instances[elemId] = this.decorate(element, elemId);
+    this._sendEvent(eavs);
+  }
+
+  getInstances(elemId:RawValue) {
+    let instanceIds = this._elementToInstances[elemId];
+    if(!instanceIds) return;
+    return instanceIds.map((id) => this._instances[id]);
+  }
+
+  // @DEPRECATED
+  getInstance(instanceId:RawValue) {
+    return this._instances[instanceId];
+  }
+
+  isInstance(elem?:any): elem is Instance {
+    if(!elem || !(elem instanceof Element)) return false;
+    let instance = elem as Instance;
+    return instance && !!instance["__element"];
+  }
+
+  //////////////////////////////////////////////////////////////////////
+  // Implementation
+  //////////////////////////////////////////////////////////////////////
+
+  /** Topmost element containing root elements. */
+  _container:HTMLElement;
+  /** Instances are the physical DOM elements representing Eve elements. */
+  _instances:RawMap<Instance> = {};
+  /** Eve elements map to one or more instances. */
+  _elementToInstances:RawMap<RawValue[]> = {};
+  /** Eve style records represent a set of CSS properties for a class (the style id). */
+  _styles:RawMap<Style> = {};
+  /** Synthetic style container. */
+  _syntheticStyleContainer:HTMLElement;
+  /** One style element per synthetic style. */
+  _syntheticStyles:RawMap<StyleElement> = {};
+  /** Dummy used for converting style properties to CSS strings. */
+  _dummy:HTMLElement;
 
   setup() {
     if(typeof document === "undefined") {
@@ -58,52 +109,6 @@ export class HTML extends Library {
 
     // window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
   }
-
-  //////////////////////////////////////////////////////////////////////
-  // Public API
-  //////////////////////////////////////////////////////////////////////
-
-  addExternalRoot(tag:string, element:HTMLElement) {
-    let elemId = createId();
-    let eavs:RawEAV[] = [
-      [elemId, "tag", tag],
-      [elemId, "tag", "html/root/external"]
-    ];
-
-    this._instances[elemId] = this.decorate(element, elemId);
-    this._sendEvent(eavs);
-  }
-
-  getInstances(elemId:RawValue) {
-    let instanceIds = this._elementToInstances[elemId];
-    if(!instanceIds) return;
-    return instanceIds.map((id) => this._instances[id]);
-  }
-
-  isInstance(elem?:any): elem is Instance {
-    if(!elem || !(elem instanceof Element)) return false;
-    let instance = elem as Instance;
-    return instance && !!instance["__element"];
-  }
-
-  //////////////////////////////////////////////////////////////////////
-  // Implementation
-  //////////////////////////////////////////////////////////////////////
-
-  /** Topmost element containing root elements. */
-  _container:HTMLElement;
-  /** Instances are the physical DOM elements representing Eve elements. */
-  _instances:RawMap<Instance> = {};
-  /** Eve elements map to one or more instances. */
-  _elementToInstances:RawMap<RawValue[]> = {};
-  /** Eve style records represent a set of CSS properties for a class (the style id). */
-  _styles:RawMap<Style> = {};
-  /** Synthetic style container. */
-  _syntheticStyleContainer:HTMLElement;
-  /** One style element per synthetic style. */
-  _syntheticStyles:RawMap<StyleElement> = {};
-  /** Dummy used for converting style properties to CSS strings. */
-  _dummy:HTMLElement;
 
   protected decorate(elem:Element, elemId:RawValue): Instance {
     let e = elem as Instance;
