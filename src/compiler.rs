@@ -712,8 +712,9 @@ impl<'a> Node<'a> {
                     cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
                 } else if info.is_aggregate {
                     let mut sub_block = Compilation::new_child(cur_block);
-                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), cur_outputs[0]));
-                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, cur_outputs[0]));
+                    let unified_output = cur_block.get_unified(&cur_outputs[0]);
+                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output));
+                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output));
                 } else {
                     cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
                 }
@@ -754,7 +755,6 @@ impl<'a> Node<'a> {
                             (a, result)
                         },
                         _ => {
-                            println!("{:?}", attr);
                             panic!("Parse Error: Unrecognized node type in lookup attributes.")
                         }
                     };
@@ -1335,6 +1335,13 @@ impl Compilation {
         let ref mut id = self.id;
         let ix = *self.vars.entry(name.to_string()).or_insert_with(|| { *id += 1; *id });
         register(ix)
+    }
+
+    pub fn get_unified(&mut self, reg: &Field) -> Field {
+        match self.unified_registers.get(&reg) {
+            Some(&Field::Register(cur)) => Field::Register(cur),
+            _ => reg.clone()
+        }
     }
 
     pub fn get_unified_register(&mut self, name: &str) -> Provided {
