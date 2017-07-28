@@ -1,43 +1,5 @@
-
-Write a file
-
 commit
-  [#file/write #test-write path: "foo.bar" contents: "#success"]
-end
-
-Read a file
-
-commit
-  [#file/read #test-read path: "foo.bar"]
-end
-
-search
-  [#test-read contents]
-  contents = "#success"
-commit
-  [#console/log text: contents]
-end
-
-Read a file error
-
-commit
-  [#file/read #read-error path: "foo.bar.baz"]
-end
-
-search
-  [#read-error error]
-commit
-  [#console/log text: "#success1"]
-end
-
-Write file error
-
-commit
-  [#file/write #write-error path: "foo/bar.txt" contents: "anything!"]
-end
-
-search
-  [#write-error error]
-commit
-  [#console/log text: "#success2"]
+  foo = [#bar #baz text: "wump" sort: 7 name: "dubdub" blarg: "crab" 18: -7 | pet: (pet pet2 "crab")]
+  pet = [#pet name: "blort" age: 13 | owner: foo]
+  pet2 = [#pet age: 3 | owner: foo]
 end
