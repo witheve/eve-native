@@ -3,24 +3,35 @@
 ## Writing Files
 
 search
-  [#file/write path contents]
+  file = [#file/write path contents]
 watch file/write
-  (path, contents)
+  (file, path, contents)
 end
 
 ## Reading Files
 
 search
-  f = [#file/read path]
+  file = [#file/read path]
 watch file/read
-  (f, path)
+  (file, path)
 end
 
 When a file read change event comes around, set the contents of the file.
 
 search
-  t = [#file/read/change file contents]
+  [#file/read/change file contents]
   file = [#file/read]
 commit
   file.contents := contents
+end
+
+## Errros
+
+The `#file/error` record is added by the watcher, but we need to attach it to the
+record from which it orgininated, for easy access.
+
+search
+  file-error = [#file/error file]
+commit
+  file.error := file-error
 end
