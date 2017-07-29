@@ -27,7 +27,7 @@ extern crate staticfile;
 extern crate mount;
 
 use std::path::Path;
-use iron::Iron;
+use iron::{Iron, Chain, status, Request, Response, IronResult, IronError, AfterMiddleware};
 use staticfile::Static;
 use mount::Mount;
 use std::thread;
@@ -145,6 +145,14 @@ impl Watcher for WebsocketClientWatcher {
 // Static File Server
 //-------------------------------------------------------------------------
 
+struct Custom404;
+
+impl AfterMiddleware for Custom404 {
+    fn catch(&self, _: &mut Request, err: IronError) -> IronResult<Response> {
+        Ok(Response::with((status::NotFound, "File not found...")))
+    }
+}
+
 fn http_server(port:String) {
     thread::spawn(move || {
         let mut mount = Mount::new();
@@ -152,10 +160,13 @@ fn http_server(port:String) {
         mount.mount("/assets/", Static::new(Path::new("assets/")));
         mount.mount("/dist/", Static::new(Path::new("dist/")));
 
+        let mut chain = Chain::new(mount);
+        chain.link_after(Custom404);
+
         let address = format!("127.0.0.1:{}", port);
         println!("{} HTTP Server at {}... ", BrightGreen.paint("Started:"), address);
         println!("");
-        Iron::new(mount).http(&address).unwrap();
+        Iron::new(chain).http(&address).unwrap();
     });
 }
 
