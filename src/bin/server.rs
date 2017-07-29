@@ -157,8 +157,8 @@ fn main() {
     };
     let persist = matches.value_of("persist");
     let address = format!("127.0.0.1:{}", port);
-
-    listen(address, |out| {
+    println!("Listening for messages at {}", address);
+    listen(address, |out| {    
         ClientHandler::new(out, &files, persist)
     }).unwrap()
 }
