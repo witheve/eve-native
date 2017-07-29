@@ -4,16 +4,16 @@
 
 search
   file = [#file/write path contents]
-watch file/write
-  (file, path, contents)
+watch file
+  ("write", file, path, contents)
 end
 
 ## Reading Files
 
 search
   file = [#file/read path]
-watch file/read
-  (file, path)
+watch file
+  ("read", file, path)
 end
 
 When a file read change event comes around, set the contents of the file.

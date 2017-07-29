@@ -9,10 +9,6 @@ use ops::{make_scan, Constraint, Interned, Internable, Interner, Field, RawChang
 use compiler::{Compilation, compilation_to_blocks};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self};
-use std::fs::File;
-use std::io::Error;
-use std::io::prelude::*;
-use std::path::Path;
 use std::collections::{HashMap};
 use std::collections::hash_map::{Entry};
 
@@ -101,90 +97,6 @@ impl Watcher for SystemTimerWatcher {
     }
 }
 
-//-------------------------------------------------------------------------
-// File Watcher
-//-------------------------------------------------------------------------
-
-pub struct FileReadWatcher { 
-    outgoing: Sender<RunLoopMessage>,
-}
-
-impl FileReadWatcher {
-    pub fn new(outgoing: Sender<RunLoopMessage>) -> FileReadWatcher {
-        FileReadWatcher { outgoing }
-    }
-}
-
-fn file_error(changes: &mut Vec<RawChange>, id: &str, why: Error) {
-    let err_id = Internable::String(format!("file/error/{}", id));
-    changes.push(RawChange {e: err_id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("file/error".to_string()), n: Internable::String("file/error".to_string()), count: 1});
-    changes.push(RawChange {e: err_id.clone(), a: Internable::String("message".to_string()), v: Internable::String(why.to_string()), n: Internable::String("file/error".to_string()), count: 1});
-    changes.push(RawChange {e: err_id.clone(), a: Internable::String("file".to_string()), v: Internable::String(id.to_string()), n: Internable::String("file/error".to_string()), count: 1});
-}
-
-impl Watcher for FileReadWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            let record_id = Internable::to_string(interner.get_value(add[0]));
-            let raw_path = Internable::to_string(interner.get_value(add[1]));
-            let path = Path::new(raw_path);
-            let mut changes = vec![];
-            match File::open(&path) {
-                Err(why) => file_error(&mut changes, record_id, why),
-                Ok(mut file) => {
-                    let mut contents = String::new();
-                    match file.read_to_string(&mut contents) {
-                        Err(why) => file_error(&mut changes, record_id, why),
-                        Ok(_) => {
-                            let id = Internable::String(format!("file/read/change/{}", add[0]));
-                            changes.push(RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("file/read/change".to_string()), n: Internable::String("file/read".to_string()), count: 1});
-                            changes.push(RawChange {e: id.clone(), a: Internable::String("file".to_string()), v: Internable::String(record_id.to_string()), n: Internable::String("file/read".to_string()), count: 1});
-                            changes.push(RawChange {e: id.clone(), a: Internable::String("contents".to_string()), v: Internable::String(contents.clone()), n: Internable::String("file/read".to_string()), count: 1});
-                        },
-                    }
-                },
-            };
-            match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
-                Err(_) => break,
-                _ => (),
-            }
-        }
-    }
-}
-
-pub struct FileWriteWatcher { 
-    outgoing: Sender<RunLoopMessage>,
-}
-
-impl FileWriteWatcher {
-    pub fn new(outgoing: Sender<RunLoopMessage>) -> FileWriteWatcher {
-        FileWriteWatcher { outgoing }
-    }
-}
-
-impl Watcher for FileWriteWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            let record_id = Internable::to_string(interner.get_value(add[0]));
-            let path = Path::new(Internable::to_string(interner.get_value(add[1])));
-            let contents = Internable::to_string(interner.get_value(add[2]));
-            let mut changes = vec![];
-            match File::create(&path) {
-                Err(why) => file_error(&mut changes, record_id, why),
-                Ok(ref mut file) => {
-                    match file.write_all(contents.as_bytes()) {
-                        Err(why) => file_error(&mut changes, record_id, why),
-                        Ok(_) => (),
-                    };
-                },
-            };
-            match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
-                Err(_) => break,
-                _ => (),
-            }
-        }
-    }
-}
 pub struct PrintDiffWatcher { }
 
 impl Watcher for PrintDiffWatcher {

@@ -45,6 +45,7 @@ pub mod watcher;
 pub mod numerics;
 
 pub mod console;
+pub mod file;
 
 #[macro_use]
 pub mod test_util;
