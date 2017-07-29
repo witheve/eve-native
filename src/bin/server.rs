@@ -148,7 +148,7 @@ impl Watcher for WebsocketClientWatcher {
 struct Custom404;
 
 impl AfterMiddleware for Custom404 {
-    fn catch(&self, _: &mut Request, err: IronError) -> IronResult<Response> {
+    fn catch(&self, _: &mut Request, _: IronError) -> IronResult<Response> {
         Ok(Response::with((status::NotFound, "File not found...")))
     }
 }
@@ -156,7 +156,7 @@ impl AfterMiddleware for Custom404 {
 fn http_server(port:String) {
     thread::spawn(move || {
         let mut mount = Mount::new();
-        mount.mount("/", Static::new(Path::new("index.html")));
+        mount.mount("/", Static::new(Path::new("assets/index.html")));
         mount.mount("/assets/", Static::new(Path::new("assets/")));
         mount.mount("/dist/", Static::new(Path::new("dist/")));
 
