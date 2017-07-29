@@ -40,7 +40,7 @@ fn main() {
     let mut runner = ProgramRunner::new();
     let outgoing = runner.program.outgoing.clone();
     runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing)));
-    runner.program.attach("console/log", Box::new(ConsoleLogWatcher{}));
+    runner.program.attach("console", Box::new(ConsoleWatcher{}));
     runner.program.attach("system/print-diff", Box::new(PrintDiffWatcher{}));
 
     if let Some(persist_file) = persist {
