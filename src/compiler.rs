@@ -78,6 +78,12 @@ lazy_static! {
         info.insert("degrees".to_string(), 0);
         m.insert("math/sin".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
+        m.insert("math/absolute".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("math/mod".to_string(), FunctionInfo::new(vec!["value", "by"]));
+        m.insert("math/ceiling".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("math/floor".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("math/round".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("random/number".to_string(), FunctionInfo::new(vec!["seed"]));
         m.insert("string/replace".to_string(), FunctionInfo::new(vec!["text", "replace", "with"]));
         m.insert("string/contains".to_string(), FunctionInfo::new(vec!["text", "substring"]));
         m.insert("string/lowercase".to_string(), FunctionInfo::new(vec!["text"]));
