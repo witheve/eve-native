@@ -16,6 +16,10 @@ pub trait Watcher {
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff);
 }
 
+//-------------------------------------------------------------------------
+// System Watcher
+//-------------------------------------------------------------------------
+
 pub struct SystemTimerWatcher {
     outgoing: Sender<RunLoopMessage>,
     timers: HashMap<Interned, (usize, Sender<()>)>
@@ -93,16 +97,6 @@ impl Watcher for SystemTimerWatcher {
     }
 }
 
-pub struct PrintWatcher { }
-
-impl Watcher for PrintWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            println!("Printer: {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
-        }
-    }
-}
-
 pub struct PrintDiffWatcher { }
 
 impl Watcher for PrintDiffWatcher {
@@ -120,6 +114,10 @@ impl Watcher for PrintDiffWatcher {
 //     Scan{e:Internable, a:Internable, v:Internable},
 //     Output{e:Internable, a:Internable, v:Internable}
 // }
+
+//-------------------------------------------------------------------------
+// Compiler Watcher
+//-------------------------------------------------------------------------
 
 pub struct CompilerWatcher {
     outgoing: Sender<RunLoopMessage>,
@@ -198,3 +196,4 @@ impl Watcher for CompilerWatcher {
         self.outgoing.send(RunLoopMessage::CodeTransaction(added_blocks, vec![])).unwrap();
     }
 }
+

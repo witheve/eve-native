@@ -1560,6 +1560,14 @@ impl Internable {
         }
     }
 
+    pub fn to_string(intern: &Internable) -> String {
+        match intern {
+            &Internable::String(ref string) => string.to_string(),
+            &Internable::Number(_) => Internable::to_number(intern).to_string(),
+            _ => { panic!("to_string on non-string/number") }
+        }
+    }
+
     pub fn from_number(num: f32) -> Internable {
         let value = unsafe { transmute::<f32, u32>(num) };
         Internable::Number(value)
