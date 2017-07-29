@@ -201,20 +201,9 @@ impl Service for StaticFileServer {
         match (req.method(), req.path()) {
             (&hyper::Get, path) => {
                 let relative_path = Path::new(path).strip_prefix("/").unwrap();
-                let requested_file = match relative_path.file_name() {
-                    Some(file_name) => file_name.to_str().unwrap(),
-                    None => "",
-                };
-                let file_str = relative_path.to_str().unwrap();
                 match relative_path.to_str().unwrap() {
-                    "index.html" | "" => {
-                        println!("Serving Index!");
-                        response = serve_file(response, Path::new("index.html"));
-                    },
-                    _ => {
-                        println!("Serving {:?}", relative_path);
-                        response = serve_file(response, relative_path);
-                    }
+                    "index.html" | "" => response = serve_file(response, Path::new("index.html")),
+                    _ => response = serve_file(response, relative_path),
                 };
             },
             _ => println!("Unknown Request"),
