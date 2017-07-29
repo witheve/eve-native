@@ -6,7 +6,6 @@ extern crate clap;
 use clap::{Arg, App};
 
 extern crate ws;
-
 use ws::{listen, Message, Sender, Handler, CloseCode};
 
 #[macro_use]
@@ -14,17 +13,28 @@ extern crate serde_derive;
 
 #[macro_use]
 extern crate serde_json;
-
 extern crate serde;
-
 use serde_json::{Error};
 
 extern crate eve;
 extern crate time;
-
 use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
 use eve::indexes::{WatchDiff};
 use eve::watcher::{SystemTimerWatcher, CompilerWatcher, Watcher};
+
+extern crate iron;
+extern crate staticfile;
+extern crate mount;
+
+use std::path::Path;
+use iron::{Iron, Chain, status, Request, Response, IronResult, IronError, AfterMiddleware};
+use staticfile::Static;
+use mount::Mount;
+use std::thread;
+
+extern crate term_painter;
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
 
 //-------------------------------------------------------------------------
 // Websocket client handler
@@ -68,6 +78,12 @@ impl ClientHandler {
 }
 
 impl Handler for ClientHandler {
+
+    //fn on_request(&mut self, req: &ws::Request) -> Result<ws::Response,ws::Error> {
+        //println!("Handler received request:\n{:?}");
+        //ws::Response::from_request(req)
+    //}
+
     fn on_message(&mut self, msg: Message) -> Result<(), ws::Error> {
         // println!("Server got message '{}'. ", msg);
         if let Message::Text(s) = msg {
@@ -126,6 +142,43 @@ impl Watcher for WebsocketClientWatcher {
 }
 
 //-------------------------------------------------------------------------
+// Static File Server
+//-------------------------------------------------------------------------
+
+struct Custom404;
+
+impl AfterMiddleware for Custom404 {
+    fn catch(&self, _: &mut Request, _: IronError) -> IronResult<Response> {
+        Ok(Response::with((status::NotFound, "File not found...")))
+    }
+}
+
+fn http_server(port:String) {
+    thread::spawn(move || {
+        let mut mount = Mount::new();
+        mount.mount("/", Static::new(Path::new("assets/index.html")));
+        mount.mount("/assets/", Static::new(Path::new("assets/")));
+        mount.mount("/dist/", Static::new(Path::new("dist/")));
+
+        let mut chain = Chain::new(mount);
+        chain.link_after(Custom404);
+
+        let address = format!("127.0.0.1:{}", port);
+        println!("{} HTTP Server at {}... ", BrightGreen.paint("Started:"), address);
+        println!("");
+        Iron::new(chain).http(&address).unwrap();
+    });
+}
+
+fn websocket_server(port:&str, files:&Vec<&str>, persist:Option<&str>) {
+    let address = format!("127.0.0.1:{}", port);
+    println!("{} Websocket Server at {}... ", BrightGreen.paint("Started:"), address);
+    listen(address, |out| {
+        ClientHandler::new(out, files, persist)
+    }).unwrap()
+}
+
+//-------------------------------------------------------------------------
 // Main
 //-------------------------------------------------------------------------
 
@@ -150,15 +203,14 @@ fn main() {
                                .takes_value(true))
                           .get_matches();
 
+    println!("");
     let port = matches.value_of("port").unwrap_or("3012");
     let files = match matches.values_of("EVE_FILES") {
         Some(fs) => fs.collect(),
         None => vec![]
     };
     let persist = matches.value_of("persist");
-    let address = format!("127.0.0.1:{}", port);
-    println!("Listening for messages at {}", address);
-    listen(address, |out| {    
-        ClientHandler::new(out, &files, persist)
-    }).unwrap()
+
+    http_server("8081".to_owned());
+    websocket_server(port, &files, persist);
 }
