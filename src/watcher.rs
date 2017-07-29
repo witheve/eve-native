@@ -102,36 +102,9 @@ impl Watcher for SystemTimerWatcher {
 // Console Watcher
 //-------------------------------------------------------------------------
 
-pub struct ConsoleLogWatcher { }
+pub struct ConsoleWatcher { }
 
-impl Watcher for ConsoleLogWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
-            for t in text {
-                println!("{}",t);
-            }
-        }
-    }
-}
-
-pub struct ConsoleErrorWatcher { }
-
-impl Watcher for ConsoleErrorWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
-            for t in text {
-                eprintln!("{}", t);
-                process::exit(1);
-            }
-        }
-    }
-}
-
-pub struct ConsoleWarnWatcher { }
-
-impl Watcher for ConsoleWarnWatcher {
+impl Watcher for ConsoleWatcher {
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
