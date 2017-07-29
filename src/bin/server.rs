@@ -23,11 +23,16 @@ use eve::indexes::{WatchDiff};
 use eve::watcher::{SystemTimerWatcher, CompilerWatcher, Watcher};
 
 extern crate hyper;
-use hyper::header::ContentLength;
+use hyper::header::{ContentLength, Headers, ContentType};
 use hyper::server::{Http, Request, Response, Service};
+use hyper::mime::CSS;
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
+use std::path::Path;
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
 
 extern crate term_painter;
 use self::term_painter::ToStyle;
@@ -76,10 +81,10 @@ impl ClientHandler {
 
 impl Handler for ClientHandler {
     
-    fn on_request(&mut self, req: &ws::Request) -> Result<ws::Response,ws::Error> {
-        println!("Handler received request:\n{:?}", req);
-        ws::Response::from_request(req)    
-    }
+    //fn on_request(&mut self, req: &ws::Request) -> Result<ws::Response,ws::Error> {
+        //println!("Handler received request:\n{:?}");
+        //ws::Response::from_request(req)    
+    //}
 
     fn on_message(&mut self, msg: Message) -> Result<(), ws::Error> {
         // println!("Server got message '{}'. ", msg);
@@ -139,29 +144,92 @@ impl Watcher for WebsocketClientWatcher {
 }
 
 //-------------------------------------------------------------------------
+// Static File Server
+//-------------------------------------------------------------------------
+
+struct StaticFileServer;
+
+fn file_exists(path: &Path) -> bool {
+    path.is_file() && path.exists()
+}
+
+fn serve_file(mut res: Response, path: &Path) -> Response {
+    let file_path = if file_exists(path) {
+        path
+    } else {
+        //*res.status_mut() = hyper::status::StatusCode::NotFound;
+        Path::new("404.html")
+    };
+
+    let file = read_file_bytes(file_path.to_str().unwrap());
+    //let mut headers = Headers::new();
+    
+    /*
+    headers.set(
+        match path.extension().unwrap().to_str().unwrap() {
+            _ => ContentType(CSS),
+        }
+    );*/
+
+    //let mime: Mime = Mime::from_str(mime_types.mime_for_path(Path::new(file_path))).unwrap();
+    //res.headers_mut().set(ContentType(mime));
+    //let mut res = try!(res.start());
+    //try!(res.write_all(&file));
+    //try!(res.end());
+    res.set_body(file);
+    res
+}
+
+fn read_file_bytes(filename: &str) -> Vec<u8> {
+    let mut file = File::open(filename).unwrap();
+    let mut contents: Vec<u8> = Vec::new();
+    file.read_to_end(&mut contents).unwrap();
+    contents
+}
+
+impl Service for StaticFileServer {
+    // boilerplate hooking up hyper's server types
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+    // The future representing the eventual Response your call will
+    // resolve to. This can change to whatever Future you need.
+    type Future = futures::future::FutureResult<Self::Response, Self::Error>;
+    
+    fn call(&self, req: Request) -> Self::Future {
+        let mut response = Response::new();
+        match (req.method(), req.path()) {
+            (&hyper::Get, path) => {
+                let relative_path = Path::new(path).strip_prefix("/").unwrap();
+                let requested_file = match relative_path.file_name() {
+                    Some(file_name) => file_name.to_str().unwrap(),
+                    None => "",
+                };
+                let file_str = relative_path.to_str().unwrap();
+                match relative_path.to_str().unwrap() {
+                    "index.html" | "" => {
+                        println!("Serving Index!");
+                        response = serve_file(response, Path::new("index.html"));
+                    },
+                    _ => {
+                        println!("Serving {:?}", relative_path);
+                        response = serve_file(response, relative_path);
+                    }
+                };
+            },
+            _ => println!("Unknown Request"),
+        };
+        futures::future::ok(
+            response
+        )
+    }
+}
+
+//-------------------------------------------------------------------------
 // Main
 //-------------------------------------------------------------------------
 
 fn main() {
-    let addr = "0.0.0.0:8080".parse().unwrap();
-    print!("{} HTTP Server at {}... ", Green.paint("Starting:"), addr);
-    let http_server = thread::spawn(move || {
-        let server = Http::new().bind(&addr, || Ok(StaticFileServer)).unwrap();
-		server.run().unwrap();
-	});
-    print!("done.\n");
-    let ws_addr = "0.0.0.0:3012";
-    sleep(Duration::from_millis(1000));
-    print!("{} Websocket Server at {}... ", Green.paint("Starting:"), ws_addr);
-    let ws_server = thread::spawn(move || {
-        listen(ws_addr, |out| {
-            Server { out: out }
-        }).unwrap()
-    });
-    print!("done.\n");
-    loop {}
-
-    /*
     let matches = App::new("Eve")
                           .version("0.4")
                           .author("Kodowa Inc.")
@@ -181,64 +249,27 @@ fn main() {
                                .help("Sets the port for the server")
                                .takes_value(true))
                           .get_matches();
-
-    let port = matches.value_of("port").unwrap_or("3012");
-    let files = match matches.values_of("EVE_FILES") {
-        Some(fs) => fs.collect(),
-        None => vec![]
-    };
-    let persist = matches.value_of("persist");
-    let address = format!("0.0.0.0:{}", port);
-    println!("Listening for messages at {}", address);
-    listen(address, |out| {    
-        ClientHandler::new(out, &files, persist)
-    }).unwrap()
-    */
-}
-
-
-
-
-struct StaticFileServer;
-
-const PHRASE: &'static str = "Hello, World!";
-
-impl Service for StaticFileServer {
-    // boilerplate hooking up hyper's server types
-    type Request = Request;
-    type Response = Response;
-    type Error = hyper::Error;
-    // The future representing the eventual Response your call will
-    // resolve to. This can change to whatever Future you need.
-    type Future = futures::future::FutureResult<Self::Response, Self::Error>;
-
-    fn call(&self, req: Request) -> Self::Future {
-        match (req.method(), req.path()) {
-            (method, path) => println!("{},{}",method,path),
+    let addr = "0.0.0.0:8080".parse().unwrap();
+    print!("{} HTTP Server at {}... ", Green.paint("Starting:"), addr);
+    let http_server = thread::spawn(move || {
+        let server = Http::new().bind(&addr, || Ok(StaticFileServer)).unwrap();
+		server.run().unwrap();
+	});
+    print!("done.\n");
+    let ws_addr = "0.0.0.0:3012";
+    sleep(Duration::from_millis(500));
+    print!("{} Websocket Server at {}... ", Green.paint("Starting:"), ws_addr);
+    let ws_server = thread::spawn(move || {
+        let port = matches.value_of("port").unwrap_or("3012");    
+        let files = match matches.values_of("EVE_FILES") {
+            Some(fs) => fs.collect(),
+            None => vec![]
         };
-        futures::future::ok(
-            Response::new()
-                .with_header(ContentLength(PHRASE.len() as u64))
-                .with_body(PHRASE)
-        )
-    }
-}
-
-
-struct Server {
-    out: Sender,
-}
-
-impl Handler for Server {
-
-    fn on_message(&mut self, msg: Message) -> Result<(),ws::Error> {
-        println!("Server got message '{}'. ", msg);
-        self.out.send(msg)
-    }
-
-    fn on_close(&mut self, code: CloseCode, reason: &str) {
-        println!("WebSocket closing for ({:?}) {}", code, reason);
-        println!("Shutting down server after first connection closes.");
-        self.out.shutdown().unwrap();
-    }
+        let persist = matches.value_of("persist");
+        listen(ws_addr, |out| {
+            ClientHandler::new(out, &files, persist)
+        }).unwrap()
+    });
+    print!("done.\n");
+    loop {}
 }
