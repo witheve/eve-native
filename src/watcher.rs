@@ -9,7 +9,6 @@ use ops::{make_scan, Constraint, Interned, Internable, Interner, Field, RawChang
 use compiler::{Compilation, compilation_to_blocks};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self};
-use std::process;
 use std::fs::File;
 use std::io::Error;
 use std::io::prelude::*;
@@ -98,50 +97,6 @@ impl Watcher for SystemTimerWatcher {
                     }
                 }
             });
-        }
-    }
-}
-
-//-------------------------------------------------------------------------
-// Console Watcher
-//-------------------------------------------------------------------------
-
-pub struct ConsoleLogWatcher { }
-
-impl Watcher for ConsoleLogWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
-            for t in text {
-                println!("{}",t);
-            }
-        }
-    }
-}
-
-pub struct ConsoleErrorWatcher { }
-
-impl Watcher for ConsoleErrorWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
-            for t in text {
-                eprintln!("{}", t);
-                process::exit(1);
-            }
-        }
-    }
-}
-
-pub struct ConsoleWarnWatcher { }
-
-impl Watcher for ConsoleWarnWatcher {
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        for add in diff.adds {
-            let text = add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>().into_iter();
-            for t in text {
-                println!("{}",t);
-            }
         }
     }
 }

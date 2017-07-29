@@ -1563,7 +1563,11 @@ impl Internable {
     pub fn to_string(intern: &Internable) -> &str {
         match intern {
             &Internable::String(ref string) => string,
-            _ => { panic!("to_number on non-number") }
+            &Internable::Number(ref number) => { 
+                println!("{}",number);
+                "hello"
+            },
+            _ => { panic!("to_string on non-string") }
         }
     }
 

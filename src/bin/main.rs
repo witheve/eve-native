@@ -9,7 +9,8 @@ extern crate clap;
 use clap::{Arg, App};
 
 use eve::ops::{ProgramRunner, Persister};
-use eve::watcher::{SystemTimerWatcher, ConsoleLogWatcher, PrintDiffWatcher, FileWriteWatcher, FileReadWatcher};
+use eve::watcher::{SystemTimerWatcher, PrintDiffWatcher, FileWriteWatcher, FileReadWatcher};
+use eve::console::{ConsoleWatcher};
 
 //-------------------------------------------------------------------------
 // Main
@@ -42,7 +43,7 @@ fn main() {
     runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing.clone())));
     runner.program.attach("file/read", Box::new(FileReadWatcher::new(outgoing.clone())));
     runner.program.attach("file/write", Box::new(FileWriteWatcher::new(outgoing.clone())));
-    runner.program.attach("console/log", Box::new(ConsoleLogWatcher{}));
+    runner.program.attach("console", Box::new(ConsoleWatcher{}));
     runner.program.attach("system/print-diff", Box::new(PrintDiffWatcher{}));
 
     if let Some(persist_file) = persist {
