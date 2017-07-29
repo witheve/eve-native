@@ -1549,7 +1549,7 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
     }
     let mut blocks = vec![];
     for cur_path in paths {
-        println!("{} {}", Green.paint("Compiling:"), cur_path.replace("\\","/"));
+        println!("{} {}", BrightCyan.paint("Compiling:"), cur_path.replace("\\","/"));
         let mut file = File::open(&cur_path).expect("Unable to open the file");
         let mut contents = String::new();
         file.read_to_string(&mut contents).expect("Unable to read the file");

@@ -22,17 +22,15 @@ use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, In
 use eve::indexes::{WatchDiff};
 use eve::watcher::{SystemTimerWatcher, CompilerWatcher, Watcher};
 
-extern crate hyper;
-use hyper::header::{ContentLength, Headers, ContentType};
-use hyper::server::{Http, Request, Response, Service};
-use hyper::mime::CSS;
-use std::thread;
-use std::thread::sleep;
-use std::time::Duration;
+extern crate iron;
+extern crate staticfile;
+extern crate mount;
+
 use std::path::Path;
-use std::fs::File;
-use std::io;
-use std::io::prelude::*;
+use iron::Iron;
+use staticfile::Static;
+use mount::Mount;
+use std::thread;
 
 extern crate term_painter;
 use self::term_painter::ToStyle;
@@ -80,10 +78,10 @@ impl ClientHandler {
 }
 
 impl Handler for ClientHandler {
-    
+
     //fn on_request(&mut self, req: &ws::Request) -> Result<ws::Response,ws::Error> {
         //println!("Handler received request:\n{:?}");
-        //ws::Response::from_request(req)    
+        //ws::Response::from_request(req)
     //}
 
     fn on_message(&mut self, msg: Message) -> Result<(), ws::Error> {
@@ -147,71 +145,26 @@ impl Watcher for WebsocketClientWatcher {
 // Static File Server
 //-------------------------------------------------------------------------
 
-struct StaticFileServer;
+fn http_server(port:String) {
+    thread::spawn(move || {
+        let mut mount = Mount::new();
+        mount.mount("/", Static::new(Path::new("index.html")));
+        mount.mount("/assets/", Static::new(Path::new("assets/")));
+        mount.mount("/dist/", Static::new(Path::new("dist/")));
 
-fn file_exists(path: &Path) -> bool {
-    path.is_file() && path.exists()
+        let address = format!("127.0.0.1:{}", port);
+        println!("{} HTTP Server at {}... ", BrightGreen.paint("Started:"), address);
+        println!("");
+        Iron::new(mount).http(&address).unwrap();
+    });
 }
 
-fn serve_file(mut res: Response, path: &Path) -> Response {
-    let file_path = if file_exists(path) {
-        path
-    } else {
-        //*res.status_mut() = hyper::status::StatusCode::NotFound;
-        Path::new("404.html")
-    };
-
-    let file = read_file_bytes(file_path.to_str().unwrap());
-    //let mut headers = Headers::new();
-    
-    /*
-    headers.set(
-        match path.extension().unwrap().to_str().unwrap() {
-            _ => ContentType(CSS),
-        }
-    );*/
-
-    //let mime: Mime = Mime::from_str(mime_types.mime_for_path(Path::new(file_path))).unwrap();
-    //res.headers_mut().set(ContentType(mime));
-    //let mut res = try!(res.start());
-    //try!(res.write_all(&file));
-    //try!(res.end());
-    res.set_body(file);
-    res
-}
-
-fn read_file_bytes(filename: &str) -> Vec<u8> {
-    let mut file = File::open(filename).unwrap();
-    let mut contents: Vec<u8> = Vec::new();
-    file.read_to_end(&mut contents).unwrap();
-    contents
-}
-
-impl Service for StaticFileServer {
-    // boilerplate hooking up hyper's server types
-    type Request = Request;
-    type Response = Response;
-    type Error = hyper::Error;
-    // The future representing the eventual Response your call will
-    // resolve to. This can change to whatever Future you need.
-    type Future = futures::future::FutureResult<Self::Response, Self::Error>;
-    
-    fn call(&self, req: Request) -> Self::Future {
-        let mut response = Response::new();
-        match (req.method(), req.path()) {
-            (&hyper::Get, path) => {
-                let relative_path = Path::new(path).strip_prefix("/").unwrap();
-                match relative_path.to_str().unwrap() {
-                    "index.html" | "" => response = serve_file(response, Path::new("index.html")),
-                    _ => response = serve_file(response, relative_path),
-                };
-            },
-            _ => println!("Unknown Request"),
-        };
-        futures::future::ok(
-            response
-        )
-    }
+fn websocket_server(port:&str, files:&Vec<&str>, persist:Option<&str>) {
+    let address = format!("127.0.0.1:{}", port);
+    println!("{} Websocket Server at {}... ", BrightGreen.paint("Started:"), address);
+    listen(address, |out| {
+        ClientHandler::new(out, files, persist)
+    }).unwrap()
 }
 
 //-------------------------------------------------------------------------
@@ -238,28 +191,15 @@ fn main() {
                                .help("Sets the port for the server")
                                .takes_value(true))
                           .get_matches();
-    let addr = "0.0.0.0:8080".parse().unwrap();
-    print!("{} HTTP Server at {}... ", Green.paint("Starting:"), addr);
-    let http_server = thread::spawn(move || {
-        let server = Http::new().bind(&addr, || Ok(StaticFileServer)).unwrap();
-		server.run().unwrap();
-	});
-    print!("done.\n");
-    let ws_addr = "0.0.0.0:3012";
-    sleep(Duration::from_millis(500));
-    print!("{} Websocket Server at {}... ", Green.paint("Starting:"), ws_addr);
-    let ws_server = thread::spawn(move || {
-        let port = matches.value_of("port").unwrap_or("3012");    
-        let files = match matches.values_of("EVE_FILES") {
-            Some(fs) => fs.collect(),
-            None => vec![]
-        };
-        let persist = matches.value_of("persist");
-        listen(ws_addr, |out| {
-            ClientHandler::new(out, &files, persist)
-        }).unwrap()
-    });
-    print!("done.\n");
-    let _ = http_server.join();
-    let _ = ws_server.join();
+
+    println!("");
+    let port = matches.value_of("port").unwrap_or("3012");
+    let files = match matches.values_of("EVE_FILES") {
+        Some(fs) => fs.collect(),
+        None => vec![]
+    };
+    let persist = matches.value_of("persist");
+
+    http_server("8081".to_owned());
+    websocket_server(port, &files, persist);
 }
