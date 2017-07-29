@@ -1,0 +1,103 @@
+# Canvas
+
+## Logic
+
+Canvas roots are html elements.
+~~~ eve
+search
+  root = [#canvas/root]
+bind
+  root += #html/element
+  root.tagname += "canvas"
+end
+~~~
+
+If an ellipse operation specifies a radius, copy it into radiusX and radiusY.
+~~~ eve
+search
+  [#canvas/path children: operation]
+  operation.type = "ellipse"
+  radius = operation.radius
+bind
+  operation <- [radiusX: radius radiusY: radius]
+end
+~~~
+
+
+## Exports
+
+Export canvas instances.
+~~~ eve
+search
+  canvas = [#canvas/root]
+  instance = [#html/instance element: canvas]
+watch client/websocket
+  ("canvas/export instances" canvas instance)
+end
+~~~
+
+Export canvas paths.
+~~~ eve
+search
+  path = [#canvas/path]
+watch client/websocket
+  ("canvas/export paths" path)
+end
+~~~
+
+Export canvas operations.
+~~~ eve
+search
+  [#canvas/path children: operation]
+watch client/websocket
+  ("canvas/export operations" operation operation.type)
+end
+~~~
+
+Export paths of canvases.
+~~~ eve
+search
+  canvas = [#canvas/root children: path]
+  ix = if s = path.sort then s
+       else if a = path.eve-auto-index then a
+       else 1
+watch client/websocket
+  ("canvas/export canvas paths" canvas path ix)
+end
+~~~
+
+Export operations of paths.
+~~~ eve
+search
+  path = [#canvas/path children: operation]
+  ix = if s = operation.sort then s
+       else if a = operation.eve-auto-index then a
+       else 1
+watch client/websocket
+  ("canvas/export path operations" path operation ix)
+end
+~~~
+
+Export attributes of operations.
+~~~ eve
+search
+  path = [#canvas/path children: operation]
+  lookup[entity: operation attribute value]
+watch client/websocket
+  ("canvas/export operation attributes" operation attribute value)
+end
+~~~
+
+Export path styles.
+~~~ eve
+search
+  path = [#canvas/path]
+  lookup[entity: path attribute value]
+  attribute != "children"
+  attribute != "tag"
+  attribute != "sort"
+  attribute != "eve-auto-index"
+watch client/websocket
+  ("canvas/export path styles" path attribute value)
+end
+~~~

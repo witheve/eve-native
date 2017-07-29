@@ -1,0 +1,179 @@
+# HTML
+
+## Setup
+
+Create a list of trigger and listener tags to send to the client if present.
+~~~ eve
+commit
+  [#html/trigger-tag | trigger: (
+    "html/trigger/focus"
+    "html/trigger/blur")]
+  [#html/listener-tag | listener: (
+    "html/listener/hover"
+    "html/listener/context-menu")]
+end
+~~~
+
+## Logic
+
+Create instances for each root.
+~~~ eve
+search
+  element = [#html/root tagname]
+bind
+  [#html/instance element tagname]
+end
+~~~
+
+Create an instance for each child of a rooted parent.
+~~~ eve
+search
+  element = [#html/element tagname]
+  parent = [#html/instance element: [#html/element children: element]]
+bind
+  [#html/instance element tagname parent]
+end
+~~~
+
+Elements add their tags as classes
+~~~ eve
+search
+  element = [#html/element tag]
+  tag != "html/element"
+  class = string/replace[text: tag replace: "/" with: "-"]
+bind
+  element.class += class
+end
+~~~
+
+Elements with no parents are roots.
+@NOTE: Without a `not(element.ns)`, this applies to SVG elements too...
+~~~ eve
+search
+  element = [#html/element]
+  not([#html/element children: element])
+bind
+  element += #html/root
+end
+~~~
+
+Create an instance for children of external roots.
+~~~ eve
+search
+  element = [#html/element tagname]
+  parent = [#html/root/external children: element]
+bind
+  [#html/instance element tagname parent]
+  parent += #html/element
+end
+~~~
+
+
+## Events
+
+Remove HTML events.
+~~~ eve
+search
+  event = [#html/event]
+commit
+  event := none
+end
+~~~
+
+Inputs with an initial but no value use the initial.
+~~~ eve
+search
+  input = [#html/element tagname: "input"]
+  value = if input.value then input.value else input.initial
+
+bind
+  input.value += value
+end
+~~~
+
+Apply input value changes.
+~~~ eve
+search
+  [#html/event/change element value]
+
+commit
+  element.value := value
+end
+~~~
+
+## Exports
+
+Export all instances.
+~~~ eve
+search
+  instance = [#html/instance tagname element]
+  ns = if n = element.ns then n else ""
+watch client/websocket
+  ("html/export instances" instance element tagname ns)
+end
+~~~
+
+Export roots.
+~~~ eve
+search
+  instance = [#html/instance element: [#html/root]]
+watch client/websocket
+  ("html/export roots" instance)
+end
+~~~
+
+Export instance parents.
+~~~ eve
+search
+  instance = [#html/instance parent]
+watch client/websocket
+  ("html/export parents" instance parent)
+end
+~~~
+
+Export element styles.
+~~~ eve
+search
+  element = [#html/element style]
+  lookup[entity: style attribute value]
+
+watch client/websocket
+  ("html/export styles" style attribute value)
+end
+~~~
+
+Export element attributes.
+~~~ eve
+search
+  instance = [#html/instance element]
+  lookup[entity: element attribute value]
+  attribute != "tag"
+
+watch client/websocket
+  ("html/export attributes" instance attribute value)
+end
+~~~
+
+Export triggers.
+~~~ eve
+search
+  [#html/trigger-tag trigger]
+  element = [#html/element tag: trigger]
+  instance = [#html/instance element]
+
+watch client/websocket
+  ("html/export triggers" instance trigger)
+end
+~~~
+
+Export listeners.
+~~~ eve
+search
+  [#html/listener-tag listener]
+  element = [#html/element tag: listener]
+  instance = [#html/instance element]
+
+watch client/websocket
+  ("html/export listeners" instance listener)
+end
+~~~

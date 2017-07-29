@@ -71,6 +71,7 @@ impl Watcher for SystemTimerWatcher {
             self.timers.insert(add[1], (1, sender));
 
             thread::spawn(move || {
+                let mut tick = 0;
                 loop {
                     thread::sleep(duration);
                     if receiver.try_recv().is_ok() {
@@ -81,10 +82,12 @@ impl Watcher for SystemTimerWatcher {
                     let changes = vec![
                         RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("system/timer/change".to_string()), n: Internable::String("System/timer".to_string()), count: 1},
                         RawChange {e: id.clone(), a: Internable::String("resolution".to_string()), v: internable_resolution.clone(), n: Internable::String("System/timer".to_string()), count: 1},
-                        RawChange {e: id.clone(), a: Internable::String("hours".to_string()), v: Internable::from_number(cur_time.tm_hour as f32), n: Internable::String("System/timer".to_string()), count: 1},
-                        RawChange {e: id.clone(), a: Internable::String("minutes".to_string()), v: Internable::from_number(cur_time.tm_min as f32), n: Internable::String("System/timer".to_string()), count: 1},
-                        RawChange {e: id.clone(), a: Internable::String("seconds".to_string()), v: Internable::from_number(cur_time.tm_sec as f32), n: Internable::String("System/timer".to_string()), count: 1},
+                        RawChange {e: id.clone(), a: Internable::String("hour".to_string()), v: Internable::from_number(cur_time.tm_hour as f32), n: Internable::String("System/timer".to_string()), count: 1},
+                        RawChange {e: id.clone(), a: Internable::String("minute".to_string()), v: Internable::from_number(cur_time.tm_min as f32), n: Internable::String("System/timer".to_string()), count: 1},
+                        RawChange {e: id.clone(), a: Internable::String("second".to_string()), v: Internable::from_number(cur_time.tm_sec as f32), n: Internable::String("System/timer".to_string()), count: 1},
+                        RawChange {e: id.clone(), a: Internable::String("tick".to_string()), v: Internable::from_number(tick as f32), n: Internable::String("System/timer".to_string()), count: 1},
                     ];
+                    tick += 1;
                     match outgoing.send(RunLoopMessage::Transaction(changes)) {
                         Err(_) => break,
                         _ => {}

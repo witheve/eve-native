@@ -136,11 +136,12 @@ macro_rules! many_n (
     ($state:ident, $n:expr, $err:ident, $func:ident) => ({
             let mut items = vec![];
             loop {
+                $state.mark("many_n");
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { $state.pop(); return result; }
-                    ParseResult::Ok(value) => { items.push(value); }
-                    ParseResult::Fail(..) => { break }
+                    ParseResult::Error(..) => { $state.pop(); $state.pop(); return result; }
+                    ParseResult::Ok(value) => { $state.pop(); items.push(value); }
+                    ParseResult::Fail(..) => { $state.backtrack(); break }
                 }
             }
             if items.len() < $n {
@@ -152,11 +153,12 @@ macro_rules! many_n (
     ($state:ident, $n:expr, $func:ident) => ({
             let mut items = vec![];
             loop {
+                $state.mark("many_n");
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { $state.pop(); return result; }
-                    ParseResult::Ok(value) => { items.push(value); }
-                    ParseResult::Fail(..) => { break }
+                    ParseResult::Error(..) => { $state.pop(); $state.pop(); return result; }
+                    ParseResult::Ok(value) => { $state.pop(); items.push(value); }
+                    ParseResult::Fail(..) => { $state.backtrack(); break }
                 }
             }
             if items.len() < $n {
@@ -168,11 +170,12 @@ macro_rules! many_n (
     ($state:ident, $func:ident) => ({
             let mut items = vec![];
             loop {
+                $state.mark("many_n");
                 let result = $func($state);
                 match result {
-                    ParseResult::Error(..) => { $state.pop(); return result; }
-                    ParseResult::Ok(value) => { items.push(value); }
-                    ParseResult::Fail(..) => { break }
+                    ParseResult::Error(..) => { $state.pop(); $state.pop(); return result; }
+                    ParseResult::Ok(value) => { $state.pop(); items.push(value); }
+                    ParseResult::Fail(..) => { $state.backtrack(); break }
                 }
             }
             items
@@ -416,7 +419,11 @@ impl<'a> ParseState<'a> {
         for c in remaining.chars() {
             if maybe_comment {
                 match c {
-                    '/' => { maybe_comment = false; self.consume_line() },
+                    '/' => {
+                        self.consume_line();
+                        self.eat_space();
+                        return;
+                    },
                     _ => { self.ch -= 1; self.pos -= 1; break; }
                 }
             } else {
