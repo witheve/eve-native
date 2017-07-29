@@ -18,7 +18,7 @@ impl Watcher for ConsoleWatcher {
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
             let text = Internable::to_string(interner.get_value(add[1]));
-            match (kind, text) {
+            match (&kind[..], text) {
                 ("log", text) => println!("{}", text),
                 ("warn", text) => println!("{}", text),
                 ("error", text) => eprintln!("{}", text),

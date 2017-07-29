@@ -18,7 +18,7 @@ impl FileWatcher {
     }
 }
 
-fn file_error(changes: &mut Vec<RawChange>, id: &str, why: Error) {
+fn file_error(changes: &mut Vec<RawChange>, id: String, why: Error) {
     let err_id = Internable::String(format!("file/error/{}", id));
     changes.push(RawChange {e: err_id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("file/error".to_string()), n: Internable::String("file/error".to_string()), count: 1});
     changes.push(RawChange {e: err_id.clone(), a: Internable::String("message".to_string()), v: Internable::String(why.to_string()), n: Internable::String("file/error".to_string()), count: 1});
@@ -32,9 +32,9 @@ impl Watcher for FileWatcher {
             let record_id = Internable::to_string(interner.get_value(add[1]));
             let id = Internable::String(format!("file/{}/change/{}", kind, record_id));
             let raw_path = Internable::to_string(interner.get_value(add[2]));
-            let path = Path::new(raw_path);
+            let path = Path::new(&raw_path[..]);
             let mut changes = vec![];
-            match kind {
+            match &kind[..] {
                 "read" => {
                     match File::open(&path) {
                         Err(why) => file_error(&mut changes, record_id, why),
