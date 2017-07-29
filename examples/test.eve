@@ -1,5 +1,4 @@
 commit
-  foo = [#bar #baz text: "wump" sort: 7 name: "dubdub" blarg: "crab" 18: -7 | pet: (pet pet2 "crab")]
-  pet = [#pet name: "blort" age: 13 | owner: foo]
-  pet2 = [#pet age: 3 | owner: foo]
+  [#console/error text: "oh no"]
+  [#console/warn text: "meh"]
 end

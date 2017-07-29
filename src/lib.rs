@@ -44,8 +44,7 @@ pub mod error;
 pub mod watcher;
 pub mod numerics;
 
-pub mod console;
-pub mod file;
+pub mod watchers;
 
 #[macro_use]
 pub mod test_util;

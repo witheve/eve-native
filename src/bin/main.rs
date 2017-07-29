@@ -10,8 +10,8 @@ use clap::{Arg, App};
 
 use eve::ops::{ProgramRunner, Persister};
 use eve::watcher::{SystemTimerWatcher, PrintDiffWatcher};
-use eve::console::ConsoleWatcher;
-use eve::file::FileWatcher;
+use eve::watchers::console::ConsoleWatcher;
+use eve::watchers::file::FileWatcher;
 
 //-------------------------------------------------------------------------
 // Main

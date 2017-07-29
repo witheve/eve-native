@@ -1,14 +1,14 @@
-use indexes::{WatchDiff};
-use ops::{Internable, Interner, RawChange, RunLoopMessage};
+use super::super::indexes::{WatchDiff};
+use super::super::ops::{Internable, Interner, RawChange, RunLoopMessage};
 use std::sync::mpsc::{Sender};
 use std::fs::File;
 use std::io::Error;
 use std::io::prelude::*;
 use std::path::Path;
 
-use watcher::Watcher;
+use super::super::watcher::Watcher;
 
-pub struct FileWatcher { 
+pub struct FileWatcher {
     outgoing: Sender<RunLoopMessage>,
 }
 
