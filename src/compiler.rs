@@ -81,6 +81,12 @@ lazy_static! {
         info.insert("degrees".to_string(), 0);
         m.insert("math/sin".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
+        m.insert("math/absolute".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("math/mod".to_string(), FunctionInfo::new(vec!["value", "by"]));
+        m.insert("math/ceiling".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("math/floor".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("math/round".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("random/number".to_string(), FunctionInfo::new(vec!["seed"]));
         m.insert("string/replace".to_string(), FunctionInfo::new(vec!["text", "replace", "with"]));
         m.insert("string/contains".to_string(), FunctionInfo::new(vec!["text", "substring"]));
         m.insert("string/lowercase".to_string(), FunctionInfo::new(vec!["text"]));
@@ -624,7 +630,7 @@ impl<'a> Node<'a> {
                     Some(v) => v,
                     None => {
                         cur_block.error(span, error::Error::UnknownFunction(op.to_string()));
-                        return None;
+                        return Some(Field::Value(0));
                     }
                 };
                 let mut cur_outputs = vec![Field::Value(0); cmp::max(outputs.len(), info.outputs.len())];
@@ -715,8 +721,9 @@ impl<'a> Node<'a> {
                     cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
                 } else if info.is_aggregate {
                     let mut sub_block = Compilation::new_child(cur_block);
-                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), cur_outputs[0]));
-                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, cur_outputs[0]));
+                    let unified_output = cur_block.get_unified(&cur_outputs[0]);
+                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output));
+                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output));
                 } else {
                     cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
                 }
@@ -757,7 +764,6 @@ impl<'a> Node<'a> {
                             (a, result)
                         },
                         _ => {
-                            println!("{:?}", attr);
                             panic!("Parse Error: Unrecognized node type in lookup attributes.")
                         }
                     };
@@ -1159,7 +1165,7 @@ impl<'a> Node<'a> {
             &mut SubBlock::Not(ref mut cur_block) => {
                 self.sub_blocks(interner, cur_block);
                 let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
-                let mut related = get_input_constraints(&inputs, &valid_ancestors);
+                let mut related = get_input_constraints_transitive(&inputs, &valid_ancestors);
                 related.extend(cur_block.constraints.iter().cloned());
                 let block_name = cur_block.block_name.to_string();
                 let tag_value = interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
@@ -1204,7 +1210,7 @@ impl<'a> Node<'a> {
             &mut SubBlock::If(ref mut cur_block, _, exclusive) => {
                 // get related constraints for all the inputs
                 let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
-                let related = get_input_constraints(&inputs, &valid_ancestors);
+                let related = get_input_constraints_transitive(&inputs, &valid_ancestors);
                 let block_name = cur_block.block_name.to_string();
                 let if_id = interner.string(&format!("{}|sub_block|if|{}", block_name, ix));
 
@@ -1338,6 +1344,13 @@ impl Compilation {
         let ref mut id = self.id;
         let ix = *self.vars.entry(name.to_string()).or_insert_with(|| { *id += 1; *id });
         register(ix)
+    }
+
+    pub fn get_unified(&mut self, reg: &Field) -> Field {
+        match self.unified_registers.get(&reg) {
+            Some(&Field::Register(cur)) => Field::Register(cur),
+            _ => reg.clone()
+        }
     }
 
     pub fn get_unified_register(&mut self, name: &str) -> Provided {

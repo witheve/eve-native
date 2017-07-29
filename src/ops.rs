@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
 use std::cmp;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::cmp::Eq;
 use std::collections::HashSet;
@@ -31,6 +32,7 @@ use std::io::{Write, BufReader, BufWriter};
 use std::fs::{OpenOptions, File};
 use std::f32::consts::{PI};
 use std::mem;
+use rand::{Rng, SeedableRng, XorShiftRng};
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -1876,7 +1878,17 @@ impl Constraint {
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::Filter {ref left, ref right, ..} => { filter_registers(&vec![left, right]) }
             &Constraint::AntiScan {ref key, ..} => { filter_registers(&key.iter().collect()) }
-            &Constraint::IntermediateScan {ref full_key, ..} => { filter_registers(&full_key.iter().collect()) }
+            &Constraint::IntermediateScan {ref full_key, ref value, ..} => {
+                // Not's filter based on their key, but chooses and aggregates should filter based
+                // on their values. If we return the full key when there's a value produced, that
+                // means we'll end up creating loops between nots and chooses. This happened in TTT
+                // where we say not(board.winner) and we use the board in the choose.
+                if value.len() > 0 {
+                    filter_registers(&value.iter().collect())
+                } else {
+                    filter_registers(&full_key.iter().collect())
+                }
+            }
             _ => { vec![] }
         }
     }
@@ -2103,6 +2115,12 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "/" => divide,
         "math/sin" => math_sin,
         "math/cos" => math_cos,
+        "math/absolute" => math_absolute,
+        "math/mod" => math_mod,
+        "math/ceiling" => math_ceiling,
+        "math/floor" => math_floor,
+        "math/round" => math_round,
+        "random/number" => random_number,
         "string/replace" => string_replace,
         "string/contains" => string_contains,
         "string/lowercase" => string_lowercase,
@@ -2227,6 +2245,76 @@ pub fn math_cos(params: Vec<&Internable>) -> Option<Internable> {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
             Some(Internable::from_number((a * PI / 180.0).cos()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_absolute(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.abs()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_mod(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            let b = Internable::to_number(params[1]);
+            Some(Internable::from_number(a % b))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_ceiling(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.ceil()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_floor(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.floor()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_round(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.round()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn random_number(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(seed)] => {
+            let mut rng = XorShiftRng::from_seed([0x123, seed, !seed, seed]);
+            Some(Internable::from_number(rng.next_f32()))
+        },
+        &[&Internable::String(ref text)] => {
+            let mut hash = DefaultHasher::new();
+            text.hash(&mut hash);
+            let seed = hash.finish();
+            let top = (seed << 32) as u32;
+            let bottom = (seed >> 32) as u32;
+            let mut rng = XorShiftRng::from_seed([0x123, top, top - bottom, bottom]);
+            Some(Internable::from_number(rng.next_f32()))
         },
         _ => { None }
     }
@@ -2967,11 +3055,21 @@ impl Program {
             None => {},
         }
         // lookup the tags for this e
-        //  for each tag, lookup (e, a, 0) and (e, a, v)
+        //  for each tag, lookup (e, 0, 0), (e, a, 0) and (e, a, v)
         if let Some(tags) = self.state.index.get(input.e, TAG_INTERNED_ID, 0) {
             for tag in tags {
                 tuple.0 = tag;
+                tuple.1 = 0;
                 tuple.2 = 0;
+                match pipe_lookup.get(&tuple) {
+                    Some(found) => {
+                        for pipe in found.iter() {
+                            pipes.push(pipe);
+                        }
+                    },
+                    None => {},
+                }
+                tuple.1 = input.a;
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {

@@ -1,0 +1,35 @@
+{
+  "name": "eve-native",
+  "version": "0.0.1-alpha2",
+  "description": "Programming designed for humans.",
+  "homepage": "http://witheve.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kodowa/eve-native"
+  },
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "postinstall": "postinstall-build build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Eve Team",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "md5": "^2.2.1",
+    "postinstall-build": "^5.0.1",
+    "setimmediate": "^1.0.5",
+    "uuid": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/md5": "^2.1.32",
+    "@types/uuid": "^3.4.0",
+    "rollup": "^0.45.2",
+    "rollup-plugin-commonjs": "^8.0.2",
+    "rollup-plugin-json": "^2.3.0",
+    "rollup-plugin-node-resolve": "^3.0.0",
+    "rollup-plugin-typescript2": "^0.4.6",
+    "rollup-watch": "^4.3.1",
+    "typescript": "^2.4.1"
+  }
+}
