@@ -271,5 +271,6 @@ fn main() {
         }).unwrap()
     });
     print!("done.\n");
-    loop {}
+    let _ = http_server.join();
+    let _ = ws_server.join();
 }
