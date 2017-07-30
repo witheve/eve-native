@@ -719,46 +719,24 @@ impl EstimateIterPool {
     }
 
     pub fn check_iter(&mut self, iter_ix:u32, iter: EstimateIter) {
-        // @FIXME: it seems like there should be a better way to pull a value
-        // out of a vector and potentially replace it
         let ix = iter_ix as usize;
-        let mut cur = self.iters[ix].take();
-        let cur_estimate = if let Some(ref cur_iter) = cur {
-            cur_iter.estimate()
+        let (replace, release) = if let Some(ref cur_iter) = self.iters[ix] {
+            if cur_iter.estimate() > iter.estimate() {
+                (true, true)
+            } else {
+                (false, false)
+            }
         } else {
-            1_000_000_000
+            (true, false)
         };
-        // println!("{:?}  estimate {:?} less than? {:?}", iter_ix, iter.estimate(), cur_estimate);
 
-        let neue = match cur {
-            None => {
-                Some(iter)
-            },
-            Some(_) if cur_estimate > iter.estimate() => {
-                self.release(cur.take().unwrap());
-                Some(iter)
-            },
-            old => old,
-        };
-        match neue {
-            Some(_) => { self.iters[ix] = neue; },
-            None => {},
-        }
-    }
-
-    pub fn clear(&mut self) {
-        let mut to_release = vec![];
-        for iter in self.iters.iter_mut() {
-            if iter.is_some() {
-                let prev = iter.take();
-                to_release.push(prev.unwrap());
+        if replace {
+            let cur = mem::replace(&mut self.iters[ix], Some(iter));
+            if release {
+                self.release(cur.unwrap());
             }
         }
-        for iter in to_release {
-            self.release(iter);
-        }
     }
-
 }
 
 
@@ -1044,7 +1022,7 @@ pub fn accept_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u
 #[inline(never)]
 pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
-    match cur {
+    let jump = match cur {
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
             // if we have already solved all of this scan's vars, we just move on
             if check_bits(frame.row.solved_fields, *register_mask) {
@@ -1182,7 +1160,11 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
             1
         },
         _ => { 1 }
+    };
+    if jump == bail {
+        iter_pool.iters[iter_ix as usize].take();
     }
+    jump
 }
 
 #[inline(never)]
@@ -2536,7 +2518,6 @@ pub fn check_bit(solved:u64, bit:u32) -> bool {
 
 #[inline(never)]
 pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    iter_pool.clear();
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     while pointer < len {
