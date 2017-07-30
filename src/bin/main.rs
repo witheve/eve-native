@@ -31,6 +31,10 @@ fn main() {
                                .help("The eve files and folders to load")
                                .required(true)
                                .multiple(true))
+                          .arg(Arg::with_name("clean")
+                               .short("C")
+                               .long("Clean")
+                               .help("Starts Eve with a clean database and no watchers (false)"))   
                           .get_matches();
 
     let files = match matches.values_of("EVE_FILES") {
@@ -38,13 +42,16 @@ fn main() {
         None => vec![]
     };
     let persist = matches.value_of("persist");
+    let clean = matches.is_present("clean");
 
     let mut runner = ProgramRunner::new();
     let outgoing = runner.program.outgoing.clone();
-    runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing.clone())));
-    runner.program.attach("file", Box::new(FileWatcher::new(outgoing.clone())));
-    runner.program.attach("console", Box::new(ConsoleWatcher{}));
-    runner.program.attach("system/print-diff", Box::new(PrintDiffWatcher{}));
+    if !clean {
+        runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
+        runner.program.attach(Box::new(FileWatcher::new(outgoing.clone())));
+        runner.program.attach(Box::new(ConsoleWatcher{}));
+        runner.program.attach(Box::new(PrintDiffWatcher{}));
+    }
 
     if let Some(persist_file) = persist {
         let mut persister = Persister::new(persist_file);
