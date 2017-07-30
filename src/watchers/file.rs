@@ -25,6 +25,9 @@ fn file_error(changes: &mut Vec<RawChange>, id: String, why: Error) {
 }
 
 impl Watcher for FileWatcher {
+    fn get_name(& self) -> String {
+        "file".to_string()
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));

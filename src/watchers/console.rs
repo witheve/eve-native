@@ -13,6 +13,9 @@ use self::term_painter::Color::*;
 pub struct ConsoleWatcher {}
 
 impl Watcher for ConsoleWatcher {
+    fn get_name(& self) -> String {
+        "console".to_string()
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
@@ -34,6 +37,9 @@ impl Watcher for ConsoleWatcher {
 pub struct PrintDiffWatcher { }
 
 impl Watcher for PrintDiffWatcher {
+    fn get_name(& self) -> String {
+        "console/print-diff".to_string()
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for remove in diff.removes {
             println!("Printer: - {:?}", remove.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());

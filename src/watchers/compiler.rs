@@ -33,6 +33,9 @@ impl CompilerWatcher {
 }
 
 impl Watcher for CompilerWatcher {
+    fn get_name(& self) -> String {
+        "eve/compiler".to_string()
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for _ in diff.removes {
             println!("WARNING: Compile watcher ignoring removals for now");

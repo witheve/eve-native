@@ -25,6 +25,9 @@ impl SystemTimerWatcher {
 }
 
 impl Watcher for SystemTimerWatcher {
+    fn get_name(& self) -> String {
+        "system/timer".to_string()
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for remove in diff.removes {
             if let Entry::Occupied(mut entry) = self.timers.entry(remove[1]) {
