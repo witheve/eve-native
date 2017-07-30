@@ -41,7 +41,6 @@ pub mod compiler;
 pub mod parser;
 pub mod error;
 
-pub mod watcher;
 pub mod numerics;
 
 pub mod watchers;

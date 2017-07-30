@@ -21,7 +21,7 @@ use std::cmp::Eq;
 use std::collections::HashSet;
 use std::iter::Iterator;
 use std::fmt;
-use watcher::{Watcher};
+use watchers::{Watcher};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use serde::ser::{Serialize, Serializer};

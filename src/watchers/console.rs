@@ -1,11 +1,6 @@
-extern crate tokio_timer;
-extern crate tokio_core;
-extern crate futures;
-extern crate time;
-
 use super::super::indexes::{WatchDiff};
 use super::super::ops::{Internable, Interner};
-use super::super::watcher::Watcher;
+use super::Watcher;
 
 extern crate term_painter;
 use self::term_painter::ToStyle;
@@ -28,6 +23,23 @@ impl Watcher for ConsoleWatcher {
                 ("error", text) => println!("{} {}", BrightRed.paint("Error:"), text),
                 _ => {},
             }
+        }
+    }
+}
+
+//-------------------------------------------------------------------------
+// Print Diff Watcher
+//-------------------------------------------------------------------------
+
+pub struct PrintDiffWatcher { }
+
+impl Watcher for PrintDiffWatcher {
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+        for remove in diff.removes {
+            println!("Printer: - {:?}", remove.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+        }
+        for add in diff.adds {
+            println!("Printer: + {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
         }
     }
 }

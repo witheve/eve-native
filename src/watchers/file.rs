@@ -6,7 +6,7 @@ use std::io::Error;
 use std::io::prelude::*;
 use std::path::Path;
 
-use super::super::watcher::Watcher;
+use super::Watcher;
 
 pub struct FileWatcher {
     outgoing: Sender<RunLoopMessage>,

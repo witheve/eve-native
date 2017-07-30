@@ -9,8 +9,8 @@ extern crate clap;
 use clap::{Arg, App};
 
 use eve::ops::{ProgramRunner, Persister};
-use eve::watcher::{SystemTimerWatcher, PrintDiffWatcher};
-use eve::watchers::console::ConsoleWatcher;
+use eve::watchers::system::{SystemTimerWatcher};
+use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
 
 //-------------------------------------------------------------------------

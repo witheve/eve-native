@@ -20,7 +20,9 @@ extern crate eve;
 extern crate time;
 use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
 use eve::indexes::{WatchDiff};
-use eve::watcher::{SystemTimerWatcher, CompilerWatcher, Watcher};
+use eve::watchers::{Watcher};
+use eve::watchers::system::{SystemTimerWatcher};
+use eve::watchers::compiler::{CompilerWatcher};
 
 extern crate iron;
 extern crate staticfile;
