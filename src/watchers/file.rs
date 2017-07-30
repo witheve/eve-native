@@ -5,7 +5,6 @@ use std::fs::File;
 use std::io::Error;
 use std::io::prelude::*;
 use std::path::Path;
-
 use super::Watcher;
 
 pub struct FileWatcher {
