@@ -3002,8 +3002,8 @@ impl Program {
         self.register_block(block);
     }
 
-    pub fn attach(&mut self, name:&str, watcher:Box<Watcher + Send>) {
-        self.watchers.insert(name.to_string(), watcher);
+    pub fn attach(&mut self, watcher:Box<Watcher + Send>) {
+        self.watchers.insert(watcher.get_name(), watcher);
     }
 
     pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Vec<Instruction>>) {
