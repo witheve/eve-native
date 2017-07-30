@@ -1102,7 +1102,7 @@ impl<'a> Node<'a> {
 
     pub fn sub_blocks(&self, interner:&mut Interner, parent:&mut Compilation) {
         // gather all the registers that we know about at the root
-        let mut parent_registers = HashSet::new();
+        let mut parent_registers:HashSet<Field> = HashSet::new();
         for constraint in parent.constraints.iter() {
             parent_registers.extend(constraint.get_registers().iter());
         }
@@ -1112,20 +1112,18 @@ impl<'a> Node<'a> {
 
         let ref mut ancestor_constraints = parent.constraints;
 
+        let mut block_to_inputs = vec![HashSet::new(); parent.sub_blocks.len()];
         // go through the sub blocks to determine what their inputs are and generate their
         // outputs
         for (ix, sub_block) in parent.sub_blocks.iter_mut().enumerate() {
             let mut sub_registers = HashSet::new();
             sub_registers.extend(sub_block.get_all_registers().iter());
-            let inputs = parent_registers.intersection(&sub_registers).cloned().collect();
-            ancestor_constraints.push(self.sub_block_output(interner, sub_block, ix, &inputs));
+            block_to_inputs[ix].extend(parent_registers.intersection(&sub_registers).cloned());
+            ancestor_constraints.push(self.sub_block_output(interner, sub_block, ix, &block_to_inputs[ix]));
         }
         // now do it again, but this time compile
         for (ix, sub_block) in parent.sub_blocks.iter_mut().enumerate() {
-            let mut sub_registers = HashSet::new();
-            sub_registers.extend(sub_block.get_all_registers().iter());
-            let inputs = parent_registers.intersection(&sub_registers).cloned().collect();
-            self.compile_sub_block(interner, sub_block, ix, &inputs, &ancestor_constraints);
+            self.compile_sub_block(interner, sub_block, ix, &block_to_inputs[ix], &ancestor_constraints);
         }
 
     }
