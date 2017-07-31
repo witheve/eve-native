@@ -389,6 +389,11 @@ impl RoundEntry {
             };
             if remove {
                 self.active_rounds.remove(pos);
+                // we might be doing a swing from positive to negative, which we'd see by getting a
+                // count of -2 instead of -1. If so, we need to insert the negative.
+                if count < -1 {
+                    self.active_rounds.insert(pos, (round as i32) * -1);
+                }
             } else {
                 self.active_rounds.insert(pos, (round as i32) * -1);
             }
