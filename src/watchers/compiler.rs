@@ -11,6 +11,7 @@ use std::collections::hash_map::{Entry};
 //-------------------------------------------------------------------------
 
 pub struct CompilerWatcher {
+    name: String,
     outgoing: Sender<RunLoopMessage>,
     variable_ix: usize,
     variables: HashMap<Interned, Field>,
@@ -20,7 +21,8 @@ pub struct CompilerWatcher {
 
 impl CompilerWatcher {
     pub fn new(outgoing: Sender<RunLoopMessage>) -> CompilerWatcher {
-        CompilerWatcher{outgoing,
+        CompilerWatcher{name: "eve/compiler".to_string(),
+                        outgoing,
                         variable_ix: 0,
                         variables: HashMap::new(),
                         block_types: HashMap::new(),
@@ -34,7 +36,10 @@ impl CompilerWatcher {
 
 impl Watcher for CompilerWatcher {
     fn get_name(& self) -> String {
-        "eve/compiler".to_string()
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for _ in diff.removes {

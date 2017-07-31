@@ -57,7 +57,7 @@ pub struct ClientHandler {
 
 impl ClientHandler {
     pub fn new(out:Sender, files:&Vec<&str>, persist:Option<&str>, clean: bool) -> ClientHandler {
-
+        println!("Creating a new guy!");
         let mut runner = ProgramRunner::new();
         let outgoing = runner.program.outgoing.clone();
         if !clean {
@@ -124,18 +124,22 @@ impl Handler for ClientHandler {
 //-------------------------------------------------------------------------
 
 pub struct WebsocketClientWatcher {
+    name: String,
     outgoing: Sender,
 }
 
 impl WebsocketClientWatcher {
     pub fn new(outgoing: Sender) -> WebsocketClientWatcher {
-        WebsocketClientWatcher { outgoing }
+        WebsocketClientWatcher { name: "client/weboscket".to_string(), outgoing }
     }
 }
 
 impl Watcher for WebsocketClientWatcher {
     fn get_name(& self) -> String {
-        "client/websocket".to_string()
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         let adds:Vec<Vec<JSONInternable>> = diff.adds.iter().map(|row| {

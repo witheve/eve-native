@@ -10,11 +10,23 @@ use self::term_painter::Color::*;
 // Console Watcher
 //-------------------------------------------------------------------------
 
-pub struct ConsoleWatcher {}
+pub struct ConsoleWatcher {
+    name: String,
+}
+
+impl ConsoleWatcher {
+    pub fn new() -> ConsoleWatcher {
+        ConsoleWatcher{name: "console".to_string()}
+    }
+}
+
 
 impl Watcher for ConsoleWatcher {
     fn get_name(& self) -> String {
-        "console".to_string()
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
@@ -34,11 +46,22 @@ impl Watcher for ConsoleWatcher {
 // Print Diff Watcher
 //-------------------------------------------------------------------------
 
-pub struct PrintDiffWatcher { }
+pub struct PrintDiffWatcher {
+    name: String,
+}
+
+impl PrintDiffWatcher {
+    pub fn new() -> PrintDiffWatcher {
+        PrintDiffWatcher{name: "console/print-diff".to_string()}
+    }
+}
 
 impl Watcher for PrintDiffWatcher {
     fn get_name(& self) -> String {
-        "console/print-diff".to_string()
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for remove in diff.removes {
