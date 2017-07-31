@@ -24,6 +24,8 @@ main() {
     cp target/$TARGET/release/server $stage/
     cp -r assets/ $stage/assets
     cp -r dist/ $stage/dist
+    cp -r libraries/ $stage/libraries
+    cp -r examples/ $stage/examples
 
     cd $stage
     tar czf $src/$CRATE_NAME-$TRAVIS_TAG-$TARGET.tar.gz *
