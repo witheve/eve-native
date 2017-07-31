@@ -1865,17 +1865,7 @@ impl Constraint {
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::Filter {ref left, ref right, ..} => { filter_registers(&vec![left, right]) }
             &Constraint::AntiScan {ref key, ..} => { filter_registers(&key.iter().collect()) }
-            &Constraint::IntermediateScan {ref full_key, ref value, ..} => {
-                // Not's filter based on their key, but chooses and aggregates should filter based
-                // on their values. If we return the full key when there's a value produced, that
-                // means we'll end up creating loops between nots and chooses. This happened in TTT
-                // where we say not(board.winner) and we use the board in the choose.
-                if value.len() > 0 {
-                    filter_registers(&value.iter().collect())
-                } else {
-                    filter_registers(&full_key.iter().collect())
-                }
-            }
+            &Constraint::IntermediateScan {ref full_key, ..} => { filter_registers(&full_key.iter().collect()) }
             _ => { vec![] }
         }
     }
@@ -2646,33 +2636,13 @@ impl RoundHolder {
     pub fn compute_anti_output_rounds(&mut self, right_iter: DistinctIter) {
         let (neue, current) = self.fetch_neue_current();
         let mut result = vec![];
-
-        let mut ran = false;
-        let mut first_y = (0,0);
-        for (x_round, x_count) in current.drain(..) {
-            let mut y_total = 0;
-            for (y_round, y_count) in right_iter.clone() {
-                if !ran {
-                    ran = true;
-                    first_y.0 = y_round;
-                    first_y.1 = y_count;
-                }
-                if y_count < 0 {
-                    let round = cmp::max(x_round, y_round);
-                    result.push((round, -1 * y_count * x_count));
-                }
-                if y_count > 0 && y_round > x_round && y_total <= 0 {
-                    let round = cmp::max(x_round, y_round);
-                    result.push((round, -1 * y_count * x_count));
-                }
-                y_total += y_count;
+        for x in current.drain(..) {
+            for y in right_iter.clone() {
+                let round = cmp::max(x.0, y.0);
+                let count = x.1 * y.1 * -1;
+                result.push((round, count))
             }
-            if !ran {
-                result.push((x_round, x_count));
-            }
-            if first_y.0 > x_round {
-                result.push((x_round, x_count));
-            }
+            result.push(x);
         }
         result.sort();
 

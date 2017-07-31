@@ -1163,7 +1163,7 @@ impl<'a> Node<'a> {
             &mut SubBlock::Not(ref mut cur_block) => {
                 self.sub_blocks(interner, cur_block);
                 let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
-                let mut related = get_input_constraints_transitive(&inputs, &valid_ancestors);
+                let mut related = get_input_constraints(&inputs, &valid_ancestors);
                 related.extend(cur_block.constraints.iter().cloned());
                 let block_name = cur_block.block_name.to_string();
                 let tag_value = interner.string(&format!("{}|sub_block|not|{}", block_name, ix));
@@ -1208,7 +1208,7 @@ impl<'a> Node<'a> {
             &mut SubBlock::If(ref mut cur_block, _, exclusive) => {
                 // get related constraints for all the inputs
                 let valid_ancestors = ancestor_constraints.iter().filter(|x| *x != &output_constraint).cloned().collect();
-                let related = get_input_constraints_transitive(&inputs, &valid_ancestors);
+                let related = get_input_constraints(&inputs, &valid_ancestors);
                 let block_name = cur_block.block_name.to_string();
                 let if_id = interner.string(&format!("{}|sub_block|if|{}", block_name, ix));
 
@@ -1247,7 +1247,7 @@ impl<'a> Node<'a> {
 }
 
 pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
-    let mut related = vec![];
+    let mut related = HashSet::new();
     for hay in haystack {
         let mut found = false;
         let outs = hay.get_output_registers();
@@ -1256,11 +1256,43 @@ pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>)
                 found = true;
             }
         }
-        if found {
-            related.push(hay.clone());
+        if found && !related.contains(hay) {
+            related.insert(hay.clone());
         }
     }
-    related
+    // we're going to transitively include things that help us filter this down, but we don't want
+    // to include IntermediateScans because they can easily lead to dependency cycles. Since this
+    // part is a conservative optimization that's fine. Any hard dependency on an intermediate scan
+    // will have been handled above.
+    let mut transitive_needles = needles.clone();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let start_size = related.len();
+        for hay in haystack {
+            if let &Constraint::IntermediateScan {..} = hay { continue; }
+            let mut found = false;
+            let outs = hay.get_filtering_registers();
+            for out in outs.iter() {
+                if transitive_needles.contains(out) {
+                    found = true;
+                }
+            }
+            if found {
+                for filtering in hay.get_filtering_registers() {
+                    transitive_needles.insert(filtering);
+                }
+                if !related.contains(hay) {
+                    related.insert(hay.clone());
+                }
+            }
+        }
+        if related.len() > start_size {
+            changed = true;
+        }
+    }
+    let results = related.drain().collect::<Vec<Constraint>>();
+    results
 }
 
 pub fn get_input_constraints_transitive(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
