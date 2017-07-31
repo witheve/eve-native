@@ -73,9 +73,6 @@ deploy:
     secure: ygVGhWvJwawA//zSG9VoImjIY94gj0M5yW/5oQd8qRxzR5EWArHhpFFnyjnY5rrpNFmcNIYnnIE5rUfBRoh20rDPPEcF2e4Onq547XU9GD2ojghMSPzg1ZZViI4OYM4sJJ8OE/eztfLx0TJeBAf6VFZzWu4pPb+V92D3EeoY1U5dMWWIoy6ahsIgaekSaekS4MDaAVUCfbGYS7K4Em0uZkiS4AtW0SD8yfWotvQYPYB65DRsOB2t0ysaEo2h/ogUvU1nu3ccgvgBiGzOoB/rCbiVE7dIYM93y/YBBL70GaggpxPZDnJSf52o//Jvsg3Eb5IGRyHSLWvnUvxSxjDR7tozjvWxfk0W6ha3zoaaU6JGvEy8I9eA0L+GfTQ5ygYQHL8raRSM+iOvSLyEERB/1iUaUjdjAq+JidRuXf9+piimIqz8+DMYrWWEKXYX1ZYR7gw9hs7D8Z6hi7GQHtvY2SZWA0ERfE9Fqr7FRywliB7NC0ydiPqpEHwAvj+7sf5wktegW3UXQfxGEpoKMBwoImSm3+m/JkQ3ayAUPdDY7mpUHT6D8LC4PoPDFFmoAfaNaHHCzAn5wTBgar5sZhjvl4vaSB1n0sw/vj6+n3eGKOmKAdkT4TArRzsu1rP1A9KqcQLlFmNbK4BKtfYAWAwOurVw9ppst/KMBvnYNRPLaO0=
   file_glob: true
   file: $CRATE_NAME-$TRAVIS_TAG-$TARGET.*
-  local_dir:
-    - assets
-    - dist
   on:
     # TODO Here you can pick which targets will generate binary releases
     # In this example, there are some targets that are tested using the stable

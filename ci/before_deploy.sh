@@ -22,6 +22,8 @@ main() {
 
     # TODO Update this to package the right artifacts
     cp target/$TARGET/release/server $stage/
+    cp -r assets/ $stage/assets
+    cp -r dist/ $stage/dist
 
     cd $stage
     tar czf $src/$CRATE_NAME-$TRAVIS_TAG-$TARGET.tar.gz *
