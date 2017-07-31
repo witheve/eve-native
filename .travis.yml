@@ -7,6 +7,7 @@ services: docker
 sudo: required
 
 env:
+  - NODE_JS_VERSION=8.2
   global:
     - CRATE_NAME=eve
 
@@ -52,12 +53,21 @@ install:
   - source ~/.cargo/env || true
 
 script:
+  - curl -o ~/.nvm/nvm.sh https://raw.githubusercontent.com/creationix/nvm/v0.33.2/nvm.sh # update nvm
+  - bash -c "nvm use $NODE_JS_VERSION" || true
+  - bash -c "source ~/.nvm/nvm.sh; nvm install $NODE_JS_VERSION; node --version"
+  - bash -c "npm install"
   - bash ci/script.sh
 
 after_script: set +e
 
 before_deploy:
   - sh ci/before_deploy.sh
+
+addons:
+  artifacts:
+    debug: true
+    paths: "./dist"
 
 deploy:
   # TODO update `api_key.secure`
