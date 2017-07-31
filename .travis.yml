@@ -7,8 +7,8 @@ services: docker
 sudo: required
 
 env:
-  - NODE_JS_VERSION=8.2
   global:
+    - NODE_JS_VERSION=8.2
     - CRATE_NAME=eve
 
 matrix:
