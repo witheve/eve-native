@@ -57,7 +57,6 @@ pub struct ClientHandler {
 
 impl ClientHandler {
     pub fn new(out:Sender, files:&Vec<&str>, persist:Option<&str>, clean: bool) -> ClientHandler {
-        println!("Creating a new guy!");
         let mut runner = ProgramRunner::new();
         let outgoing = runner.program.outgoing.clone();
         if !clean {
@@ -130,7 +129,7 @@ pub struct WebsocketClientWatcher {
 
 impl WebsocketClientWatcher {
     pub fn new(outgoing: Sender) -> WebsocketClientWatcher {
-        WebsocketClientWatcher { name: "client/weboscket".to_string(), outgoing }
+        WebsocketClientWatcher { name: "client/websocket".to_string(), outgoing }
     }
 }
 
