@@ -49,8 +49,8 @@ fn main() {
     if !clean {
         runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
         runner.program.attach(Box::new(FileWatcher::new(outgoing.clone())));
-        runner.program.attach(Box::new(ConsoleWatcher{}));
-        runner.program.attach(Box::new(PrintDiffWatcher{}));
+        runner.program.attach(Box::new(ConsoleWatcher::new()));
+        runner.program.attach(Box::new(PrintDiffWatcher::new()));
     }
 
     if let Some(persist_file) = persist {

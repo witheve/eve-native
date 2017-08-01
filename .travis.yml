@@ -8,6 +8,7 @@ sudo: required
 
 env:
   global:
+    - NODE_JS_VERSION=8.2
     - CRATE_NAME=eve
 
 matrix:
@@ -52,6 +53,10 @@ install:
   - source ~/.cargo/env || true
 
 script:
+  - curl -o ~/.nvm/nvm.sh https://raw.githubusercontent.com/creationix/nvm/v0.33.2/nvm.sh # update nvm
+  - bash -c "nvm use $NODE_JS_VERSION" || true
+  - bash -c "source ~/.nvm/nvm.sh; nvm install $NODE_JS_VERSION; node --version"
+  - bash -c "npm install"
   - bash ci/script.sh
 
 after_script: set +e
