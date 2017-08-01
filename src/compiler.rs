@@ -672,29 +672,30 @@ impl<'a> Node<'a> {
                         }
                     }
                 }
-                let compiled_outputs:Vec<Option<Field>> = outputs.iter().map(|output| output.compile(interner, cur_block, span)).collect();
+                let compiled_outputs:Vec<Option<Field>> = outputs.iter().map(|output| output.compile(interner, cur_block, span).map(|x| cur_block.get_register_value(x))).collect();
                 for (out_ix, mut attr_output) in cur_outputs.iter_mut().enumerate() {
+                    let cur_value = cur_block.get_register_value(attr_output.clone());
                     let maybe_output = compiled_outputs.get(out_ix).map(|x| x.unwrap());
-                    match (&attr_output, maybe_output) {
-                        (&&mut Field::Value(0), Some(Field::Register(_))) => {
+                    match (&cur_value, maybe_output) {
+                        (&Field::Value(0), Some(Field::Register(_))) => {
                             *attr_output = maybe_output.unwrap();
                         },
-                        (&&mut Field::Value(0), Some(Field::Value(_))) => {
+                        (&Field::Value(0), Some(Field::Value(_))) => {
                             let result_name = format!("__eve_record_function_output{}", cur_block.id);
                             let out_reg = cur_block.get_register(&result_name);
                             cur_block.id += 1;
                             cur_block.constraints.push(make_filter("=", out_reg, maybe_output.unwrap()));
                             *attr_output = out_reg;
                         },
-                        (&&mut Field::Value(_), Some(Field::Register(_))) => {
+                        (&Field::Value(_), Some(Field::Register(_))) => {
                             cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
                             *attr_output = maybe_output.unwrap();
                         },
-                        (&&mut Field::Register(_), Some(Field::Value(_))) |
-                        (&&mut Field::Register(_), Some(Field::Register(_))) => {
+                        (&Field::Register(_), Some(Field::Value(_))) |
+                        (&Field::Register(_), Some(Field::Register(_))) => {
                             cur_block.constraints.push(make_filter("=", *attr_output, maybe_output.unwrap()));
                         },
-                        (&&mut Field::Value(x), None) => {
+                        (&Field::Value(x), None) => {
                             let result_name = format!("__eve_record_function_output{}", cur_block.id);
                             let out_reg = cur_block.get_register(&result_name);
                             cur_block.id += 1;
@@ -703,7 +704,7 @@ impl<'a> Node<'a> {
                             }
                             *attr_output = out_reg;
                         },
-                        (&&mut Field::Value(x), Some(Field::Value(z))) => {
+                        (&Field::Value(x), Some(Field::Value(z))) => {
                             if x != z { panic!("Invalid constant equality in record function: {:?} != {:?}", x, z) }
                             let result_name = format!("__eve_record_function_output{}", cur_block.id);
                             let out_reg = cur_block.get_register(&result_name);
@@ -1001,7 +1002,8 @@ impl<'a> Node<'a> {
             &Node::If { sub_block_id, ref branches, ref outputs, ..} => {
                 let compiled_outputs = if let &Some(ref outs) = outputs {
                     outs.iter().map(|cur| {
-                        match cur.compile(interner, cur_block, span) {
+                        let value = cur.compile(interner, cur_block, span).map(|x| cur_block.get_register_value(x));
+                        match value {
                             Some(val @ Field::Value(_)) => {
                                 let result_name = format!("__eve_if_output{}", cur_block.id);
                                 let out_reg = cur_block.get_register(&result_name);
@@ -1458,6 +1460,11 @@ impl Compilation {
 
     pub fn get_value(&mut self, name: &str) -> Field {
         let reg = self.get_register(name);
+        let val = self.var_values.entry(reg).or_insert(reg);
+        val.clone()
+    }
+
+    pub fn get_register_value(&mut self, reg: Field) -> Field {
         let val = self.var_values.entry(reg).or_insert(reg);
         val.clone()
     }
