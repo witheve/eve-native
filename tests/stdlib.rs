@@ -5,6 +5,181 @@ use eve::ops::{Program, CodeTransaction};
 use eve::compiler::{parse_string};
 
 //--------------------------------------------------------------------
+// math
+//--------------------------------------------------------------------
+
+test!(stdlib_math_floor, {
+    search
+        34 = math!/floor![value: 34.2]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_ceiling, {
+    search
+        35 = math!/ceiling![value: 34.2]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_round, {
+    search
+        34 = math!/round![value: 34.2]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_sin_degrees, {
+    search
+        math!/sin![degrees: 90]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_sin_radians, {
+    search
+        math!/sin![radians: 1.5]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_cos_degrees, {
+    search
+        math!/cos![degrees: 90]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_tan_degrees, {
+    search
+        math!/tan![degrees: 90]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_max, {
+    search
+        pac-man = 10
+        donkey-kong = 13
+        13 = math!/max![a: pac-man, b: donkey-kong]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_min, {
+    search
+        pac-man = 10
+        donkey-kong = 13
+        10 = math!/min![a: pac-man, b: donkey-kong]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_mod, {
+    search
+        1 = math!/mod![value: 5, by: 2]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_absolute, {
+    search
+        [#city name longitude]
+        hours-from-gmt = math!/absolute![value: longitude] * 24 / 360 
+    bind
+        [#success]
+    end
+
+    commit
+        [#city name: "Paris" longitude: 2.33]
+        [#city name: "New York" longitude: -75.61]
+        [#city name: "Los Angeles" longitude: -118.24]
+    end
+});
+
+test!(stdlib_math_pow, {
+    search
+        8 = math!/pow![value: 2 exponent: 3]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_log, {
+    search
+        0 = math!/ln![value: 1]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_to_fixed, {
+    search
+        circumference = 6
+        diameter = 1.910
+        3.14 = math!/to!-fixed![value: (circumference / diameter), to: 2]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_math_to_range, {
+    search
+        y = math!/range![start: 1, stop: 10]
+        10 = gather/count![for: y]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_random_number, {
+    search
+        x = random/number![seed: 3]
+        y = random/number![seed: 3]
+        x = y
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_string_replace, {
+    search
+        string = "I love the flavour."
+        "I love the flavor." = string!/replace![text: string, replace: "flavour", with: "flavor"]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_string_get, {
+    search
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "Q" = string!/get![text: alphabet, at: 17]
+    bind
+        [#success]
+    end
+});
+
+test!(stdlib_string_codepoint_length, {
+    search
+        7 = string!/codepoint!-length![text: "unicode"]
+        2 = string!/codepoint!-length![text: "??"]
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
 // string
 //--------------------------------------------------------------------
 
