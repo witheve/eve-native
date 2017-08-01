@@ -35,13 +35,13 @@ impl Watcher for JsonWatcher {
             match (&kind[..], j_arg) {
                 ("decode", j_arg) => {
                     let v: Value = serde_json::from_str(&j_arg).unwrap();
-                    print_value(v, &mut changes, &mut "ID".to_string(), "object");
+                    value_to_changes(v, &mut changes, &mut record_id.to_string(), "json-object");
                 },
                 ("enocde", j_arg) => {
                     println!("encoding:\n{:?}",j_arg);
                 }
                 _ => {},
-            }
+            }           
             match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
                 Err(_) => break,
                 _ => (),
@@ -50,9 +50,7 @@ impl Watcher for JsonWatcher {
     }
 }
 
-//changes.push(RawChange {e: id.clone(), a: Internable::String("tag".to_string()), v: Internable::String("file/read/change".to_string()), n: Internable::String("file/read".to_string()), count: 1});
-
-fn print_value(value: Value, changes: &mut Vec<RawChange>, id: &mut String, attribute: &str) {
+fn value_to_changes(value: Value, changes: &mut Vec<RawChange>, id: &mut String, attribute: &str) {
     match value {
         Value::Number(n) => {
             if n.is_u64() { 
@@ -69,7 +67,7 @@ fn print_value(value: Value, changes: &mut Vec<RawChange>, id: &mut String, attr
         Value::Bool(ref n) => println!("Bool: {}",n),
         Value::Array(ref n) => {
             for v in n {
-                print_value(v.clone(), changes, id, attribute);
+                value_to_changes(v.clone(), changes, id, attribute);
             }
         },
         Value::Object(ref n) => {
@@ -77,9 +75,7 @@ fn print_value(value: Value, changes: &mut Vec<RawChange>, id: &mut String, attr
             changes.push(RawChange {e: Internable::String(id.clone()), a: Internable::String(attribute.to_string()), v: Internable::String(idq.clone()), n: Internable::String("json/decode".to_string()), count: 1});
             changes.push(RawChange {e: Internable::String(id.clone()), a: Internable::String("tag".to_string()), v: Internable::String("json-object".to_string()), n: Internable::String("json/decode".to_string()), count: 1});
             for key in n.keys() {
-                //let mut idq = id.clone();
-                //idq.push_str("|Object|");
-                print_value(n[key].clone(), changes, &mut idq.clone(), key);
+                value_to_changes(n[key].clone(), changes, &mut idq.clone(), key);
             }
         },
     _ => {},
