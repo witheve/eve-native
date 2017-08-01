@@ -1,0 +1,99 @@
+# Based on the "trust" template v0.1.1
+# https://github.com/japaric/trust/tree/v0.1.1
+
+dist: trusty
+language: rust
+services: docker
+sudo: required
+
+env:
+  global:
+    - NODE_JS_VERSION=8.2
+    - CRATE_NAME=eve
+
+matrix:
+  # TODO These are all the build jobs. Adjust as necessary. Comment out what you
+  # don't need
+  include:
+    # Linux
+    - env: TARGET=x86_64-unknown-linux-gnu
+      rust: nightly-2017-07-12
+    # - env: TARGET=x86_64-unknown-linux-musl
+    #   rust: nightly-2017-07-12
+
+    # OSX
+    - env: TARGET=x86_64-apple-darwin
+      rust: nightly-2017-07-12
+      os: osx
+
+    # *BSD
+    # - env: TARGET=x86_64-unknown-freebsd DISABLE_TESTS=1
+    #   rust: nightly-2017-07-12
+    # - env: TARGET=x86_64-unknown-netbsd DISABLE_TESTS=1
+    #   rust: nightly-2017-07-12
+
+    # Other architectures
+    # - env: TARGET=aarch64-unknown-linux-gnu
+    #   rust: nightly-2017-07-12
+    # - env: TARGET=armv7-unknown-linux-gnueabihf
+    #   rust: nightly-2017-07-12
+    # - env: TARGET=mips-unknown-linux-gnu
+    # - env: TARGET=mips64-unknown-linux-gnuabi64
+    # - env: TARGET=mips64el-unknown-linux-gnuabi64
+    # - env: TARGET=mipsel-unknown-linux-gnu
+    # - env: TARGET=powerpc-unknown-linux-gnu
+    # - env: TARGET=powerpc64-unknown-linux-gnu
+    # - env: TARGET=powerpc64le-unknown-linux-gnu
+    # - env: TARGET=s390x-unknown-linux-gnu DISABLE_TESTS=1
+
+before_install: set -e
+
+install:
+  - sh ci/install.sh
+  - source ~/.cargo/env || true
+
+script:
+  - curl -o ~/.nvm/nvm.sh https://raw.githubusercontent.com/creationix/nvm/v0.33.2/nvm.sh # update nvm
+  - bash -c "nvm use $NODE_JS_VERSION" || true
+  - bash -c "source ~/.nvm/nvm.sh; nvm install $NODE_JS_VERSION; node --version"
+  - bash -c "npm install"
+  - bash ci/script.sh
+
+after_script: set +e
+
+before_deploy:
+  - sh ci/before_deploy.sh
+
+deploy:
+  # TODO update `api_key.secure`
+  # - Create a `public_repo` GitHub token. Go to: https://github.com/settings/tokens/new
+  # - Encrypt it: `travis encrypt 0123456789012345678901234567890123456789
+  # - Paste the output down here
+  api_key:
+    secure: ygVGhWvJwawA//zSG9VoImjIY94gj0M5yW/5oQd8qRxzR5EWArHhpFFnyjnY5rrpNFmcNIYnnIE5rUfBRoh20rDPPEcF2e4Onq547XU9GD2ojghMSPzg1ZZViI4OYM4sJJ8OE/eztfLx0TJeBAf6VFZzWu4pPb+V92D3EeoY1U5dMWWIoy6ahsIgaekSaekS4MDaAVUCfbGYS7K4Em0uZkiS4AtW0SD8yfWotvQYPYB65DRsOB2t0ysaEo2h/ogUvU1nu3ccgvgBiGzOoB/rCbiVE7dIYM93y/YBBL70GaggpxPZDnJSf52o//Jvsg3Eb5IGRyHSLWvnUvxSxjDR7tozjvWxfk0W6ha3zoaaU6JGvEy8I9eA0L+GfTQ5ygYQHL8raRSM+iOvSLyEERB/1iUaUjdjAq+JidRuXf9+piimIqz8+DMYrWWEKXYX1ZYR7gw9hs7D8Z6hi7GQHtvY2SZWA0ERfE9Fqr7FRywliB7NC0ydiPqpEHwAvj+7sf5wktegW3UXQfxGEpoKMBwoImSm3+m/JkQ3ayAUPdDY7mpUHT6D8LC4PoPDFFmoAfaNaHHCzAn5wTBgar5sZhjvl4vaSB1n0sw/vj6+n3eGKOmKAdkT4TArRzsu1rP1A9KqcQLlFmNbK4BKtfYAWAwOurVw9ppst/KMBvnYNRPLaO0=
+  file_glob: true
+  file: $CRATE_NAME-$TRAVIS_TAG-$TARGET.*
+  on:
+    # TODO Here you can pick which targets will generate binary releases
+    # In this example, there are some targets that are tested using the stable
+    # and nightly channels. This condition makes sure there is only one release
+    # for such targets and that's generated using the stable channel
+    # condition: $TRAVIS_RUST_VERSION = stable
+    tags: true
+  provider: releases
+  skip_cleanup: true
+
+cache: cargo
+before_cache:
+  # Travis can't cache files that are not readable by "others"
+  - chmod -R a+r $HOME/.cargo
+
+branches:
+  only:
+    # release tags
+    - /^v\d+\.\d+\.\d+.*$/
+    # - master
+
+notifications:
+  email:
+    on_success: never

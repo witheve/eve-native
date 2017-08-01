@@ -20,12 +20,12 @@ end
 Draw a clock using SVG. We find the angle for each hand using time and let the `#clock-hand` block take care of the rest.
 
 search
-  [#time hours minutes seconds]
+  [#time hour minute second]
 
 bind
   [#svg/root viewBox: "0 0 100 100", width: "300px", children:
     [#svg/circle sort: 1, cx: 50, cy: 50, r: 45, fill: "#0B79CE"]
-    [#clock-hand #hour-hand sort: 2, degrees: 30 * hours, length: 30, stroke: "#023963"]
-    [#clock-hand #minute-hand sort: 3, degrees: 6 * minutes, length: 40, stroke: "#023963"]
-    [#clock-hand #second-hand sort: 4, degrees: 6 * seconds, length: 40, stroke: "#ce0b46"]]
+    [#clock-hand #hour-hand sort: 2, degrees: 30 * hour, length: 30, stroke: "#023963"]
+    [#clock-hand #minute-hand sort: 3, degrees: 6 * minute, length: 40, stroke: "#023963"]
+    [#clock-hand #second-hand sort: 4, degrees: 6 * second, length: 40, stroke: "#ce0b46"]]
 end

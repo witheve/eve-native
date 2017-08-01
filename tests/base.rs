@@ -1,55 +1,8 @@
+#[macro_use]
 extern crate eve;
 
 use eve::ops::{Program, CodeTransaction};
 use eve::compiler::{parse_string};
-
-//--------------------------------------------------------------------
-// Helper macros
-//--------------------------------------------------------------------
-
-// macro_rules! n (($p:ident, $i:expr) => ({ $p.state.interner.number_id($i as f32) }));
-macro_rules! s (($p:ident, $i:expr) => ({ $p.state.interner.string_id(&$i) }));
-// macro_rules! txn (($p:ident, [ $($t:ident ($e:ident, $a:expr, $v:expr),)* ]) => ({
-//     let mut txn = Transaction::new();
-//     $(txn.input(s!($p, "insert|".to_owned() + stringify!($e)), s!($p, $a), $t!($p, $v), 1);)*
-//     txn.exec(&mut $p);
-// }));
-macro_rules! valid (($blocks:tt) => ({
-    let mut program = blocks!($blocks);
-    assert!(program.state.index.check(0, s!(program, "tag"), s!(program, "success")), "No success record");
-}));
-
-macro_rules! blocks (($info:tt) => ({
-    let mut program = Program::new();
-    // @FIXME: any occurrence of search/commit/etc. will be replaced here...
-    let stringy = stringify!($info).replace("\n", " ")
-        .replace("# ", "#")
-        .replace("search", "\nsearch")
-        .replace("commit", "\ncommit")
-        .replace("bind", "\nbind")
-        .replace("watch", "\nwatch")
-        .replace("project", "\nproject")
-        .replace("end", "\nend\n")
-        .replace(" ! [", "[")
-        .replace(" ! / ", "/")
-        .replace(" ! - ", "-")
-        .replace(": =", ":=")
-        .replace(" . ", ".");
-    println!("{}", stringy);
-    let blocks = parse_string(&mut program, &stringy, "test");
-    let mut txn = CodeTransaction::new();
-    txn.exec(&mut program, blocks, vec![]);
-
-    program
-}));
-
-macro_rules! test (($name:ident, $body:tt) => (
-    #[test]
-    fn $name() {
-        valid!($body);
-    }
-
-));
 
 //--------------------------------------------------------------------
 // Basic binds
@@ -520,6 +473,22 @@ test!(base_multi_function_multi_field_filtered, {
     end
 });
 
+test!(base_multi_function_multi_field_filtered_via_equality, {
+    search
+        (value, z) = string!/split![text:"hey dude", by: " "]
+        z = 1
+    bind
+        [#token value]
+    end
+
+    search
+        [#token value: "hey"]
+        not([#token value: "dude"])
+    bind
+        [#success]
+    end
+});
+
 test!(base_multi_function_multi_field_filtered_expression, {
     search
         (value, ix) = string!/split![text:"hey dude", by: " "]
@@ -759,6 +728,31 @@ test!(base_choose_filtered_multi_some, {
     end
 });
 
+test!(base_choose_filtered_multi_some_via_equality, {
+    search
+        [#foo x]
+        (a, z) = if x > 3 then (x, "large")
+                  else ("unknown", "small")
+        a = 10
+    bind
+        [#zomg x z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z:"large"]
+        not([#zomg x:3])
+        not([#zomg x:100])
+    bind
+        [#success]
+    end
+});
+
 test!(base_choose_filtered_multi_all, {
     search
         [#foo x]
@@ -867,6 +861,70 @@ test!(base_choose_not_joinless_failure, {
 
     search
         [#zomg a:"with app"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_lookup, {
+    search
+        f = [#foo]
+        type = if lookup![entity: f] then "record"
+               else "value"
+    bind
+        [#value type]
+    end
+
+    commit
+        [#foo zomg: 4]
+        [#app bar: 3]
+    end
+
+    search
+        [#value type: "record"]
+        not([#value type: "value"])
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_lookup_rounds, {
+    search
+        [#foo value]
+        type = if lookup![entity: value] then "record"
+               else "value"
+    bind
+        [#value type]
+    end
+
+    commit
+        [#foo value: [#zomg]]
+        [#app bar: 3]
+    end
+
+    search
+        f = [#foo]
+    commit
+        f.value := none
+    end
+
+    search
+        f = [#foo]
+        not(f.value)
+    bind
+        f.blah += "woot|a"
+    end
+
+    search
+        f = [#foo blah]
+    bind
+        [#foo value: f]
+        [#foo d:"yo" value: f]
+    end
+
+    search
+        [#value type: "record"]
+        not([#value type: "value"])
     bind
         [#success]
     end
@@ -1205,6 +1263,91 @@ test!(base_aggregate_count_remove, {
     end
 });
 
+test!(base_aggregate_filtered, {
+    search
+        foo = [#foo]
+        3 = gather!/count![for:foo]
+    bind
+        [#bar]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        not([#bar])
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_filtered_positive, {
+    search
+        foo = [#foo]
+        3 = gather!/count![for:foo]
+    bind
+        [#bar]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+    end
+
+    search
+        [#bar]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_filtered_join, {
+    search
+        [#expected total]
+        foo = [#foo]
+        total = gather!/count![for:foo]
+    bind
+        [#bar]
+    end
+
+    commit
+        [#expected total: 3]
+        [#foo value: 1]
+        [#foo value: 2]
+    end
+
+    search
+        not([#bar])
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_filtered_join_positive, {
+    search
+        [#expected total]
+        foo = [#foo]
+        total = gather!/count![for:foo]
+    bind
+        [#bar]
+    end
+
+    commit
+        [#expected total: 3]
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+    end
+
+    search
+        [#bar]
+    bind
+        [#success]
+    end
+});
 
 test!(base_aggregate_average, {
     search
@@ -1292,6 +1435,194 @@ test!(base_aggregate_transitive_choose, {
 
     search
         [#total total:18]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_in_choose, {
+    search
+        foo = [#foo]
+        total = if b = [#bar] then gather!/count![for: b]
+                else 0
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo]
+        [#foo value: 8]
+    end
+
+    search
+        [#total total:0]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_in_choose_valid, {
+    search
+        foo = [#foo]
+        total = if b = [#bar] then gather!/count![for: b]
+                else 0
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo]
+        [#foo value: 8]
+        [#bar a: 1]
+        [#bar a: 2]
+        [#bar a: 3]
+    end
+
+    search
+        [#total total:3]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_in_choose_remove, {
+    search
+        foo = [#foo]
+        total = if b = [#bar] then gather!/count![for: b]
+                else 0
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo]
+        [#foo value: 8]
+        [#bar a: 1]
+        [#bar a: 2]
+        [#bar a: 3]
+    end
+
+    search
+        [#total total:3]
+        b = [#bar a: 1]
+    commit
+        b := none
+    end
+
+    search
+        [#total total:2]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_in_choose_remove_and_add, {
+    search
+        foo = [#foo]
+        total = if b = [#bar] then gather!/count![for: b]
+                else 0
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo]
+        [#foo value: 8]
+        [#bar a: 1]
+        [#bar a: 2]
+        [#bar a: 3]
+    end
+
+    search
+        [#total total:3]
+        b = [#bar a: 1]
+    commit
+        b := none
+    end
+
+    search
+        [#total total:2]
+    commit
+        [#bar a: 4]
+        [#bar a: 5]
+    end
+
+    search
+        [#total total:4]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_in_choose_simple_rounds, {
+    search
+        foo = [#foo]
+        total = if b = [#bar] then gather!/count![for: b]
+                else 0
+    bind
+        [#total total]
+    end
+
+    commit
+        [#foo]
+    end
+
+    search
+        [#foo]
+    bind
+        [#bar value: 1]
+    end
+
+    search
+        [#bar value]
+        value < 5
+    commit
+        [#bar value: value + 1]
+    end
+
+    search
+        [#total total:5]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_in_choose_rounds_retraction, {
+    search
+        foo = [#zomg]
+        total = if b = [#bar] then gather!/count![for: b]
+                else 0
+    bind
+        [#total | total]
+    end
+
+    commit
+        [#foo]
+        [#zomg]
+    end
+
+    search
+        [#foo]
+    bind
+        [#bar value: 1]
+    end
+
+    search
+        [#bar value]
+        value < 5
+    bind
+        [#bar value: value + 1]
+    end
+
+    search
+        [#bar value: 5]
+        foo = [#foo]
+    commit
+        foo := none
+    end
+
+    search
+        [#total total:0]
     bind
         [#success]
     end

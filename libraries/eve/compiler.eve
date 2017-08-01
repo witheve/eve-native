@@ -1,0 +1,28 @@
+search
+  block = [#eve/compiler/block type]
+watch eve/compiler
+  ("block" block type)
+end
+
+search
+  block = [#eve/compiler/block constraint:
+    [#eve/compiler/scan entity attribute value]]
+watch eve/compiler
+  ("scan" block entity attribute value)
+end
+
+search
+  block = [#eve/compiler/block constraint:
+    [#eve/compiler/output entity attribute value]]
+watch eve/compiler
+  ("output" block entity attribute value)
+end
+
+search
+  var = [#eve/compiler/variable]
+  name = if n = var.name then n else var
+
+watch eve/compiler
+  ("variable" var name)
+end
+

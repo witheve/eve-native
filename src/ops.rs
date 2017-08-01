@@ -6,6 +6,8 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
 use hash::map::{DangerousKeys};
@@ -13,13 +15,14 @@ use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
 use std::cmp;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::cmp::Eq;
 use std::collections::HashSet;
 use std::iter::Iterator;
 use std::fmt;
-use watcher::{Watcher};
-use std::sync::mpsc::{SyncSender, Sender, Receiver};
+use watchers::{Watcher};
+use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use serde::ser::{Serialize, Serializer};
 use serde::de::{Deserialize, Deserializer, Visitor};
@@ -29,6 +32,7 @@ use std::io::{Write, BufReader, BufWriter};
 use std::fs::{OpenOptions, File};
 use std::f32::consts::{PI};
 use std::mem;
+use rand::{Rng, SeedableRng, XorShiftRng};
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -100,9 +104,9 @@ impl Change {
     pub fn with_round_count(&self, round:Round, count:Count) -> Change {
         Change {e: self.e, a: self.a, v: self.v, n: self.n, round, transaction: self.transaction, count}
     }
-    pub fn print(&self, prog:&Program) -> String {
-        let a = prog.state.interner.get_value(self.a).print();
-        let mut v = prog.state.interner.get_value(self.v).print();
+    pub fn print(&self, interner:&Interner) -> String {
+        let a = interner.get_value(self.a).print();
+        let mut v = interner.get_value(self.v).print();
         v = if v.contains("|") { format!("<{}>", self.v) } else { v };
         format!("Change (<{}>, {:?}, {})  {}:{}:{}", self.e, a, v, self.transaction, self.round, self.count)
     }
@@ -701,7 +705,7 @@ impl EstimateIterPool {
     }
 
     pub fn get_multi_func(&mut self) -> EstimateIter {
-        match self.available_funcs.pop() {
+        match self.available_multi_funcs.pop() {
             Some(iter) => iter,
             None => EstimateIter::MultiFunction { estimate:0, results:None, outputs:None, ix: 0, constraint:0 },
         }
@@ -715,33 +719,24 @@ impl EstimateIterPool {
     }
 
     pub fn check_iter(&mut self, iter_ix:u32, iter: EstimateIter) {
-        // @FIXME: it seems like there should be a better way to pull a value
-        // out of a vector and potentially replace it
         let ix = iter_ix as usize;
-        let mut cur = self.iters[ix].take();
-        let cur_estimate = if let Some(ref cur_iter) = cur {
-            cur_iter.estimate()
+        let (replace, release) = if let Some(ref cur_iter) = self.iters[ix] {
+            if cur_iter.estimate() > iter.estimate() {
+                (true, true)
+            } else {
+                (false, false)
+            }
         } else {
-            1_000_000_000
+            (true, false)
         };
-        // println!("{:?}  estimate {:?} less than? {:?}", iter_ix, iter.estimate(), cur_estimate);
 
-        let neue = match cur {
-            None => {
-                Some(iter)
-            },
-            Some(_) if cur_estimate > iter.estimate() => {
-                self.release(cur.take().unwrap());
-                Some(iter)
-            },
-            old => old,
-        };
-        match neue {
-            Some(_) => { self.iters[ix] = neue; },
-            None => {},
+        if replace {
+            let cur = mem::replace(&mut self.iters[ix], Some(iter));
+            if release {
+                self.release(cur.unwrap());
+            }
         }
     }
-
 }
 
 
@@ -901,6 +896,7 @@ pub struct Counters {
     accept: u64,
     accept_bail: u64,
     accept_ns: u64,
+    inserts: u64,
     considered: u64,
 }
 
@@ -934,7 +930,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new() -> Frame {
-        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
+        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
     pub fn get_register(&self, register:u32) -> Interned {
@@ -1026,7 +1022,7 @@ pub fn accept_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u
 #[inline(never)]
 pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
-    match cur {
+    let jump = match cur {
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
             // if we have already solved all of this scan's vars, we just move on
             if check_bits(frame.row.solved_fields, *register_mask) {
@@ -1076,7 +1072,8 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                         } else {
                             panic!("Function output is not a register");
                         };
-                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ..} = iter {
+                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ref mut constraint, ..} = iter {
+                            *constraint = cur_constraint;
                             *estimate = 1;
                             *result = id;
                             *output = reg;
@@ -1105,7 +1102,8 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                 let mut iter = iter_pool.get_multi_func();
                 match result {
                     Some(mut result_values) => {
-                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ..} = iter {
+                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ref mut constraint, ..} = iter {
+                            *constraint = cur_constraint;
                             *estimate = 1;
                             *results = Some(result_values.drain(..).map(|mut row| {
                                 row.drain(..).map(|field| program.interner.internable_to_id(field)).collect()
@@ -1162,7 +1160,11 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
             1
         },
         _ => { 1 }
+    };
+    if jump == bail {
+        iter_pool.iters[iter_ix as usize].take();
     }
+    jump
 }
 
 #[inline(never)]
@@ -1173,6 +1175,7 @@ pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, fram
         // println!("Iter Next: {:?}", iter);
         match iter {
             Some(ref mut cur) => {
+                // if program.debug { println!("iter next: {:?} -> estimate {:?}", cur.constraint(), cur.estimate()); }
                 match cur.next(&mut frame.row, iterator) {
                     false => {
                         if cur.estimate() != 0 {
@@ -1248,7 +1251,7 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             let checked = program.index.check(resolved_e, resolved_a, resolved_v);
-            if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
+            // if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
             if checked { 1 } else { bail }
         },
         &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, .. } => {
@@ -1379,6 +1382,7 @@ pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
+                frame.counters.inserts += 1;
                 program.index.distinct(output, rounds);
             }
         },
@@ -1398,6 +1402,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count);
+                frame.counters.inserts += 1;
                 // if program.debug { println!("     -> Commit {:?}", output); }
                 rounds.commit(output, ChangeType::Insert)
             }
@@ -1409,6 +1414,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1419,6 +1425,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1429,6 +1436,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
+                frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
             }
         },
@@ -1447,7 +1455,8 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                program.intermediates.buffer(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
+                frame.counters.inserts += 1;
+                program.intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
         &Constraint::Aggregate {ref group, ref params, ref output_key, ref add, ref remove, ..} => {
@@ -1456,8 +1465,8 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let resolved_params:Vec<Internable> = { params.iter().map(|v| interner.get_value(frame.resolve(v)).clone()).collect() };
             let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
             for &(round, count) in program.rounds.get_output_rounds().iter() {
-                // @TODO: do aggregates need to be buffered as well?
                 let action = if count < 0 { remove } else { add };
+                frame.counters.inserts += 1;
                 program.intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
             }
         },
@@ -1479,11 +1488,12 @@ pub fn watch(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fram
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Watch { ref registers, ..} => {
-            let resolved = registers.iter().map(|x| frame.resolve(x)).collect();
+            let resolved:Vec<Interned> = registers.iter().map(|x| frame.resolve(x)).collect();
             let mut total = 0;
             for &(_, count) in program.rounds.get_output_rounds().iter() {
                 total += count;
             }
+            frame.counters.inserts += 1;
             program.watch(name, resolved, total);
         },
         _ => unreachable!()
@@ -1529,6 +1539,14 @@ impl Internable {
         match intern {
             &Internable::Number(num) => unsafe { transmute::<u32, f32>(num) },
             _ => { panic!("to_number on non-number") }
+        }
+    }
+
+    pub fn to_string(intern: &Internable) -> String {
+        match intern {
+            &Internable::String(ref string) => string.to_string(),
+            &Internable::Number(_) => Internable::to_number(intern).to_string(),
+            _ => { panic!("to_string on non-string/number") }
         }
     }
 
@@ -2070,7 +2088,17 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "/" => divide,
         "math/sin" => math_sin,
         "math/cos" => math_cos,
+        "math/absolute" => math_absolute,
+        "math/mod" => math_mod,
+        "math/ceiling" => math_ceiling,
+        "math/floor" => math_floor,
+        "math/round" => math_round,
+        "random/number" => random_number,
         "string/replace" => string_replace,
+        "string/contains" => string_contains,
+        "string/lowercase" => string_lowercase,
+        "string/uppercase" => string_uppercase,
+        "string/length" => string_length,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -2083,6 +2111,7 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
     let func = match op {
         "string/split" => string_split,
+        "string/index-of" => string_index_of,
         _ => panic!("Unknown multi function: {:?}", op)
     };
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
@@ -2109,7 +2138,6 @@ pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
         ">=" => gte,
         "<" => lt,
         "<=" => lte,
-        "contains" => string_contains,
         _ => panic!("Unknown filter {:?}", op)
     };
     Constraint::Filter {op:op.to_string(), func, left, right, param_mask }
@@ -2149,15 +2177,6 @@ numeric_filter!(gt, >);
 numeric_filter!(gte, >=);
 numeric_filter!(lt, <);
 numeric_filter!(lte, <=);
-
-pub fn string_contains(haystack:&Internable, needle:&Internable) -> bool {
-    match (haystack, needle) {
-        (&Internable::String(ref a), &Internable::String(ref b)) => {
-            a.contains(b)
-        },
-        _ => { false }
-    }
-}
 
 //-------------------------------------------------------------------------
 // Functions
@@ -2204,10 +2223,128 @@ pub fn math_cos(params: Vec<&Internable>) -> Option<Internable> {
     }
 }
 
+pub fn math_absolute(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.abs()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_mod(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            let b = Internable::to_number(params[1]);
+            Some(Internable::from_number(a % b))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_ceiling(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.ceil()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_floor(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.floor()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_round(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let a = Internable::to_number(params[0]);
+            Some(Internable::from_number(a.round()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn random_number(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(seed)] => {
+            let mut rng = XorShiftRng::from_seed([0x123, seed, !seed, seed]);
+            Some(Internable::from_number(rng.next_f32()))
+        },
+        &[&Internable::String(ref text)] => {
+            let mut hash = DefaultHasher::new();
+            text.hash(&mut hash);
+            let seed = hash.finish();
+            let top = (seed << 32) as u32;
+            let bottom = (seed >> 32) as u32;
+            let mut rng = XorShiftRng::from_seed([0x123, top, top - bottom, bottom]);
+            Some(Internable::from_number(rng.next_f32()))
+        },
+        _ => { None }
+    }
+}
+
 pub fn string_replace(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref replace), &Internable::String(ref with)] => {
             Some(Internable::String(text.replace(replace, with)))
+        },
+        _ => { None }
+    }
+}
+
+pub fn string_contains(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref substring)] => {
+            if text.contains(substring) {
+                Some(Internable::String("true".to_owned()))
+            } else {
+                None
+            }
+        },
+        _ => { None }
+    }
+}
+
+pub fn string_lowercase(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(text.to_lowercase())),
+        _ => None
+    }
+}
+
+pub fn string_uppercase(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(text.to_uppercase())),
+        _ => None
+    }
+}
+
+pub fn string_length(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => {
+            Some(Internable::from_number(UnicodeSegmentation::graphemes(text.as_str(), true).count() as f32))
+        },
+        _ => None
+    }
+}
+
+pub fn string_index_of(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref substring)] => {
+            let results = text.match_indices(substring).map(|(ix, _)| {
+                vec![Internable::from_number((ix + 1) as f32)]
+            }).collect();
+            Some(results)
         },
         _ => { None }
     }
@@ -2370,9 +2507,7 @@ pub fn check_bit(solved:u64, bit:u32) -> bool {
 //-------------------------------------------------------------------------
 
 #[inline(never)]
-pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    let mut iter_pool = EstimateIterPool::new();
-    // println!("Doing work");
+pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     while pointer < len {
@@ -2392,14 +2527,14 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
                 accept_intermediate_field(program, frame, from, value, bail)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
-                get_iterator(program, block_info, &mut iter_pool, frame, iterator, constraint, bail)
+                get_iterator(program, block_info, iter_pool, frame, iterator, constraint, bail)
             },
             Instruction::IteratorNext { iterator, bail, finished_mask } => {
-                iterator_next(program, &mut iter_pool, frame, iterator, bail, finished_mask)
+                iterator_next(program, iter_pool, frame, iterator, bail, finished_mask)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();
-                let next = accept(program, block_info, &mut iter_pool, frame, constraint, iterator, bail);
+                let next = accept(program, block_info, iter_pool, frame, constraint, iterator, bail);
                 // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
                 next
             },
@@ -2435,6 +2570,8 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, frame:&mut 
 // Round holder
 //-------------------------------------------------------------------------
 
+type RoundCount = (Round, Count);
+
 #[derive(Debug)]
 pub enum RoundState {
     Equal,
@@ -2443,8 +2580,8 @@ pub enum RoundState {
 }
 
 pub struct RoundHolder {
-    pub output_rounds: Vec<(Round, Count)>,
-    prev_output_rounds: Vec<(Round, Count)>,
+    pub output_rounds: Vec<RoundCount>,
+    prev_output_rounds: Vec<RoundCount>,
     rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
     commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
     staged_commit_keys: Vec<(Interned, Interned, Interned, Interned)>,
@@ -2452,12 +2589,20 @@ pub struct RoundHolder {
     pub max_round: usize,
 }
 
-pub fn move_output_round(info:&Option<(Round, Count)>, round:&mut Round, count:&mut Count) {
-    if let &Some((r, c)) = info {
-        *round = r;
-        *count += c;
+fn collapse_rounds(results:&Vec<RoundCount>, collapsed: &mut Vec<RoundCount>) {
+    collapsed.clear();
+    let mut prev = (0,0);
+    for &(round, count) in results {
+        if round == prev.0 {
+            prev.1 += count;
+        } else {
+            if prev.1 != 0 { collapsed.push(prev); }
+            prev = (round, count);
+        }
     }
+    if prev.1 != 0 { collapsed.push(prev); }
 }
+
 
 impl RoundHolder {
     pub fn new() -> RoundHolder {
@@ -2468,7 +2613,7 @@ impl RoundHolder {
         RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), staged_commit_keys:vec![], collapsed_commits:CollapsedChanges::new(), max_round: 0 }
     }
 
-    pub fn get_output_rounds(&self) -> &Vec<(Round, Count)> {
+    pub fn get_output_rounds(&self) -> &Vec<RoundCount> {
         match (self.output_rounds.len(), self.prev_output_rounds.len()) {
             (0, _) => &self.prev_output_rounds,
             (_, 0) => &self.output_rounds,
@@ -2476,148 +2621,43 @@ impl RoundHolder {
         }
     }
 
-
-    fn _compute_output_rounds<F>(&mut self, mut right_iter: DistinctIter, mut action:F)
-        where F: FnMut(RoundState, &mut Vec<(Round, Count)>, Option<(Round, Count)>, Round, Count, Option<(Round, Count)>, Round, Count)
-    {
-        let (neue, current) = match (self.output_rounds.len(), self.prev_output_rounds.len()) {
+    fn fetch_neue_current(&mut self) -> (&mut Vec<RoundCount>, &mut Vec<RoundCount>) {
+        match (self.output_rounds.len(), self.prev_output_rounds.len()) {
             (0, _) => (&mut self.output_rounds, &mut self.prev_output_rounds),
             (_, 0) => (&mut self.prev_output_rounds, &mut self.output_rounds),
             (_, _) => panic!("neither round array is empty"),
-        };
-        {
-            // let len = self.output_rounds.len();
-            let mut left_iter = current.drain(..);
-            let mut left_round = 0;
-            let mut left_count = 0;
-            let mut right_round = 0;
-            let mut right_count = 0;
-            let mut left = None;
-            let mut right = None;
-            let mut next_left = left_iter.next();
-            let mut next_right = right_iter.next();
-            let mut keep_running = true;
-            // move_output_round(&left, &mut left_round, &mut left_count);
-            // move_output_round(&right, &mut right_round, &mut right_count);
-            while keep_running {
-                // println!("left: {:?}, right {:?}", left, right);
-                let state = if left_round == right_round {
-                    RoundState::Equal
-                } else if left_round > right_round {
-                    while next_right != None && next_right.unwrap().0 < left_round {
-                        right = next_right;
-                        next_right = right_iter.next();
-                        move_output_round(&right, &mut right_round, &mut right_count);
-                    }
-                    RoundState::Right
-                } else {
-                    while next_left != None && next_left.unwrap().0 < right_round {
-                        left = next_left;
-                        next_left = left_iter.next();
-                        move_output_round(&left, &mut left_round, &mut left_count);
-                    }
-                    RoundState::Left
-                };
-                action(state, neue, left, left_round, left_count, right, right_round, right_count);
-                match (next_left, next_right) {
-                    (None, None) => { break; },
-                    (None, Some(_)) => {
-                        right = next_right;
-                        next_right = right_iter.next();
-                        move_output_round(&right, &mut right_round, &mut right_count);
-                    },
-                    (Some(_), None) => {
-                        left = next_left;
-                        next_left = left_iter.next();
-                        move_output_round(&left, &mut left_round, &mut left_count);
-                    },
-                    (Some((next_left_round, _)), Some((next_right_round, _))) => {
-                        if next_left_round < next_right_round {
-                            left = next_left;
-                            next_left = left_iter.next();
-                            move_output_round(&left, &mut left_round, &mut left_count);
-                        } else if next_left_round == next_right_round {
-                            left = next_left;
-                            next_left = left_iter.next();
-                            move_output_round(&left, &mut left_round, &mut left_count);
-                            right = next_right;
-                            next_right = right_iter.next();
-                            move_output_round(&right, &mut right_round, &mut right_count);
-                        } else {
-                            right = next_right;
-                            next_right = right_iter.next();
-                            move_output_round(&right, &mut right_round, &mut right_count);
-                        }
-                    }
-                }
-                keep_running = left != None || right != None;
-            }
         }
     }
 
     pub fn compute_anti_output_rounds(&mut self, right_iter: DistinctIter) {
-        let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
-            match state {
-                RoundState::Equal => {
-                    if let Some((_, count)) = left {
-                        if right_count == 0 && count != 0 {
-                            neue.push((left_round, count));
-                        }
-                    }
-                },
-                RoundState::Right => {
-                    if let Some((_, count)) = left {
-                        if right_count == 0 {
-                            neue.push((left_round, count));
-                        }
-                    }
-                },
-                RoundState::Left => {
-                    if let Some((_, count)) = right {
-                        let total = (count * -1) * left_count;
-                        if total != 0 {
-                            neue.push((right_round, total));
-                        }
-                    }
-                }
+        let (neue, current) = self.fetch_neue_current();
+        let mut result = vec![];
+        for x in current.drain(..) {
+            for y in right_iter.clone() {
+                let round = cmp::max(x.0, y.0);
+                let count = x.1 * y.1 * -1;
+                result.push((round, count))
             }
-        };
-        self._compute_output_rounds(right_iter, action);
+            result.push(x);
+        }
+        result.sort();
+
+        collapse_rounds(&result, neue);
     }
 
     pub fn compute_output_rounds(&mut self, right_iter: DistinctIter) {
-        let action = |state, neue:&mut Vec<(Round,Count)>, left, left_round, left_count, right, right_round, right_count| {
-            match state {
-                RoundState::Equal => {
-                    if let Some((_, count)) = left {
-                        let total = count * right_count;
-                        if total != 0 {
-                            neue.push((left_round, total));
-                        } else if left_count == 0 && right_count == 0 {
-                            neue.push((left_round, count));
-                        }
-                    }
+        let (neue, current) = self.fetch_neue_current();
+        let mut result = vec![];
 
-                },
-                RoundState::Right => {
-                    if let Some((_, count)) = left {
-                        let total = count * right_count;
-                        if total != 0 {
-                            neue.push((left_round, total));
-                        }
-                    }
-                },
-                RoundState::Left => {
-                    if let Some((_, count)) = right {
-                        let total = count * left_count;
-                        if total != 0 {
-                            neue.push((right_round, total));
-                        }
-                    }
-                }
+        for x in current.drain(..) {
+            for y in right_iter.clone() {
+                let round = cmp::max(x.0, y.0);
+                let count = x.1 * y.1;
+                result.push((round, count))
             }
-        };
-        self._compute_output_rounds(right_iter, action);
+        }
+        result.sort();
+        collapse_rounds(&result, neue);
     }
 
     pub fn insert(&mut self, change:Change) {
@@ -2833,12 +2873,18 @@ impl BlockInfo {
 
 }
 
+pub enum RunLoopMessage {
+    Stop,
+    Transaction(Vec<RawChange>),
+    CodeTransaction(Vec<Block>, Vec<String>)
+}
+
 pub struct Program {
     pub state: RuntimeState,
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher + Send>>,
-    pub incoming: Receiver<Vec<RawChange>>,
-    pub outgoing: SyncSender<Vec<RawChange>>,
+    pub incoming: Receiver<RunLoopMessage>,
+    pub outgoing: Sender<RunLoopMessage>,
 }
 
 impl Program {
@@ -2853,7 +2899,7 @@ impl Program {
         let pipe_lookup = HashMap::new();
         let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
-        let (outgoing, incoming) = mpsc::sync_channel(1);
+        let (outgoing, incoming) = mpsc::channel();
         let state = RuntimeState { debug:false, rounds, index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
@@ -2866,9 +2912,10 @@ impl Program {
     #[allow(dead_code)]
     pub fn exec_query(&mut self, name:&str) -> Vec<Interned> {
         let mut frame = Frame::new();
+        let mut iter_pool = EstimateIterPool::new();
         // let start_ns = time::precise_time_ns();
         let pipe = self.block_info.get_block(name).pipes[0].clone();
-        interpret(&mut self.state, &mut self.block_info, &mut frame, &pipe);
+        interpret(&mut self.state, &mut self.block_info, &mut iter_pool, &mut frame, &pipe);
         // frame.counters.total_ns += time::precise_time_ns() - start_ns;
         // println!("counters: {:?}", frame.counters);
         return frame.results;
@@ -2902,8 +2949,8 @@ impl Program {
         self.block_info.blocks.push(block);
     }
 
-    pub fn unregister_block(&mut self, block:&Block) {
-        println!("Unregister: {}", block.name);
+    pub fn unregister_block(&mut self, name:String) {
+        println!("Unregister: {}", name);
         unimplemented!();
     }
 
@@ -2960,11 +3007,21 @@ impl Program {
             None => {},
         }
         // lookup the tags for this e
-        //  for each tag, lookup (e, a, 0) and (e, a, v)
+        //  for each tag, lookup (e, 0, 0), (e, a, 0) and (e, a, v)
         if let Some(tags) = self.state.index.get(input.e, TAG_INTERNED_ID, 0) {
             for tag in tags {
                 tuple.0 = tag;
+                tuple.1 = 0;
                 tuple.2 = 0;
+                match pipe_lookup.get(&tuple) {
+                    Some(found) => {
+                        for pipe in found.iter() {
+                            pipes.push(pipe);
+                        }
+                    },
+                    None => {},
+                }
+                tuple.1 = input.a;
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
@@ -2991,7 +3048,7 @@ impl Program {
 // Transaction
 //-------------------------------------------------------------------------
 
-fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, current_round:Round, max_round:&mut Round) {
+fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, current_round:Round, max_round:&mut Round) {
     let mut intermediate_max = state.intermediates.consume_round();
     *max_round = cmp::max(*max_round, intermediate_max);
     if let Some(_) = state.intermediates.rounds.get(&current_round) {
@@ -3007,7 +3064,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
                     for pipe in actives.iter() {
                         // print_pipe(pipe, block_info, state);
                         frame.row.reset();
-                        interpret(state, block_info, frame, pipe);
+                        interpret(state, block_info, iter_pool, frame, pipe);
                         // if state.debug {
                         //     state.debug = false;
                         //     println!("\n---------------------------------\n");
@@ -3022,61 +3079,63 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
     }
 }
 
-fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut Program) {
-    let mut pipes = vec![];
-    let mut next_frame = true;
+fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
+    {
+        let mut pipes = vec![];
+        let mut next_frame = true;
 
-    while next_frame {
-        let mut current_round = 0;
-        let mut max_round:Round = program.state.rounds.max_round as Round;
-        let mut items = program.state.rounds.iter();
-        while current_round <= max_round {
-            let round = items.get_round(&mut program.state.rounds, current_round);
-            for change in round.iter() {
-                // println!("{}", change.print(&program));
-                // If this is an add, we want to do it *before* we start running pipes.
-                // This ensures that if there are two constraints in a single block that
-                // would both match the given input, they both have a chance to see this
-                // new triple at the same time. Doing so, means we don't have to go through
-                // every possible combination of the inputs, e.g. A, B, and AB. Instead we
-                // do AB and BA. To make sure that removes correctly cancel out, we don't
-                // want to do a real remove until *after* the pipes have run. Hence, the
-                // separation of insert and remove.
-                if change.count > 0 {
-                    program.state.index.insert(change.e, change.a, change.v, change.round);
+        while next_frame {
+            let mut current_round = 0;
+            let mut max_round:Round = program.state.rounds.max_round as Round;
+            let mut items = program.state.rounds.iter();
+            while current_round <= max_round {
+                let round = items.get_round(&mut program.state.rounds, current_round);
+                for change in round.iter() {
+                    // println!("{}", change.print(&program.state.interner));
+                    // If this is an add, we want to do it *before* we start running pipes.
+                    // This ensures that if there are two constraints in a single block that
+                    // would both match the given input, they both have a chance to see this
+                    // new triple at the same time. Doing so, means we don't have to go through
+                    // every possible combination of the inputs, e.g. A, B, and AB. Instead we
+                    // do AB and BA. To make sure that removes correctly cancel out, we don't
+                    // want to do a real remove until *after* the pipes have run. Hence, the
+                    // separation of insert and remove.
+                    if change.count > 0 {
+                        program.state.index.insert(change.e, change.a, change.v, change.round);
+                    }
+                    pipes.clear();
+                    program.get_pipes(&program.block_info, change, &mut pipes);
+                    frame.reset();
+                    frame.input = Some(*change);
+                    for pipe in pipes.iter() {
+                        // print_pipe(pipe, &program.block_info, &mut program.state);
+                        frame.row.reset();
+                        interpret(&mut program.state, &program.block_info, iter_pool, frame, pipe);
+                        // if program.state.debug {
+                        //     program.state.debug = false;
+                        //     println!("\n---------------------------------\n");
+                        // }
+                    }
+                    // as stated above, we want to do removes after so that when we look
+                    // for AB and BA, they find the same values as when they were added.
+                    if change.count < 0 {
+                        program.state.index.remove(change.e, change.a, change.v, change.round);
+                    }
+                    if current_round == 0 { commits.push(change.clone()); }
                 }
-                pipes.clear();
-                program.get_pipes(&program.block_info, change, &mut pipes);
-                frame.reset();
-                frame.input = Some(*change);
-                for pipe in pipes.iter() {
-                    // print_pipe(pipe, &program.block_info, &mut program.state);
-                    frame.row.reset();
-                    interpret(&mut program.state, &program.block_info, frame, pipe);
-                    // if program.state.debug {
-                    //     program.state.debug = false;
-                    //     println!("\n---------------------------------\n");
-                    // }
-                }
-                // as stated above, we want to do removes after so that when we look
-                // for AB and BA, they find the same values as when they were added.
-                if change.count < 0 {
-                    program.state.index.remove(change.e, change.a, change.v, change.round);
-                }
-                if current_round == 0 { commits.push(change.clone()); }
+                intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, current_round, &mut max_round);
+                max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
+                current_round += 1;
             }
-            intermediate_flow(frame, &mut program.state, &program.block_info, current_round, &mut max_round);
-            max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
-            current_round += 1;
+            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
         }
-        next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
     }
 
     for (name, index) in program.state.watch_indexes.iter_mut() {
         if index.dirty() {
             let diff = index.reconcile();
-            if let Some(watcher) = program.watchers.get(name) {
-                watcher.on_diff(&program.state.interner, diff);
+            if let Some(watcher) = program.watchers.get_mut(name) {
+                watcher.on_diff(&mut program.state.interner, diff);
             }
         }
     }
@@ -3085,6 +3144,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, program: &mut 
 pub struct Transaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
+    iter_pool: EstimateIterPool,
     collapsed_commits: CollapsedChanges,
     frame: Frame,
 }
@@ -3092,7 +3152,8 @@ pub struct Transaction {
 impl Transaction {
     pub fn new() -> Transaction {
         let frame = Frame::new();
-        Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame}
+        let iter_pool = EstimateIterPool::new();
+        Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame, iter_pool}
     }
 
     pub fn input(&mut self, e:Interned, a:Interned, v:Interned, count: Count) {
@@ -3108,7 +3169,7 @@ impl Transaction {
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, program);
+        transaction_flow(&mut self.commits, &mut self.frame, &mut self.iter_pool, program);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -3137,44 +3198,55 @@ impl Transaction {
 pub struct CodeTransaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
+    iter_pool: EstimateIterPool,
     frame: Frame,
 }
 
 impl CodeTransaction {
     pub fn new() -> CodeTransaction {
         let frame = Frame::new();
-        CodeTransaction { changes: vec![], commits:vec![], frame}
+        let iter_pool = EstimateIterPool::new();
+        CodeTransaction { changes: vec![], commits:vec![], frame, iter_pool}
     }
 
     pub fn input_change(&mut self, change: Change) {
         self.changes.push(change);
     }
 
-    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<&Block>) {
+    pub fn exec(&mut self, program: &mut Program, to_add:Vec<Block>, to_remove:Vec<String>) {
         let ref mut frame = self.frame;
+        let ref mut iter_pool = self.iter_pool;
 
         for add in to_add {
             frame.reset();
             frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:1 });
             program.register_block(add);
-            interpret(&mut program.state, &program.block_info, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
+            interpret(&mut program.state, &program.block_info, iter_pool, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
         }
 
-        for remove in to_remove {
-            frame.reset();
-            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
-            interpret(&mut program.state, &program.block_info, frame, &remove.pipes[0]);
-            program.unregister_block(remove);
+        for name in to_remove {
+            {
+                let block_ix = match program.block_info.block_names.get(&name) {
+                    Some(v) => *v,
+                    _ => panic!("Unable to find block to remove: '{}'", name)
+                };
+
+                let remove = &program.block_info.blocks[block_ix];
+                frame.reset();
+                frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
+                interpret(&mut program.state, &program.block_info, iter_pool, frame, &remove.pipes[0]);
+            }
+            program.unregister_block(name);
         }
 
         let mut max_round = 0;
-        intermediate_flow(frame, &mut program.state, &program.block_info, 0, &mut max_round);
+        intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, 0, &mut max_round);
 
         for change in self.changes.iter() {
             program.state.index.distinct(&change, &mut program.state.rounds);
         }
 
-        transaction_flow(&mut self.commits, frame, program);
+        transaction_flow(&mut self.commits, frame, iter_pool, program);
     }
 }
 
@@ -3271,8 +3343,7 @@ impl Persister {
 
 pub struct RunLoop {
     thread: JoinHandle<()>,
-    close_message: RawChange,
-    outgoing: SyncSender<Vec<RawChange>>,
+    outgoing: Sender<RunLoopMessage>,
 }
 
 impl RunLoop {
@@ -3281,10 +3352,10 @@ impl RunLoop {
     }
 
     pub fn close(&self) {
-        self.outgoing.send(vec![self.close_message.clone()]).unwrap();
+        self.outgoing.send(RunLoopMessage::Stop).unwrap();
     }
 
-    pub fn send(&self, msg: Vec<RawChange>) {
+    pub fn send(&self, msg: RunLoopMessage) {
         self.outgoing.send(msg).unwrap();
     }
 }
@@ -3292,15 +3363,13 @@ impl RunLoop {
 pub struct ProgramRunner {
     pub program: Program,
     paths: Vec<String>,
-    close_message: RawChange,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
 }
 
 impl ProgramRunner {
     pub fn new() -> ProgramRunner {
-        let close_message = RawChange {e:Internable::Null, a:Internable::Null, v:Internable::Null, n:Internable::Null, count:0};
-        ProgramRunner {close_message, paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
+        ProgramRunner {paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -3314,37 +3383,50 @@ impl ProgramRunner {
 
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
-        let close_message = self.close_message.clone();
-        let close_message2 = self.close_message.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
         let initial_commits = self.initial_commits;
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
+            let mut start_ns = time::precise_time_ns();
             for path in paths {
                 blocks.extend(parse_file(&mut program, &path));
             }
+            let mut end_ns = time::precise_time_ns();
+            println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
+            start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
             for initial in initial_commits {
                 txn.input_change(initial.to_change(&mut program.state.interner));
             }
             txn.exec(&mut program, blocks, vec![]);
+            end_ns = time::precise_time_ns();
+            println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
             println!("Starting run loop.");
+
             'outer: loop {
                 match program.incoming.recv() {
-                    Ok(v) => {
+                    Ok(RunLoopMessage::Transaction(v)) => {
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new();
                         for cur in v {
-                            if cur == close_message2 { break 'outer; }
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
-                        println!("Txn took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+                        let time = (end_ns - start_ns) as f64;
+                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                    }
+                    Ok(RunLoopMessage::Stop) => {
+                        break 'outer;
+                    }
+                    Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                        let mut tx = CodeTransaction::new();
+                        println!("Got Code Transaction! {:?} {:?}", adds, removes);
+                        tx.exec(&mut program, adds, removes);
                     }
                     Err(_) => { break; }
                 }
@@ -3355,7 +3437,7 @@ impl ProgramRunner {
             println!("Closing run loop.");
         });
 
-        RunLoop { thread, outgoing, close_message }
+        RunLoop { thread, outgoing }
     }
 
 }

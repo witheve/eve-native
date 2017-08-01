@@ -1,6 +1,6 @@
 [package]
 name = "eve"
-version = "0.1.0"
+version = "0.4.0"
 authors = ["Chris Granger <ibdknox@gmail.com>"]
 
 [profile.release]
@@ -26,3 +26,8 @@ walkdir = "1"
 num = "0.1.39"
 bincode = "0.8"
 clap = "2.25"
+term-painter = "0.2.3"
+unicode-segmentation = "1.1.0"
+iron = "0.5"
+staticfile = "*"
+mount = "*"
