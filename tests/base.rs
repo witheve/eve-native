@@ -465,6 +465,22 @@ test!(base_multi_function_multi_field_filtered, {
     end
 });
 
+test!(base_multi_function_multi_field_filtered_via_equality, {
+    search
+        (value, z) = string!/split![text:"hey dude", by: " "]
+        z = 1
+    bind
+        [#token value]
+    end
+
+    search
+        [#token value: "hey"]
+        not([#token value: "dude"])
+    bind
+        [#success]
+    end
+});
+
 test!(base_multi_function_multi_field_filtered_expression, {
     search
         (value, ix) = string!/split![text:"hey dude", by: " "]
@@ -685,6 +701,31 @@ test!(base_choose_filtered_multi_some, {
         [#foo x]
         (10, z) = if x > 3 then (x, "large")
                   else ("unknown", "small")
+    bind
+        [#zomg x z]
+    end
+
+    commit
+        [#foo x:3]
+        [#foo x:10]
+        [#foo x:100]
+    end
+
+    search
+        [#zomg x:10 z:"large"]
+        not([#zomg x:3])
+        not([#zomg x:100])
+    bind
+        [#success]
+    end
+});
+
+test!(base_choose_filtered_multi_some_via_equality, {
+    search
+        [#foo x]
+        (a, z) = if x > 3 then (x, "large")
+                  else ("unknown", "small")
+        a = 10
     bind
         [#zomg x z]
     end
