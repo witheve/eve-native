@@ -1,4 +1,6 @@
-commit
-  [#console/error text: "oh no"]
-  [#console/warn text: "meh"]
+search
+  (text, ix) = string/split[text:"f o o" by:" "]
+  ix = 1
+bind
+  [#ui/text text]
 end
