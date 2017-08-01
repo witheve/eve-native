@@ -7,8 +7,8 @@ services: docker
 sudo: required
 
 env:
-  - NODE_JS_VERSION=8.2
   global:
+    - NODE_JS_VERSION=8.2
     - CRATE_NAME=eve
 
 matrix:
@@ -63,11 +63,6 @@ after_script: set +e
 
 before_deploy:
   - sh ci/before_deploy.sh
-
-addons:
-  artifacts:
-    debug: true
-    paths: "./dist"
 
 deploy:
   # TODO update `api_key.secure`
