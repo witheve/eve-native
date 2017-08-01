@@ -11,3 +11,4 @@ pub mod file;
 pub mod console;
 pub mod system;
 pub mod compiler;
+pub mod json;

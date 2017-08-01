@@ -1,0 +1,19 @@
+# JSON
+
+A library for encoding and decoding Eve records into and from JSON
+
+## Encoding
+
+search
+  j = [#json/encode record]
+watch json
+  ("encode", j, record)
+end
+
+## Decoding
+
+search
+  j = [#json/decode json]
+watch json
+  ("decode", j, json)
+end

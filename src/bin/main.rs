@@ -12,6 +12,7 @@ use eve::ops::{ProgramRunner, Persister};
 use eve::watchers::system::{SystemTimerWatcher};
 use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
+use eve::watchers::json::JsonWatcher;
 
 //-------------------------------------------------------------------------
 // Main
@@ -51,6 +52,7 @@ fn main() {
         runner.program.attach(Box::new(FileWatcher::new(outgoing.clone())));
         runner.program.attach(Box::new(ConsoleWatcher::new()));
         runner.program.attach(Box::new(PrintDiffWatcher::new()));
+        runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
     }
 
     if let Some(persist_file) = persist {
