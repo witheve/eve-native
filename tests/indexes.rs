@@ -1,6 +1,6 @@
 extern crate eve;
 use eve::indexes::*;
-use eve::ops::{EstimateIterPool, RoundHolder, Change};
+use eve::ops::{EstimateIter, RoundHolder, Change};
 use std::collections::HashMap;
 
 #[test]
@@ -91,19 +91,18 @@ fn index_find_values() {
 #[test]
 fn index_propose() {
     let mut index = HashIndex::new();
-    let mut pool = EstimateIterPool::new();
     index.insert(1,1,1);
     index.insert(2,1,1);
     index.insert(2,1,7);
     index.insert(3,1,1);
     index.insert(2,3,1);
     index.insert(1,3,100);
-    let mut proposal1 = pool.get();
+    let mut proposal1 = EstimateIter::new();
     index.propose(&mut proposal1, 0,1,1);
-    assert_eq!(proposal1.estimate(), 3);
-    let mut proposal2 = pool.get();
+    assert_eq!(proposal1.estimate, 3);
+    let mut proposal2 = EstimateIter::new();
     index.propose(&mut proposal2, 2,1,0);
-    assert_eq!(proposal2.estimate(), 2);
+    assert_eq!(proposal2.estimate, 2);
 }
 
 
