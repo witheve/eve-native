@@ -1,0 +1,178 @@
+# DB Explorer
+
+## Root
+
+~~~ eve
+commit
+  [#init]
+  [#ui/column #db-explorer/root | children:
+    [#ui/row #db-explorer/query-box | children:
+      [#token-completer #db-explorer/query placeholder: "search..."]]
+    [#ui/row #db-explorer/card-list]]
+end
+~~~
+
+Draw each matching record as a record card.
+~~~ eve
+search
+  [#db-explorer/root record]
+  card-list = [#db-explorer/card-list]
+bind
+  card-list.children += [#record-card/card #db-explorer/card record]
+end
+~~~
+
+If no records are specified, show any record.
+// ~~~ eve
+// search
+//   lookup[entity: record]
+//   not(record = [#db-explorer/card])
+//   root = [#db-explorer/root]
+
+//   not(root.record)
+// bind
+//   card-list.children += [#record-card/card #db-explorer/card record]
+// end
+// ~~~
+
+
+## Record Card
+
+Clicking a record link opens it in a card.
+~~~ eve
+search
+  e = [#html/event/click element: [#record-card/record value]]
+  container = [#db-explorer/card-list]
+  count = gather/count[for:container.children]
+
+commit
+  container.children += [#record-card/card record: value]
+end
+~~~
+
+Add a control for deleting the card.
+~~~ eve
+search
+  controls = [#record-card/controls card]
+
+bind
+  controls.children += [#ui/button #flat #db-explorer/close-card sort: 99 icon: "close-round" card]
+end
+~~~
+
+~~~ eve
+search
+  [#html/event/click element: [#db-explorer/close-card card]]
+commit
+  card := none
+end
+~~~
+
+
+## Search
+
+Add tag completions to query.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  [tag]
+bind
+  query.completion += [text: "#{{tag}}" value: tag]
+end
+~~~
+
+Add attribute completions to query.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  lookup[attribute]
+bind
+  query.completion += [text: attribute value: attribute]
+end
+~~~
+
+## Token Completer
+
+Token completers are autocompleters.
+~~~ eve
+search
+  completer = [#token-completer]
+bind
+  completer <- [#ui/autocomplete]
+end
+~~~
+
+~~~ eve
+search
+  completer = [#token-completer value]
+  (token, 1) = eve-internal/string/split-reverse[text: value by: " "]
+bind
+  completer.needle += token
+end
+~~~
+
+~~~ eve
+search
+  event = [#ui/event/select autocomplete selected]
+  input = [#ui/autocomplete/input autocomplete]
+  autocomplete = [#token-completer]
+  needle-start = 0 - string/length[text: autocomplete.needle]
+  value = string/substring[text: input.value from: 1 to: needle-start]
+commit
+  [#ui/div text: "'{{autocomplete.needle}}' | {{needle-start}} | '{{value}}'{{selected.text}}'"]
+  input.value := "{{value}}{{selected.text}}"
+  autocomplete.selected := selected
+  event := none
+
+end
+~~~
+
+## Test
+
+~~~ eve
+commit
+  dubdub = [#person #employee #male text: "wump" sort: 7 name: "dubdub" blarg: "crab" salary: 96 | company: kodowa friend: jubalyn]
+  jubalyn = [#person #female name: "jubalyn" weight: 13 age: 91 coolness: 6 | friend: dubdub]
+  kodowa = [#company #startup name: "kodowa" ceo: "chris" man-of-distinction: "josh" | employees: (dubdub, "josh", "chris", "corey", "rob")]
+end
+~~~
+
+~~~ eve
+search
+  foo = [#person name: "dubdub"]
+commit
+  foo <- [pet:
+    [#pet name: "blort" age: 13 | owner: foo]
+    [#pet name: "steve" age: 3 | owner: foo]]
+end
+~~~
+
+
+~~~ eve
+search
+  root = [#db-explorer/root]
+  record = [#token-completer]
+  [#html/event/click]
+commit
+  root.record += record
+end
+~~~
+
+~~~ eve
+search
+  values = [#record-card/value]
+  rcvs = gather/count[for: values]
+bind
+  [#ui/div text: "#### {{rcvs}}"]
+end
+~~~
+
+
+~~~ eve
+commit
+  [#ui/style text: "
+    .db-explorer-root { max-width: 900px; }
+    .db-explorer-card-list { flex-wrap: wrap; }
+"]
+end
+~~~
