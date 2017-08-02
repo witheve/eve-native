@@ -372,10 +372,12 @@ export class HTML extends Library {
         eavs.push([eventId, "target", target.__element]);
 
         let current:Element|null = target;
-        while(current && this.isInstance(current)) {
-          eavs.push([eventId, "element", current.__element]);
-          if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
-            capturesContextMenu = true;
+        while(current && current != this._container) {
+          if(this.isInstance(current)) {
+            eavs.push([eventId, "element", current.__element]);
+            if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
+              capturesContextMenu = true;
+            }
           }
           current = current.parentElement;
         }
