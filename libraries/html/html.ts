@@ -159,8 +159,10 @@ export class HTML extends Library {
     let current;
     for(let curIx = 0; curIx < parent.childNodes.length; curIx++) {
       let cur = parent.childNodes[curIx] as Instance;
+      let curSort = cur.__sort;
+      if(curSort === undefined) curSort = cur.__autoSort;
       if(cur === child) continue;
-      if(cur.__sort === undefined || naturalComparator(""+cur.__sort, ""+at) > 0) {
+      if(curSort === undefined || naturalComparator(""+curSort, ""+at) > 0) {
         current = cur;
         break;
       }
@@ -177,7 +179,7 @@ export class HTML extends Library {
 
   protected insertAutoSortedChild(parent:Element|null, child:Instance, autoSort?:RawValue) {
     child.__autoSort = autoSort;
-    if(!child.__sort) this.insertChild(parent, child, autoSort);
+    if(child.__sort === undefined) this.insertChild(parent, child, autoSort);
   }
 
     protected addStyle(id:RawValue, attribute:RawValue, value:RawValue) {
@@ -272,7 +274,7 @@ export class HTML extends Library {
           if(!parent) msg = "could not find parent";
           throw new Error(`Unable to reparent instance '${instanceId}' to '${parentId}', ${msg}.`);
         }
-        this.insertChild(parent, instance, instance.__sort || instance.__autoSort);
+        this.insertChild(parent, instance, (instance.__sort !== undefined) ? instance.__sort : instance.__autoSort);
       }
     }),
     "export styles": handleTuples(({adds, removes}) => {
