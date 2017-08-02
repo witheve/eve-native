@@ -3,6 +3,9 @@ use super::super::ops::{Interned, Internable, Interner, RawChange, RunLoopMessag
 use std::sync::mpsc::{self, Sender};
 use std::collections::hash_map::{Entry};
 use super::Watcher;
+use std::ops::{Neg, AddAssign, MulAssign};
+use serde::de::{self, Deserialize, DeserializeSeed, Visitor, SeqAccess,
+                MapAccess, EnumAccess, VariantAccess, IntoDeserializer};
 
 extern crate serde_json;
 extern crate serde;
@@ -27,18 +30,27 @@ impl Watcher for JsonWatcher {
         self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+        println!("Making changes");
+        let mut mappy: Map<String,Value> = Map::new();
+        let mut id = "".to_string();
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
             let record_id = Internable::to_string(interner.get_value(add[1]));
+            id = record_id.clone();
             let j_arg = Internable::to_string(interner.get_value(add[2]));
             let mut changes = vec![];
             match (&kind[..], j_arg) {
                 ("decode", j_arg) => {
                     let v: Value = serde_json::from_str(&j_arg).unwrap();
+                    //println!("{:?}",v);
                     value_to_changes(v, &mut changes, &mut record_id.to_string(), "json-object");
                 },
-                ("enocde", j_arg) => {
-                    println!("encoding:\n{:?}",j_arg);
+                ("encode", j_arg) => {
+                    let e = j_arg;
+                    let a = Internable::to_string(interner.get_value(add[3]));
+                    let v = Internable::to_string(interner.get_value(add[4]));
+                    println!("encoding:\n[e: {:?} a: {:?} v: {:?}]",e,a,v);
+                    mappy.insert(a,Value::String(v));
                 }
                 _ => {},
             }           
@@ -46,6 +58,13 @@ impl Watcher for JsonWatcher {
                 Err(_) => break,
                 _ => (),
             }
+        }
+        let json = serde_json::to_string(&mappy).unwrap();
+        let mut chchanges = vec![];
+        chchanges.push(RawChange {e: Internable::String(id.clone().to_string()), a: Internable::String("json-string".to_string()), v: Internable::String(json.clone()), n: Internable::String("json/encode".to_string()), count: 1});
+        match self.outgoing.send(RunLoopMessage::Transaction(chchanges)) {
+            Err(_) => (),
+            _ => (),
         }
     }
 }

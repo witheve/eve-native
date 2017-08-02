@@ -6,8 +6,9 @@ A library for encoding and decoding Eve records into and from JSON
 
 search
   j = [#json/encode record]
+  lookup[entity: record, attribute, value]
 watch json
-  ("encode", j, record)
+  ("encode", j, record, attribute, value)
 end
 
 ## Decoding
