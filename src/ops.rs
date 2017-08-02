@@ -2110,6 +2110,7 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
     let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
     let func = match op {
+        "eve-internal/string/split-reverse" => string_split_reverse,
         "string/split" => string_split,
         "string/index-of" => string_index_of,
         _ => panic!("Unknown multi function: {:?}", op)
@@ -2354,6 +2355,17 @@ pub fn string_split(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref by)] => {
             let results = text.split(by).enumerate().map(|(ix, v)| {
+                vec![Internable::String(v.to_string()), Internable::from_number((ix + 1) as f32)]
+            }).collect();
+            Some(results)
+        },
+        _ => { None }
+    }
+}
+pub fn string_split_reverse(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref by)] => {
+            let results = text.rsplit(by).enumerate().map(|(ix, v)| {
                 vec![Internable::String(v.to_string()), Internable::from_number((ix + 1) as f32)]
             }).collect();
             Some(results)
