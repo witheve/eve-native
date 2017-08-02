@@ -349,7 +349,7 @@ export class HTML extends Library {
     _mouseEventHandler(tagname:string) {
     return (event:MouseEvent) => {
       let {target} = event;
-      if(!this.isInstance(target)) return;
+      // if(!this.isInstance(target)) return;
 
       let eventId = createId();
       let eavs:RawEAV[] = [
@@ -358,9 +358,7 @@ export class HTML extends Library {
         [eventId, "page-x", event.pageX],
         [eventId, "page-y", event.pageY],
         [eventId, "window-x", event.clientX],
-        [eventId, "window-y", event.clientY],
-
-        [eventId, "target", target.__element!]
+        [eventId, "window-y", event.clientY]
       ];
       let button = event.button;
 
@@ -369,16 +367,20 @@ export class HTML extends Library {
       else if(button === 1) eavs.push([eventId, "button", "middle"]);
       else if(button) eavs.push([eventId, "button", button]);
 
-      let current:Element|null = target;
-      let elemIds = [];
       let capturesContextMenu = false;
-      while(current && this.isInstance(current)) {
-        eavs.push([eventId, "element", current.__element!]);
-        if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
-          capturesContextMenu = true;
+      if(this.isInstance(target)) {
+        eavs.push([eventId, "target", target.__element]);
+
+        let current:Element|null = target;
+        while(current && this.isInstance(current)) {
+          eavs.push([eventId, "element", current.__element]);
+          if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
+            capturesContextMenu = true;
+          }
+          current = current.parentElement;
         }
-        current = current.parentElement;
       }
+
       // @NOTE: You'll get a mousedown but no mouseup for a right click if you don't capture the context menu,
       //   so we throw out the mousedown entirely in that case. :(
       if(button === 2 && !capturesContextMenu) return;
