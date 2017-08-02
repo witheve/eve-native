@@ -295,19 +295,23 @@ export class HTML extends Library {
     "export attributes": handleTuples(({adds, removes}) => {
       for(let [e, a, v] of removes || EMPTY) {
         let instance = this._instances[e];
+
         if(!instance || a === "tagname" || a === "children" || a === "tag" || a === "ns" || a === "sort" || a === "eve-auto-index") continue;
         else if(a === "text") instance.textContent = null
         else if(a === "style") instance.classList.remove(this.styleToClass(v));
         else if(a === "class") instance.classList.remove(""+v);
+        // else if(a === "value") (instance as any).value = ""; // @FIXME: This would be flicker-y if we then add something. :(
         else instance.removeAttribute(""+a);
       }
       for(let [e, a, v] of adds || EMPTY) {
         let instance = this._instances[e];
-        if(!instance) throw new Error(`Unable to add attribute to nonexistent instance '${e}'`);
+        if(!instance) throw new Error(`Unable to add attribute to nonexistent instance '${e}' '${a}' '${v}'`);
+
         if(a === "tagname" || a === "children" || a === "tag" || a === "ns") continue;
         else if(a === "text") instance.textContent = ""+v;
         else if(a === "style") instance.classList.add(this.styleToClass(v));
         else if(a === "class") instance.classList.add(""+v);
+        else if(a === "value") (instance as any).value = ""+v;
         else if(a === "sort") this.insertSortedChild(instance.parentElement, instance, v);
         else if(a === "eve-auto-index") this.insertAutoSortedChild(instance.parentElement, instance, v);
         else instance.setAttribute(""+a, ""+v);
