@@ -109,10 +109,23 @@ Record values are shown as record links.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "record" value]
-  name = if n = value.name then n else value
+  name = value.name // if n = value.name then n else value
 
 bind
   attr-value <- [#ui/a #record-card/record href: "#record-card-{{value}}" text: name]
+end
+~~~
+
+Unnamed record links show the records tags.
+~~~ eve
+search
+  attr-value = [#record-card/value type: "record" value]
+  not(value.name)
+  tag = value.tag
+
+bind
+  attr-value <- [#ui/a #record-card/record href: "#record-card-{{value}}" | children:
+    [#ui/text sort: tag text: "#{{tag}} "]]
 end
 ~~~
 
