@@ -10,9 +10,24 @@ use self::term_painter::Color::*;
 // Console Watcher
 //-------------------------------------------------------------------------
 
-pub struct ConsoleWatcher {}
+pub struct ConsoleWatcher {
+    name: String,
+}
+
+impl ConsoleWatcher {
+    pub fn new() -> ConsoleWatcher {
+        ConsoleWatcher{name: "console".to_string()}
+    }
+}
+
 
 impl Watcher for ConsoleWatcher {
+    fn get_name(& self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
@@ -31,15 +46,29 @@ impl Watcher for ConsoleWatcher {
 // Print Diff Watcher
 //-------------------------------------------------------------------------
 
-pub struct PrintDiffWatcher { }
+pub struct PrintDiffWatcher {
+    name: String,
+}
+
+impl PrintDiffWatcher {
+    pub fn new() -> PrintDiffWatcher {
+        PrintDiffWatcher{name: "console/diff".to_string()}
+    }
+}
 
 impl Watcher for PrintDiffWatcher {
+    fn get_name(& self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for remove in diff.removes {
-            println!("Printer: - {:?}", remove.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+            println!("- {:?}", remove.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
         }
         for add in diff.adds {
-            println!("Printer: + {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+            println!("+ {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
         }
     }
 }

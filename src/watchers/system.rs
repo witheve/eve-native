@@ -14,17 +14,24 @@ use super::Watcher;
 //-------------------------------------------------------------------------
 
 pub struct SystemTimerWatcher {
+    name: String,
     outgoing: Sender<RunLoopMessage>,
     timers: HashMap<Interned, (usize, Sender<()>)>
 }
 
 impl SystemTimerWatcher {
     pub fn new(outgoing: Sender<RunLoopMessage>) -> SystemTimerWatcher {
-        SystemTimerWatcher { outgoing, timers: HashMap::new() }
+        SystemTimerWatcher { name: "system/timer".to_string(), outgoing, timers: HashMap::new() }
     }
 }
 
 impl Watcher for SystemTimerWatcher {
+    fn get_name(& self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for remove in diff.removes {
             if let Entry::Occupied(mut entry) = self.timers.entry(remove[1]) {
