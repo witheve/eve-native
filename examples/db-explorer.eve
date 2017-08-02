@@ -151,7 +151,7 @@ end
 ~~~ eve
 search
   root = [#db-explorer/root]
-  record = [#token-completer]
+  record = [#pet]
   [#html/event/click]
 commit
   root.record += record
