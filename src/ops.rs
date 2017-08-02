@@ -9,7 +9,7 @@ extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
+use indexes::{HashIndex, DistinctIter, DistinctIndex, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
 use hash::map::{DangerousKeys};
 use std::collections::HashMap;
@@ -1340,7 +1340,7 @@ pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
-            program.rounds.compute_output_rounds(program.index.distinct_iter(resolved_e, resolved_a, resolved_v));
+            program.rounds.compute_output_rounds(program.distinct_index.iter(resolved_e, resolved_a, resolved_v));
             // if program.debug { println!("get rounds: ({}, {}, {}) -> {:?}", resolved_e, resolved_a, resolved_v, program.rounds.get_output_rounds()); }
             if program.rounds.get_output_rounds().len() > 0 {
                 1
@@ -1387,7 +1387,7 @@ pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
                 frame.counters.inserts += 1;
-                program.index.distinct(output, rounds);
+                program.distinct_index.distinct(output, rounds);
             }
         },
         _ => {}
@@ -2693,7 +2693,7 @@ impl RoundHolder {
         };
     }
 
-    pub fn prepare_commits(&mut self, index:&mut HashIndex) -> bool {
+    pub fn prepare_commits(&mut self, index:&mut HashIndex, distinct_index:&mut DistinctIndex) -> bool {
         for key in self.staged_commit_keys.iter() {
             match self.commits.get(key) {
                 Some(&(ChangeType::Remove, Change {count, e, a, v, n, transaction, round})) => {
@@ -2705,7 +2705,7 @@ impl RoundHolder {
                                     for attr in attrs {
                                         if let Some(vals) = index.get(e, attr, 0) {
                                             for val in vals {
-                                                match index.eavs.get(&(e, attr, val)) {
+                                                match distinct_index.get(e,attr,val) {
                                                     Some(entry) => {
                                                         if entry.rounds[0] > 0 {
                                                             let cloned = Change {e, a:attr, v:val, n, count, transaction, round};
@@ -2722,7 +2722,7 @@ impl RoundHolder {
                             (_, 0) => {
                                 if let Some(vals) = index.get(e, a, 0) {
                                     for val in vals {
-                                        match index.eavs.get(&(e, a, val)) {
+                                        match distinct_index.get(e,a,val) {
                                             Some(entry) => {
                                                 if entry.rounds[0] > 0 {
                                                     let cloned = Change {e, a, v:val, n, count, transaction, round};
@@ -2762,7 +2762,7 @@ impl RoundHolder {
         for change in drained {
             has_changes = true;
             // apply it
-            index.distinct(&change, self);
+            distinct_index.distinct(&change, self);
         }
         has_changes
     }
@@ -2849,6 +2849,7 @@ pub struct RuntimeState {
     pub debug: bool,
     pub rounds: RoundHolder,
     pub index: HashIndex,
+    pub distinct_index: DistinctIndex,
     pub interner: Interner,
     pub watch_indexes: HashMap<String, WatchIndex>,
     pub intermediates: IntermediateIndex,
@@ -2894,6 +2895,7 @@ pub struct Program {
 impl Program {
     pub fn new() -> Program {
         let index = HashIndex::new();
+        let distinct_index = DistinctIndex::new();
         let intermediates = IntermediateIndex::new();
         let interner = Interner::new();
         let rounds = RoundHolder::new();
@@ -2904,7 +2906,7 @@ impl Program {
         let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
         let (outgoing, incoming) = mpsc::channel();
-        let state = RuntimeState { debug:false, rounds, index, interner, watch_indexes, intermediates };
+        let state = RuntimeState { debug:false, rounds, index, distinct_index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
     }
@@ -2927,7 +2929,14 @@ impl Program {
 
     #[allow(dead_code)]
     pub fn raw_insert(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
-        self.state.index.insert_distinct(e,a,v,round,count);
+        self.state.distinct_index.raw_insert(e,a,v,round,count);
+        if count > 0 {
+            self.state.distinct_index.insert_active(e,a,v,round);
+            self.state.index.insert(e,a,v);
+        } else {
+            self.state.distinct_index.remove_active(e,a,v,round);
+            self.state.index.remove(e,a,v);
+        }
     }
 
     pub fn register_block(&mut self, mut block:Block) {
@@ -3107,7 +3116,9 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // want to do a real remove until *after* the pipes have run. Hence, the
                     // separation of insert and remove.
                     if change.count > 0 {
-                        program.state.index.insert(change.e, change.a, change.v, change.round);
+                        if program.state.distinct_index.insert_active(change.e, change.a, change.v, change.round) {
+                            program.state.index.insert(change.e, change.a, change.v);
+                        }
                     }
                     pipes.clear();
                     program.get_pipes(&program.block_info, change, &mut pipes);
@@ -3125,7 +3136,9 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // as stated above, we want to do removes after so that when we look
                     // for AB and BA, they find the same values as when they were added.
                     if change.count < 0 {
-                        program.state.index.remove(change.e, change.a, change.v, change.round);
+                        if program.state.distinct_index.remove_active(change.e, change.a, change.v, change.round) {
+                            program.state.index.remove(change.e, change.a, change.v);
+                        }
                     }
                     if current_round == 0 { commits.push(change.clone()); }
                 }
@@ -3133,7 +3146,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                 max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
                 current_round += 1;
             }
-            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
+            next_frame = program.state.rounds.prepare_commits(&mut program.state.index, &mut program.state.distinct_index);
         }
     }
 
@@ -3173,7 +3186,7 @@ impl Transaction {
 
     pub fn exec(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>) {
         for change in self.changes.iter() {
-            program.state.index.distinct(&change, &mut program.state.rounds);
+            program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
         transaction_flow(&mut self.commits, &mut self.frame, &mut self.iter_pool, program);
         if let &mut Some(ref channel) = persistence_channel {
@@ -3249,7 +3262,7 @@ impl CodeTransaction {
         intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, 0, &mut max_round);
 
         for change in self.changes.iter() {
-            program.state.index.distinct(&change, &mut program.state.rounds);
+            program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
 
         transaction_flow(&mut self.commits, frame, iter_pool, program);

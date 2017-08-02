@@ -84,16 +84,21 @@ pub enum HashIndexLeaf {
 }
 
 impl HashIndexLeaf {
-    pub fn insert(&mut self, neue_value:Interned) {
+    pub fn insert(&mut self, neue_value:Interned) -> bool {
         match self {
             &mut HashIndexLeaf::Single(prev) => {
-                let mut neue = HashMap::default();
-                neue.insert(prev, ());
-                neue.insert(neue_value, ());
-                *self = HashIndexLeaf::Many(neue);
+                if prev != neue_value {
+                    let mut neue = HashMap::default();
+                    neue.insert(prev, ());
+                    neue.insert(neue_value, ());
+                    *self = HashIndexLeaf::Many(neue);
+                    true
+                } else {
+                    false
+                }
             },
             &mut HashIndexLeaf::Many(ref mut prev) => {
-                prev.insert(neue_value, ());
+                prev.insert(neue_value, ()).is_none()
             },
         }
     }
@@ -144,8 +149,7 @@ impl HashIndexLevel {
     pub fn insert(&mut self, e: Interned, v:Interned) -> bool {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
-                o.get_mut().insert(v);
-                true
+                o.get_mut().insert(v)
             }
             Entry::Vacant(o) => {
                 o.insert(HashIndexLeaf::Single(v));
@@ -403,89 +407,46 @@ impl RoundEntry {
 
 pub struct HashIndex {
     a: HashMap<Interned, HashIndexLevel, MyHasher>,
-    pub eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
-    empty: Vec<i32>,
     pub size: u32,
 }
 
 impl HashIndex {
     pub fn new() -> HashIndex{
-        HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, empty: vec![] }
+        HashIndex { a: HashMap::default(), size: 0 }
     }
 
-    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
-        let added = match self.eavs.entry((e,a,v)) {
-            Entry::Occupied(mut entry) => {
-                let info = entry.get_mut();
-                let needs_insert = info.inserted;
-                info.inserted = true;
-                info.update_active(round, 1);
-                !needs_insert
+    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+        let added = match self.a.entry(a) {
+            Entry::Occupied(mut o) => {
+                let mut level = o.get_mut();
+                level.insert(e, v)
             }
             Entry::Vacant(o) => {
-                o.insert(RoundEntry { inserted: true, rounds: vec![], active_rounds:vec![round as i32] });
+                let mut level = HashIndexLevel::new();
+                level.insert(e,v);
+                o.insert(level);
                 true
             },
-
         };
-        if added {
-            self.size += 1;
-            match self.a.entry(a) {
-                Entry::Occupied(mut o) => {
-                    let mut level = o.get_mut();
-                    level.insert(e, v)
-                }
-                Entry::Vacant(o) => {
-                    let mut level = HashIndexLevel::new();
-                    level.insert(e,v);
-                    o.insert(level);
-                    true
-                },
-            };
-        }
+        if added { self.size += 1 };
         added
     }
 
-    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
-        let removed = match self.eavs.entry((e,a,v)) {
-            Entry::Occupied(mut entry) => {
-                // There are two possibilities we have to worry about here. One is that we have
-                // completely removed all traces of this eav, which we identify by having the
-                // rounds array contain all zeros. The other is that there are rounds the index
-                // doesn't know about yet, but as far as the index is concerned, this value isn't
-                // in here. In the latter case, we need to remove the value from the index, but
-                // leave the entry containing the round information in. In the former, we nuke the
-                // whole entry.
-                let (should_remove_entry, remove_indexed) = {
-                    let info = entry.get_mut();
-                    info.update_active(round, -1);
-                    (!info.rounds.iter().any(|x| *x != 0), info.active_rounds.len() == 0)
-                };
-                if should_remove_entry && remove_indexed {
-                    entry.remove_entry();
-                }
-                remove_indexed
+    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+        let removed = match self.a.entry(a) {
+            Entry::Occupied(mut o) => {
+                let mut level = o.get_mut();
+                level.remove(e, v)
             }
             Entry::Vacant(_) => { false },
         };
-        if removed {
-            self.size -= 1;
-            match self.a.entry(a) {
-                Entry::Occupied(mut o) => {
-                    let mut level = o.get_mut();
-                    level.remove(e, v);
-                }
-                Entry::Vacant(_) => { },
-            };
-        }
+        if removed { self.size -= 1; };
         removed
     }
 
     #[inline(never)]
     pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
-        if e > 0 && a > 0 && v > 0 {
-            self.eavs.contains_key(&(e,a,v))
-        } else if a > 0 {
+        if a > 0 {
             match self.a.get(&a) {
                 Some(level) => level.check(e, v),
                 None => false,
@@ -500,15 +461,11 @@ impl HashIndex {
         }
     }
 
-    pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
-        if e == 0 || a == 0 || v == 0 {
-            panic!("Can't check availability of an unformed EAV ({}, {}, {})", e, a, v);
-        }
-        match self.eavs.get(&(e,a,v)) {
-            Some(rounds) => {
-                rounds.rounds.iter().fold(0, |prev, x| prev + x) > 0
-            }
-            None => false,
+    pub fn fast_check(&self, distinct: &DistinctIndex, e: Interned, a:Interned, v:Interned) -> bool {
+        if e > 0 && a > 0 && v > 0 {
+            distinct.check(e, a, v)
+        } else {
+            self.check(e,a,v)
         }
     }
 
@@ -552,40 +509,102 @@ impl HashIndex {
             level.propose(iter, e, v);
         }
     }
+}
 
-    //---------------------------------------------------------------------
-    // Distinct methods
-    //---------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Distinct Index
+//-------------------------------------------------------------------------
 
-    pub fn insert_distinct(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
-        let key = (e, a, v);
-        let needs_insert = {
-            let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
-            let ref mut counts = info.rounds;
-            ensure_len(counts, (round + 1) as usize);
-            if round == 0 {
-                if count < 0 {
-                    counts[round as usize] = 0;
-                } else {
-                    counts[round as usize] = 1;
-                }
-            } else {
-                counts[round as usize] += count;
+pub struct DistinctIndex {
+    pub eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
+    empty: Vec<i32>,
+}
+
+impl DistinctIndex {
+    pub fn new() -> DistinctIndex {
+        DistinctIndex { eavs: HashMap::default(), empty: vec![] }
+    }
+
+    pub fn insert_active(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
+        match self.eavs.entry((e,a,v)) {
+            Entry::Occupied(mut entry) => {
+                let info = entry.get_mut();
+                let needs_insert = info.inserted;
+                info.inserted = true;
+                info.update_active(round, 1);
+                !needs_insert
             }
-            // if the passed count is less than 0, this is actually a remove and we should send it
-            // through that path
-            !info.inserted || count < 0
-        };
-        if needs_insert {
-            if count > 0 {
-                self.insert(e,a,v,round);
-            } else if count < 0 {
-                self.remove(e,a,v,round);
+            Entry::Vacant(o) => {
+                o.insert(RoundEntry { inserted: true, rounds: vec![], active_rounds:vec![round as i32] });
+                true
             }
         }
     }
 
-    pub fn distinct_iter(&self, e:Interned, a:Interned, v:Interned) -> DistinctIter {
+    pub fn remove_active(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
+        match self.eavs.entry((e,a,v)) {
+            Entry::Occupied(mut entry) => {
+                // There are two possibilities we have to worry about here. One is that we have
+                // completely removed all traces of this eav, which we identify by having the
+                // rounds array contain all zeros. The other is that there are rounds the index
+                // doesn't know about yet, but as far as the index is concerned, this value isn't
+                // in here. In the latter case, we need to remove the value from the index, but
+                // leave the entry containing the round information in. In the former, we nuke the
+                // whole entry.
+                let (should_remove_entry, remove_indexed) = {
+                    let info = entry.get_mut();
+                    info.update_active(round, -1);
+                    (!info.rounds.iter().any(|x| *x != 0), info.active_rounds.len() == 0)
+                };
+                if should_remove_entry && remove_indexed {
+                    entry.remove_entry();
+                }
+                remove_indexed
+            }
+            Entry::Vacant(_) => { false },
+        }
+    }
+
+    pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
+        self.eavs.contains_key(&(e,a,v))
+    }
+
+    pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
+        if e == 0 || a == 0 || v == 0 {
+            panic!("Can't check availability of an unformed EAV ({}, {}, {})", e, a, v);
+        }
+        match self.eavs.get(&(e,a,v)) {
+            Some(rounds) => {
+                rounds.rounds.iter().fold(0, |prev, x| prev + x) > 0
+            }
+            None => false,
+        }
+    }
+
+    pub fn get(&self, e:Interned, a:Interned, v:Interned) -> Option<&RoundEntry> {
+        self.eavs.get(&(e,a,v))
+    }
+
+    pub fn raw_insert(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) -> bool {
+        let key = (e, a, v);
+        let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
+        let ref mut counts = info.rounds;
+        ensure_len(counts, (round + 1) as usize);
+        if round == 0 {
+            if count < 0 {
+                counts[round as usize] = 0;
+            } else {
+                counts[round as usize] = 1;
+            }
+        } else {
+            counts[round as usize] += count;
+        }
+        // if the passed count is less than 0, this is actually a remove and we should send it
+        // through that path
+        !info.inserted || count < 0
+    }
+
+    pub fn iter(&self, e:Interned, a:Interned, v:Interned) -> DistinctIter {
         let key = (e, a, v);
         match self.eavs.get(&key) {
             Some(&RoundEntry { ref active_rounds, .. }) => DistinctIter::new(active_rounds),

@@ -3,7 +3,7 @@
 extern crate test;
 extern crate eve;
 
-use eve::parser::*;
+use eve::compiler::*;
 use eve::ops::{Program, Transaction, CodeTransaction};
 use test::Bencher;
 
