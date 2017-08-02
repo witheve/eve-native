@@ -180,7 +180,7 @@ impl HashIndexLevel {
             },
         };
         if added {
-            self.size -= 1;
+            // self.size -= 1;
             match self.v.entry(v) {
                 Entry::Occupied(mut o) => {
                     let is_empty = o.get_mut().remove(e);
