@@ -110,11 +110,22 @@ bind
 end
 ~~~
 
+An autocomplete uses a custom-specified needle as the search term if provided, otherwise its current value.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete]
+  term = if n = autocomplete.needle then n else autocomplete.value
+bind
+  autocomplete.term += term
+end
+~~~
+
+
 If an autocomplete's value disagrees with its selected, clear the selected.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete value selected]
-  selected.text != value
+  autocomplete = [#ui/autocomplete term selected]
+  selected.text != term
 commit
   autocomplete.selected := none
 end
@@ -123,8 +134,8 @@ end
 Completions that match the current input value are matches.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete value completion]
-  string/index-of[text: completion.text substring: string/lowercase[text: value]]
+  autocomplete = [#ui/autocomplete term completion]
+  string/index-of[text: completion.text substring: string/lowercase[text: term]]
 bind
   autocomplete.match += completion
 end
@@ -290,11 +301,12 @@ end
 ~~~
 
 
-Selecting a completion updates the autocomplete.
+Selecting a completion updates the autocomplete if you aren't using a custom needle.
 ~~~ eve
 search
   event = [#ui/event/select autocomplete selected]
   input = [#ui/autocomplete/input autocomplete]
+  not(autocomplete.needle)
 commit
   input.value := selected.text
   autocomplete.selected := selected
