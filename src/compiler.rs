@@ -92,6 +92,7 @@ lazy_static! {
         m.insert("string/lowercase".to_string(), FunctionInfo::new(vec!["text"]));
         m.insert("string/uppercase".to_string(), FunctionInfo::new(vec!["text"]));
         m.insert("string/length".to_string(), FunctionInfo::new(vec!["text"]));
+        m.insert("string/substring".to_string(), FunctionInfo::new(vec!["text", "from", "to"]));
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("eve-internal/string/split-reverse".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));

@@ -2098,6 +2098,7 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "string/contains" => string_contains,
         "string/lowercase" => string_lowercase,
         "string/uppercase" => string_uppercase,
+        "string/substring" => string_substring,
         "string/length" => string_length,
         "concat" => concat,
         "gen_id" => gen_id,
@@ -2338,6 +2339,33 @@ pub fn string_length(params: Vec<&Internable>) -> Option<Internable> {
         _ => None
     }
 }
+
+pub fn string_substring(params: Vec<&Internable>) -> Option<Internable> {
+    let params_slice = params.as_slice();
+    match params_slice {
+        &[&Internable::String(ref text), ..] => {
+            let graphemes:Vec<&str> = UnicodeSegmentation::graphemes(text.as_str(), true).collect();
+            let length = graphemes.len();
+
+            let (from, to) = match params_slice {
+                &[_, &Internable::Number(_), &Internable::Number(_)] => (Internable::to_number(params[1]) as isize, Internable::to_number(params[2]) as isize),
+                &[_, _, &Internable::Number(_)] => (1 as isize, Internable::to_number(params[2]) as isize),
+                &[_, &Internable::Number(_), _] => (Internable::to_number(params[1]) as isize, (length + 1) as isize),
+                _ => (1 as isize, 1 as isize)
+            };
+            let start = if from < 1 { length - from.abs() as usize } else { (from - 1) as usize };
+            let end = if to < 1 { length - to.abs() as usize} else { (to - 1) as usize };
+
+            if start > end {
+                None
+            } else {
+                Some(Internable::String(graphemes[start..end].join("")))
+            }
+        },
+        _ => None
+    }
+}
+
 
 pub fn string_index_of(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
     match params.as_slice() {
