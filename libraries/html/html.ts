@@ -443,7 +443,7 @@ export class HTML extends Library {
   _keyEventHandler(tagname:string) {
     return (event:KeyboardEvent) => {
       if(event.repeat) return;
-      let current:Element|null = event.target as Element;
+      let target:Element|null = event.target as Element;
 
       let code = event.keyCode;
       let key = this._keyMap[code];
@@ -456,12 +456,18 @@ export class HTML extends Library {
       ];
       if(key) eavs.push([eventId, "key", key]);
 
-      while(current && this.isInstance(current)) {
-        let elemId = current.__element!;
-        eavs.push([eventId, "element", elemId]);
-        current = current.parentElement;
-      };
-      if(eavs.length)this._sendEvent(eavs);
+      if(this.isInstance(target)) {
+        eavs.push([eventId, "target", target.__element]);
+        let current:Element|Instance|null = target;
+        while(current && current != this._container) {
+          if(this.isInstance(current)) {
+            eavs.push([eventId, "element", current.__element]);
+          }
+          current = current.parentElement;
+        };
+      }
+
+      if(eavs.length) this._sendEvent(eavs);
     };
   }
 
