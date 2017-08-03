@@ -689,7 +689,7 @@ impl<'a> EstimateIter<'a> {
     pub fn reset(&mut self) {
         self.pass_through = false;
         self.estimate = 0;
-        let old = mem::replace(self.iter, OutputingIter::Empty);
+        let old = mem::replace(&mut self.iter, OutputingIter::Empty);
         old.reset();
         self.constraint = 0;
     }
@@ -753,10 +753,10 @@ impl<'a> OutputingIter<'a> {
         match self {
             OutputingIter::Empty => {}
             OutputingIter::Single(output, iter) => {
-                Box::from_raw(iter);
+                // Box::from_raw(iter);
             },
-            OutputingIter::Multi(ref outputs, iter) => {
-                Box::from_raw(iter);
+            OutputingIter::Multi(outputs, iter) => {
+                // Box::from_raw(iter);
             }
         }
     }
@@ -2384,7 +2384,7 @@ pub fn check_bit(solved:u64, bit:usize) -> bool {
 
 #[inline(never)]
 pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, _iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    let iter_pool = EstimateIterPool::new();
+    let mut iter_pool = EstimateIterPool::new();
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     let ref mut interner = program.interner;
