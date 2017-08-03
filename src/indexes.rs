@@ -11,7 +11,7 @@ use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault};
 use std::collections::hash_map::{Entry};
 use std::collections::btree_map;
-use std::iter::{Iterator};
+use std::iter::{Iterator, self};
 use std::collections::{BTreeMap, HashMap};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
@@ -32,44 +32,6 @@ pub fn get_delta(last:i32, next:i32) -> i32 {
     else if last > 0 && next < 0 { -1 }
     else if last < 0 && next > 0 { 1 }
     else { 0 }
-}
-
-//-------------------------------------------------------------------------
-// HashIndexIter
-//-------------------------------------------------------------------------
-
-pub enum HashIndexIter<'a> {
-    Empty,
-    Single { value:Interned, returned:bool },
-    Root(Box<ExactSizeIterator<Item=Interned> + 'a>),
-    Middle(Box<ExactSizeIterator<Item=Interned> + 'a>),
-    Leaf(Box<ExactSizeIterator<Item=Interned> + 'a>),
-}
-
-impl<'a> ExactSizeIterator for HashIndexIter<'a> {
-   fn len(&self) -> usize {
-        match self {
-            &HashIndexIter::Empty => 0,
-            &HashIndexIter::Single {..} => 1,
-            &HashIndexIter::Root(ref iter) => iter.len(),
-            &HashIndexIter::Middle(ref iter) => iter.len(),
-            &HashIndexIter::Leaf(ref iter) => iter.len(),
-        }
-    }
-}
-
-impl<'a> Iterator for HashIndexIter<'a> {
-    type Item = Interned;
-
-    fn next(&mut self) -> Option<Interned> {
-        match self {
-            &mut HashIndexIter::Empty => None,
-            &mut HashIndexIter::Single { value, ref mut returned } => if *returned { None } else { *returned = true; Some(value) },
-            &mut HashIndexIter::Root(ref mut iter) => iter.next(),
-            &mut HashIndexIter::Middle(ref mut iter) => iter.next(),
-            &mut HashIndexIter::Leaf(ref mut iter) => iter.next(),
-        }
-    }
 }
 
 //-------------------------------------------------------------------------
@@ -121,10 +83,10 @@ impl HashIndexLeaf {
         }
     }
 
-    pub fn iter(&self) -> HashIndexIter {
+    pub fn iter<'a>(&'a self) -> Box<ExactSizeIterator<Item=Interned> + 'a> {
         match self {
-            &HashIndexLeaf::Single(value) => HashIndexIter::Single{ value, returned: false },
-            &HashIndexLeaf::Many(ref index) => HashIndexIter::Leaf(Box::new(index.keys().cloned())),
+            &HashIndexLeaf::Single(value) => Box::new(iter::once(value)),
+            &HashIndexLeaf::Many(ref index) => Box::new(index.keys().cloned()),
         }
     }
 }
@@ -212,21 +174,21 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn find_values(&self, e:Interned) -> Option<HashIndexIter>  {
+    pub fn find_values<'a>(&'a self, e:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
         match self.e.get(&e) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn find_entities(&self, v:Interned) -> Option<HashIndexIter> {
+    pub fn find_entities<'a>(&'a self, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
         match self.v.get(&v) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn get(&self, e:Interned, v:Interned) -> Option<HashIndexIter> {
+    pub fn get<'a>(&'a self, e:Interned, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
         if e > 0 {
             // println!("here looking for v {:?}", e);
             self.find_values(e)
@@ -237,13 +199,13 @@ impl HashIndexLevel {
             let vs_len = self.v.len();
             if es_len < vs_len {
                 if es_len > 0 {
-                    Some(HashIndexIter::Middle(Box::new(self.e.keys().cloned())))
+                    Some(Box::new(self.e.keys().cloned()))
                 } else {
                     None
                 }
             } else {
                 if vs_len > 0 {
-                    Some(HashIndexIter::Middle(Box::new(self.v.keys().cloned())))
+                    Some(Box::new(self.v.keys().cloned()))
                 } else {
                     None
                 }
@@ -270,14 +232,14 @@ impl HashIndexLevel {
                 if es_len > 0 {
                     let hash_iter = Box::new(self.e.keys().cloned());
                     iter.estimate = hash_iter.len();
-                    iter.iter = OutputingIter::Single(0, OutputingIter::make_ptr(Box::new(HashIndexIter::Middle(hash_iter))));
+                    iter.iter = OutputingIter::Single(0, OutputingIter::make_ptr(hash_iter));
                 }
             } else {
                 // only if we have values do we fill in the iter
                 if vs_len > 0 {
                     let hash_iter = Box::new(self.v.keys().cloned());
                     iter.estimate = hash_iter.len();
-                    iter.iter = OutputingIter::Single(2, OutputingIter::make_ptr(Box::new(HashIndexIter::Middle(hash_iter))));
+                    iter.iter = OutputingIter::Single(2, OutputingIter::make_ptr(hash_iter));
                 }
             }
         }
@@ -459,10 +421,10 @@ impl HashIndex {
         }
     }
 
-    pub fn get(&self, e:Interned, a:Interned, v:Interned) -> Option<HashIndexIter> {
+    pub fn get<'a>(&'a self, e:Interned, a:Interned, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
         if a == 0 {
             if self.a.len() > 0 {
-                Some(HashIndexIter::Root(Box::new(self.a.keys().cloned())))
+                Some(Box::new(self.a.keys().cloned()))
             } else {
                 None
             }
@@ -481,7 +443,7 @@ impl HashIndex {
             // get_rounds should handle this for us.
             let attrs_iter = Box::new(self.a.keys().cloned());
             iter.estimate = attrs_iter.len();
-            iter.iter = OutputingIter::Single(1, OutputingIter::make_ptr(Box::new(HashIndexIter::Root(attrs_iter))));
+            iter.iter = OutputingIter::Single(1, OutputingIter::make_ptr(attrs_iter));
         } else {
             let level = match self.a.get(&a) {
                 None => return,
