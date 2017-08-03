@@ -1949,6 +1949,7 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     let func = match op {
         "string/split" => string_split,
         "string/index-of" => string_index_of,
+        "math/range" => math_range,
         _ => panic!("Unknown multi function: {:?}", op)
     };
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
@@ -2106,6 +2107,18 @@ pub fn math_round(params: Vec<&Internable>) -> Option<Internable> {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
             Some(Internable::from_number(a.round()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_range(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let from = Internable::to_number(params[0]) as i64;
+            let to = Internable::to_number(params[1]) as i64;
+
+            Some((from..to+1).map(|x| vec![Internable::from_number(x as f32)]).collect())
         },
         _ => { None }
     }

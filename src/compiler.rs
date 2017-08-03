@@ -86,6 +86,7 @@ lazy_static! {
         m.insert("math/ceiling".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/floor".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/round".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("math/range".to_string(), FunctionInfo::multi(vec!["from", "to"], vec!["value"]));
         m.insert("random/number".to_string(), FunctionInfo::new(vec!["seed"]));
         m.insert("string/replace".to_string(), FunctionInfo::new(vec!["text", "replace", "with"]));
         m.insert("string/contains".to_string(), FunctionInfo::new(vec!["text", "substring"]));
