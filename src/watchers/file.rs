@@ -8,12 +8,13 @@ use std::path::Path;
 use super::Watcher;
 
 pub struct FileWatcher {
+    name: String,
     outgoing: Sender<RunLoopMessage>,
 }
 
 impl FileWatcher {
     pub fn new(outgoing: Sender<RunLoopMessage>) -> FileWatcher {
-        FileWatcher { outgoing }
+        FileWatcher { name: "file".to_string(), outgoing }
     }
 }
 
@@ -25,6 +26,12 @@ fn file_error(changes: &mut Vec<RawChange>, id: String, why: Error) {
 }
 
 impl Watcher for FileWatcher {
+    fn get_name(& self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));

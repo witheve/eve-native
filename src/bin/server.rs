@@ -56,14 +56,15 @@ pub struct ClientHandler {
 }
 
 impl ClientHandler {
-    pub fn new(out:Sender, files:&Vec<&str>, persist:Option<&str>) -> ClientHandler {
-
+    pub fn new(out:Sender, files:&Vec<&str>, persist:Option<&str>, clean: bool) -> ClientHandler {
         let mut runner = ProgramRunner::new();
         let outgoing = runner.program.outgoing.clone();
-        runner.program.attach("system/timer", Box::new(SystemTimerWatcher::new(outgoing.clone())));
-        runner.program.attach("eve/compiler", Box::new(CompilerWatcher::new(outgoing)));
-        runner.program.attach("client/websocket", Box::new(WebsocketClientWatcher::new(out.clone())));
-
+        if !clean {
+            runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(CompilerWatcher::new(outgoing)));
+            runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
+        }
+        
         if let Some(persist_file) = persist {
             let mut persister = Persister::new(persist_file);
             persister.load(persist_file);
@@ -75,6 +76,7 @@ impl ClientHandler {
         }
 
         let running = runner.run();
+        
         ClientHandler {out, running}
     }
 }
@@ -121,16 +123,23 @@ impl Handler for ClientHandler {
 //-------------------------------------------------------------------------
 
 pub struct WebsocketClientWatcher {
+    name: String,
     outgoing: Sender,
 }
 
 impl WebsocketClientWatcher {
     pub fn new(outgoing: Sender) -> WebsocketClientWatcher {
-        WebsocketClientWatcher { outgoing }
+        WebsocketClientWatcher { name: "client/websocket".to_string(), outgoing }
     }
 }
 
 impl Watcher for WebsocketClientWatcher {
+    fn get_name(& self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         let adds:Vec<Vec<JSONInternable>> = diff.adds.iter().map(|row| {
             row.iter().map(|v| interner.get_value(*v).into()).collect()
@@ -155,7 +164,7 @@ impl AfterMiddleware for Custom404 {
     }
 }
 
-fn http_server(port:String) {
+fn http_server(address: String) -> std::thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut mount = Mount::new();
         mount.mount("/", Static::new(Path::new("assets/index.html")));
@@ -165,19 +174,23 @@ fn http_server(port:String) {
         let mut chain = Chain::new(mount);
         chain.link_after(Custom404);
 
-        let address = format!("127.0.0.1:{}", port);
-        println!("{} HTTP Server at {}... ", BrightGreen.paint("Started:"), address);
-        println!("");
-        Iron::new(chain).http(&address).unwrap();
-    });
+        println!("{} HTTP Server at {}... ", BrightGreen.paint("Starting:"), address);
+        match Iron::new(chain).http(&address) {
+            Ok(_) => {},
+            Err(why) => println!("{} Failed to start HTTP Server: {}", BrightRed.paint("Error:"), why),
+        };
+        
+    })
 }
 
-fn websocket_server(port:&str, files:&Vec<&str>, persist:Option<&str>) {
-    let address = format!("127.0.0.1:{}", port);
-    println!("{} Websocket Server at {}... ", BrightGreen.paint("Started:"), address);
-    listen(address, |out| {
-        ClientHandler::new(out, files, persist)
-    }).unwrap()
+fn websocket_server(address: String, files:&Vec<&str>, persist:Option<&str>, clean: bool) {
+    println!("{} Websocket Server at {}... ", BrightGreen.paint("Starting:"), address);
+    match listen(address, |out| {
+        ClientHandler::new(out, files, persist, clean)
+    }) {
+        Ok(_) => {},
+        Err(why) => println!("{} Failed to start Websocket Server: {}", BrightRed.paint("Error:"), why),
+    };
 }
 
 //-------------------------------------------------------------------------
@@ -188,8 +201,9 @@ fn main() {
     let matches = App::new("Eve")
                           .version("0.4")
                           .author("Kodowa Inc.")
-                          .about("Creates an instance of the Eve server")
+                          .about("Creates an instance of the Eve server. Default values for options are in parentheses.")
                           .arg(Arg::with_name("persist")
+                               .short("s")
                                .long("persist")
                                .value_name("FILE")
                                .help("Sets the name for the database to load from and write to")
@@ -200,19 +214,41 @@ fn main() {
                                .multiple(true))
                           .arg(Arg::with_name("port")
                                .short("p")
+                               .long("port")
                                .value_name("PORT")
-                               .help("Sets the port for the server")
+                               .help("Sets the port for the Eve server (3012)")
                                .takes_value(true))
+                          .arg(Arg::with_name("http-port")                            
+                               .short("t")
+                               .long("http-port")
+                               .value_name("PORT")
+                               .help("Sets the port for the HTTP server (8081)")
+                               .takes_value(true))   
+                          .arg(Arg::with_name("address")                            
+                               .short("a")
+                               .long("address")
+                               .value_name("ADDRESS")
+                               .help("Sets the address of the server (127.0.0.1)")
+                               .takes_value(true))
+                          .arg(Arg::with_name("clean")
+                               .short("C")
+                               .long("Clean")
+                               .help("Starts Eve with a clean database and no watchers (false)"))                         
                           .get_matches();
 
     println!("");
-    let port = matches.value_of("port").unwrap_or("3012");
+    let wport = matches.value_of("port").unwrap_or("3012");
+    let hport = matches.value_of("http-port").unwrap_or("8081");
+    let address = matches.value_of("address").unwrap_or("127.0.0.1");
+    let http_address = format!("{}:{}",address,hport);
+    let websocket_address = format!("{}:{}",address,wport);
     let files = match matches.values_of("EVE_FILES") {
         Some(fs) => fs.collect(),
         None => vec![]
     };
     let persist = matches.value_of("persist");
+    let clean = matches.is_present("clean");
 
-    http_server("8081".to_owned());
-    websocket_server(port, &files, persist);
+    http_server(http_address);
+    websocket_server(websocket_address, &files, persist, clean);
 }

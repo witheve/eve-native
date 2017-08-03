@@ -5,6 +5,7 @@
 extern crate time;
 extern crate serde_json;
 extern crate bincode;
+extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -33,6 +34,9 @@ use std::fs::{OpenOptions, File};
 use std::f32::consts::{PI};
 use std::mem;
 use rand::{Rng, SeedableRng, XorShiftRng};
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
+
 
 //-------------------------------------------------------------------------
 // Interned value
@@ -3012,8 +3016,10 @@ impl Program {
         self.register_block(block);
     }
 
-    pub fn attach(&mut self, name:&str, watcher:Box<Watcher + Send>) {
-        self.watchers.insert(name.to_string(), watcher);
+    pub fn attach(&mut self, watcher:Box<Watcher + Send>) {
+        let name = watcher.get_name();
+        println!("{} {}", BrightCyan.paint("Loaded Watcher:"), name);
+        self.watchers.insert(name, watcher);
     }
 
     pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Vec<Instruction>>) {
