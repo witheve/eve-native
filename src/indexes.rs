@@ -213,33 +213,57 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn propose(&self, iter:&mut EstimateIter, e:Interned, v:Interned) {
+    pub fn propose(&self, iter:&mut EstimateIter, e:Interned, v:Interned) -> bool {
         if e > 0 {
             if let Some(hash_iter) = self.find_values(e) {
-                iter.estimate = hash_iter.len();
-                iter.iter = OutputingIter::Single(2, OutputingIter::make_ptr(Box::new(hash_iter)));
+                let estimate = hash_iter.len();
+                if iter.is_better(estimate) {
+                    iter.estimate = estimate;
+                    iter.iter = OutputingIter::Single(2, OutputingIter::make_ptr(Box::new(hash_iter)));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                iter.estimate = 0;
+                iter.iter = OutputingIter::Empty;
+                true
             }
         } else if v > 0 {
             if let Some(hash_iter) = self.find_entities(v) {
-                iter.estimate = hash_iter.len();
-                iter.iter = OutputingIter::Single(0, OutputingIter::make_ptr(Box::new(hash_iter)));
+                let estimate = hash_iter.len();
+                if iter.is_better(estimate) {
+                    iter.estimate = estimate;
+                    iter.iter = OutputingIter::Single(0, OutputingIter::make_ptr(Box::new(hash_iter)));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                iter.estimate = 0;
+                iter.iter = OutputingIter::Empty;
+                true
             }
         } else {
             let es_len = self.e.len();
             let vs_len = self.v.len();
             if es_len < vs_len {
-                // only if we have values do we fill in the iter
-                if es_len > 0 {
-                    let hash_iter = Box::new(self.e.keys().cloned());
-                    iter.estimate = hash_iter.len();
+                let hash_iter = Box::new(self.e.keys().cloned());
+                if iter.is_better(es_len) {
+                    iter.estimate = es_len;
                     iter.iter = OutputingIter::Single(0, OutputingIter::make_ptr(hash_iter));
+                    true
+                } else {
+                    false
                 }
             } else {
-                // only if we have values do we fill in the iter
-                if vs_len > 0 {
-                    let hash_iter = Box::new(self.v.keys().cloned());
-                    iter.estimate = hash_iter.len();
+                let hash_iter = Box::new(self.v.keys().cloned());
+                if iter.is_better(vs_len) {
+                    iter.estimate = vs_len;
                     iter.iter = OutputingIter::Single(2, OutputingIter::make_ptr(hash_iter));
+                    true
+                } else {
+                    false
                 }
             }
         }
@@ -437,19 +461,29 @@ impl HashIndex {
         }
     }
 
-    pub fn propose(&self, iter: &mut EstimateIter, e:Interned, a:Interned, v:Interned) {
+    pub fn propose(&self, iter: &mut EstimateIter, e:Interned, a:Interned, v:Interned) -> bool {
         if a == 0 {
             // @NOTE: In the case where we have an arbitrary lookup we may propose values that may not be correct, but
             // get_rounds should handle this for us.
-            let attrs_iter = Box::new(self.a.keys().cloned());
-            iter.estimate = attrs_iter.len();
-            iter.iter = OutputingIter::Single(1, OutputingIter::make_ptr(attrs_iter));
+            let attrs_iter = self.a.keys();
+            let estimate = attrs_iter.len();
+            if iter.is_better(estimate)  {
+                iter.estimate = estimate;
+                iter.iter = OutputingIter::Single(1, OutputingIter::make_ptr(Box::new(attrs_iter.cloned())));
+                true
+            } else {
+                false
+            }
         } else {
             let level = match self.a.get(&a) {
-                None => return,
+                None => {
+                    iter.estimate = 0;
+                    iter.iter = OutputingIter::Empty;
+                    return true;
+                },
                 Some(level) => level,
             };
-            level.propose(iter, e, v);
+            level.propose(iter, e, v)
         }
     }
 }
@@ -802,20 +836,34 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>, outputs: Vec<usize>) {
+    pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>, outputs: Vec<usize>) -> bool {
         match self.index.get(&key) {
             Some(&IntermediateLevel::Value(ref lookup)) => {
-                iter.estimate = lookup.len();
-                // @TODO: This clone is going to really hurt, we should be able to come
-                // up with a way not to need to do this if we can turn these into
-                // references instead of owned values
-                iter.iter = OutputingIter::Multi(outputs, OutputingIter::make_multi_ptr(Box::new(lookup.keys().cloned().collect::<Vec<_>>().into_iter())));
+                let estimate = lookup.len();
+                if iter.is_better(estimate) {
+                    iter.estimate = estimate;
+                    // @TODO: This clone is going to really hurt, we should be able to come
+                    // up with a way not to need to do this if we can turn these into
+                    // references instead of owned values
+                    iter.iter = OutputingIter::Multi(outputs, OutputingIter::make_multi_ptr(Box::new(lookup.keys().cloned().collect::<Vec<_>>().into_iter())));
+                    true
+                } else {
+                    false
+                }
             },
-            Some(&IntermediateLevel::KeyOnly(_)) => { iter.estimate = 0 },
+            Some(&IntermediateLevel::KeyOnly(_)) => {
+                iter.estimate = 0;
+                iter.iter = OutputingIter::Empty;
+                true
+            },
             Some(&IntermediateLevel::SumAggregate(_)) => {
                 unimplemented!();
             },
-            None => { iter.estimate = 0; }
+            None => {
+                iter.iter = OutputingIter::Empty;
+                iter.estimate = 0;
+                true
+            }
         }
     }
 

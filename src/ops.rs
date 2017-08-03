@@ -32,6 +32,7 @@ use std::io::{Write, BufReader, BufWriter};
 use std::fs::{OpenOptions, File};
 use std::f32::consts::{PI};
 use std::mem;
+use std::usize;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use self::term_painter::ToStyle;
 use self::term_painter::Color::*;
@@ -629,51 +630,24 @@ impl Row {
 //-------------------------------------------------------------------------
 
 pub struct EstimateIterPool {
-    available: Vec<EstimateIter>,
-    iters: Vec<Option<EstimateIter>>,
+    iters: Vec<EstimateIter>,
 }
 
 impl EstimateIterPool {
     pub fn new() -> EstimateIterPool {
         let mut iters = vec![];
         for _ in 0..64 {
-            iters.push(None);
+            iters.push(EstimateIter::new());
         }
-        EstimateIterPool { iters, available:vec![] }
+        EstimateIterPool { iters }
     }
 
-    pub fn get(&mut self) -> EstimateIter {
-        self.available.pop().unwrap_or_else(|| { EstimateIter::new() })
-    }
-
-    pub fn release(&mut self, mut iter: EstimateIter) {
-        iter.reset();
-        self.available.push(iter);
-    }
-
-    pub fn check_iter(&mut self, iter_ix:usize, iter: EstimateIter) {
-        let ix = iter_ix as usize;
-        let (replace, release) = if let Some(ref cur_iter) = self.iters[ix] {
-            if cur_iter.estimate > iter.estimate {
-                (true, true)
-            } else {
-                (false, false)
-            }
-        } else {
-            (true, false)
-        };
-
-        if replace {
-            let old = mem::replace(&mut self.iters[ix], Some(iter));
-            if release {
-                self.release(old.unwrap());
-            }
-        } else {
-            self.release(iter);
-        }
+    pub fn get(&mut self, iter_ix:usize) -> &mut EstimateIter {
+        &mut self.iters[iter_ix]
     }
 }
 
+#[derive(Debug)]
 pub struct EstimateIter {
     pub pass_through: bool,
     pub estimate: usize,
@@ -683,12 +657,16 @@ pub struct EstimateIter {
 
 impl EstimateIter {
     pub fn new() -> EstimateIter {
-       EstimateIter { pass_through:false, estimate:0, iter:OutputingIter::Empty, constraint:0 }
+       EstimateIter { pass_through:false, estimate:usize::MAX, iter:OutputingIter::Empty, constraint:0 }
+    }
+
+    pub fn is_better(&self, estimate:usize) -> bool {
+        self.estimate > estimate
     }
 
     pub fn reset(&mut self) {
         self.pass_through = false;
-        self.estimate = 0;
+        self.estimate = usize::MAX;
         self.iter = OutputingIter::Empty;
         self.constraint = 0;
     }
@@ -774,6 +752,17 @@ impl OutputingIter {
         }
     }
 }
+
+impl fmt::Debug for OutputingIter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &OutputingIter::Empty => { write!(f, "OutputingIter::Empty") }
+            &OutputingIter::Single(..) => { write!(f, "OutputingIter::Single") }
+            &OutputingIter::Multi(..) => { write!(f, "OutputingIter::Multi") }
+        }
+    }
+}
+
 
 //-------------------------------------------------------------------------
 // Frame
@@ -869,7 +858,7 @@ pub enum Instruction {
 
 #[inline(never)]
 pub fn start_block(frame: &mut Frame, block:usize) -> i32 {
-    // println!("STARTING! {:?}", block);
+    // println!("\nSTARTING! {:?}", block);
     frame.block_ix = block;
     1
 }
@@ -924,22 +913,22 @@ pub fn get_iterator(interner: &mut Interner, intermediates:&IntermediateIndex, i
             let resolved_v = frame.resolve(v);
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
-            let mut iter = iter_pool.get();
-            index.propose(&mut iter, resolved_e, resolved_a, resolved_v);
-            iter.constraint = cur_constraint;
-            match iter.iter {
-                OutputingIter::Single(ref mut output, _) => {
-                    *output = match (*output, e, a, v) {
-                        (0, &Field::Register(reg), _, _) => reg,
-                        (1, _, &Field::Register(reg), _) => reg,
-                        (2, _, _, &Field::Register(reg)) => reg,
-                        _ => panic!("bad scan output {:?} {:?} {:?} {:?}", output,e,a,v),
-                    };
+            let mut iter = iter_pool.get(iter_ix);
+            if index.propose(&mut iter, resolved_e, resolved_a, resolved_v) {
+                iter.constraint = cur_constraint;
+                match iter.iter {
+                    OutputingIter::Single(ref mut output, _) => {
+                        *output = match (*output, e, a, v) {
+                            (0, &Field::Register(reg), _, _) => reg,
+                            (1, _, &Field::Register(reg), _) => reg,
+                            (2, _, _, &Field::Register(reg)) => reg,
+                            _ => panic!("bad scan output {:?} {:?} {:?} {:?}", output,e,a,v),
+                        };
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
             // if program.debug { println!("get iter: {:?} -> estimate {:?}", cur_constraint, iter.estimate); }
-            iter_pool.check_iter(iter_ix, iter);
             1
         },
         &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, ..} => {
@@ -954,18 +943,19 @@ pub fn get_iterator(interner: &mut Interner, intermediates:&IntermediateIndex, i
                 };
                 match result {
                     Some(v) => {
-                        let mut iter = iter_pool.get();
-                        let id = interner.internable_to_id(v);
-                        let reg = if let &Field::Register(reg) = output {
-                            reg
-                        } else {
-                            panic!("Function output is not a register");
-                        };
-                        let result_iter = iter::once(id);
-                        iter.constraint = cur_constraint;
-                        iter.estimate = 1;
-                        iter.iter = OutputingIter::Single(reg, OutputingIter::make_ptr(Box::new(result_iter)));
-                        iter_pool.check_iter(iter_ix, iter);
+                        let mut iter = iter_pool.get(iter_ix);
+                        if iter.is_better(1) {
+                            let id = interner.internable_to_id(v);
+                            let reg = if let &Field::Register(reg) = output {
+                                reg
+                            } else {
+                                panic!("Function output is not a register");
+                            };
+                            let result_iter = iter::once(id);
+                            iter.constraint = cur_constraint;
+                            iter.estimate = 1;
+                            iter.iter = OutputingIter::Single(reg, OutputingIter::make_ptr(Box::new(result_iter)));
+                        }
                         1
                     }
                     _ => bail,
@@ -988,21 +978,23 @@ pub fn get_iterator(interner: &mut Interner, intermediates:&IntermediateIndex, i
                 };
                 match result {
                     Some(mut result_values) => {
-                        let mut iter = iter_pool.get();
-                        let outputs = output_fields.iter().map(|x| {
-                            if let &Field::Register(reg) = x {
-                                reg
-                            } else {
-                                panic!("Non-register multi-function output")
-                            }
-                        }).collect();
-                        let result_iter = result_values.drain(..).map(|mut row| {
-                            row.drain(..).map(|field| interner.internable_to_id(field)).collect()
-                        }).collect::<Vec<Vec<Interned>>>().into_iter();
-                        iter.constraint = cur_constraint;
-                        iter.estimate = result_values.len();
-                        iter.iter = OutputingIter::Multi(outputs, OutputingIter::make_multi_ptr(Box::new(result_iter)));
-                        iter_pool.check_iter(iter_ix, iter);
+                        let mut iter = iter_pool.get(iter_ix);
+                        let estimate = result_values.len();
+                        if iter.is_better(estimate) {
+                            let outputs = output_fields.iter().map(|x| {
+                                if let &Field::Register(reg) = x {
+                                    reg
+                                } else {
+                                    panic!("Non-register multi-function output")
+                                }
+                            }).collect();
+                            let result_iter = result_values.drain(..).map(|mut row| {
+                                row.drain(..).map(|field| interner.internable_to_id(field)).collect()
+                            }).collect::<Vec<Vec<Interned>>>().into_iter();
+                            iter.constraint = cur_constraint;
+                            iter.estimate = estimate;
+                            iter.iter = OutputingIter::Multi(outputs, OutputingIter::make_multi_ptr(Box::new(result_iter)));
+                        }
                         1
                     }
                     _ => bail,
@@ -1023,7 +1015,7 @@ pub fn get_iterator(interner: &mut Interner, intermediates:&IntermediateIndex, i
             let resolved = key.iter().map(|param| frame.resolve(param)).collect();
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
-            let mut iter = iter_pool.get();
+            let mut iter = iter_pool.get(iter_ix);
             let outputs = value.iter().map(|x| {
                 if let &Field::Register(reg) = x {
                     reg
@@ -1031,75 +1023,52 @@ pub fn get_iterator(interner: &mut Interner, intermediates:&IntermediateIndex, i
                     panic!("Non-register intermediate scan output")
                 }
             }).collect();
-            intermediates.propose(&mut iter, resolved, outputs);
-            // println!("get iter: {:?}", cur_constraint);
-            iter_pool.check_iter(iter_ix, iter);
+            if intermediates.propose(&mut iter, resolved, outputs) {
+                iter.constraint = cur_constraint;
+            }
             1
         },
         _ => { 1 }
     };
-    if jump == bail {
-        iter_pool.iters[iter_ix as usize].take();
-    }
     jump
 }
 
 #[inline(never)]
 pub fn iterator_next(iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:usize, bail:i32, finished_mask:u64) -> i32 {
-    let mut pass_through = false;
-    let go = {
-        let mut iter = iter_pool.iters[iterator as usize].as_mut();
-        // println!("Iter Next: {:?}", iter);
-        match iter {
-            Some(ref mut cur) => {
-                // if program.debug { println!("iter next: {:?} -> estimate {:?}", cur.constraint(), cur.estimate); }
-                match cur.next(&mut frame.row, iterator) {
-                    false => {
-                        if cur.estimate != 0 {
-                            frame.row.clear_solved(iterator);
-                            cur.clear(&mut frame.row, iterator);
-                        }
-                        bail
-                    },
-                    true => {
-                        // frame.counters.iter_next += 1;
-                        frame.row.put_solved(iterator);
-                        1
-                    },
+    let mut iter = iter_pool.get(iterator);
+    // println!("Iter Next: {:?} {:?}", iterator, iter);
+    match iter.next(&mut frame.row, iterator) {
+        // if program.debug { println!("iter next: {:?} -> estimate {:?}", cur.constraint(), cur.estimate); }
+        false => {
+            if !iter.pass_through && iter.estimate == usize::MAX && frame.row.get_solved(iterator) == finished_mask {
+                // if we were solved when we came into here, and there were no
+                // iterators set, that means we've completely solved for all the variables
+                // and we just need to passthrough to the end, by setting the current iter
+                // to the PassThrough iterator, when we come back into this instruction,
+                // we'll go through the other branch and bail out appropriately. Effectively
+                // setting the passthrough iterator allows you to proceed through the pipe
+                // exactly once without needing to iterate normally. This is necessary because
+                // some instructions can solve for multiple registers at once, but it's not
+                // guaranteed that they'll run before some other provider that might do each
+                // register one by one, so the number of iterations necessary may vary.
+                iter.pass_through = true;
+                1
+            } else {
+                if iter.estimate != 0 && iter.estimate != usize::MAX {
+                    frame.row.clear_solved(iterator);
+                    iter.clear(&mut frame.row, iterator);
                 }
-            },
-            None => {
-                if frame.row.get_solved(iterator) == finished_mask {
-                    // if we were solved when we came into here, and there were no
-                    // iterators set, that means we've completely solved for all the variables
-                    // and we just need to passthrough to the end, by setting the current iter
-                    // to the PassThrough iterator, when we come back into this instruction,
-                    // we'll go through the other branch and bail out appropriately. Effectively
-                    // setting the passthrough iterator allows you to proceed through the pipe
-                    // exactly once without needing to iterate normally. This is necessary because
-                    // some instructions can solve for multiple registers at once, but it's not
-                    // guaranteed that they'll run before some other provider that might do each
-                    // register one by one, so the number of iterations necessary may vary.
-                    pass_through = true;
-                    1
-                } else {
-                    bail
-                }
-            },
-        }
-    };
-    if pass_through {
-        let mut iter = iter_pool.get();
-        iter.pass_through = true;
-        iter_pool.iters[iterator] = Some(iter);
-    } else if go == bail {
-        let old = iter_pool.iters[iterator as usize].take();
-        if let Some(cur) = old {
-            frame.counters.considered += cur.estimate as u64;
-        }
+                // frame.counters.considered += iter.estimate as u64;
+                iter.reset();
+                bail
+            }
+        },
+        true => {
+            // frame.counters.iter_next += 1;
+            frame.row.put_solved(iterator);
+            1
+        },
     }
-    // println!("Row: {:?}", &frame.row.fields[0..3]);
-    go
 }
 
 #[inline(never)]
@@ -1107,13 +1076,9 @@ pub fn accept(interner:&mut Interner, intermediates:&mut IntermediateIndex, inde
     frame.counters.accept += 1;
     let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
     if cur_iterator > 0 {
-        match iter_pool.iters[cur_iterator - 1] {
-            Some(ref iter) => {
-                if iter.pass_through || iter.constraint == cur_constraint {
-                    return 1;
-                }
-            }
-            _ => unreachable!()
+        let iter = iter_pool.get(cur_iterator - 1);
+        if iter.pass_through || iter.constraint == cur_constraint {
+            return 1;
         }
     }
     match cur {
@@ -3026,18 +2991,17 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
     }
 }
 
-pub struct Transaction {
+pub struct Transaction<'a> {
     changes: Vec<Change>,
     commits: Vec<Change>,
-    iter_pool: EstimateIterPool,
+    iter_pool: &'a mut EstimateIterPool,
     collapsed_commits: CollapsedChanges,
     frame: Frame,
 }
 
-impl Transaction {
-    pub fn new() -> Transaction {
+impl<'a> Transaction<'a> {
+    pub fn new(iter_pool:&mut EstimateIterPool) -> Transaction {
         let frame = Frame::new();
-        let iter_pool = EstimateIterPool::new();
         Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame, iter_pool}
     }
 
@@ -3054,7 +3018,7 @@ impl Transaction {
         for change in self.changes.iter() {
             program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, &mut self.iter_pool, program);
+        transaction_flow(&mut self.commits, &mut self.frame, self.iter_pool, program);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -3290,13 +3254,14 @@ impl ProgramRunner {
             end_ns = time::precise_time_ns();
             println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
+            let mut iter_pool = EstimateIterPool::new();
             println!("Starting run loop.");
 
             'outer: loop {
                 match program.incoming.recv() {
                     Ok(RunLoopMessage::Transaction(v)) => {
                         let start_ns = time::precise_time_ns();
-                        let mut txn = Transaction::new();
+                        let mut txn = Transaction::new(&mut iter_pool);
                         for cur in v {
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
