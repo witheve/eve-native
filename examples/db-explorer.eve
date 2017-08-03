@@ -78,7 +78,7 @@ Add tag completions to queries with no existing filters.
 ~~~ eve
 search
   query = [#db-explorer/query]
-  // not(string/contains[text: query.value substring: " "]) // @TODO: This filter goes back on once dynamic completion is ready
+  not(string/contains[text: query.value substring: " "])
   [tag]
 bind
   query.completion += [text: "#{{tag}}" value: tag]
@@ -89,7 +89,7 @@ Add attribute completions to queries with no existing filters.
 ~~~ eve
 search
   query = [#db-explorer/query]
-  // not(string/contains[text: query.value substring: " "]) // @TODO: This filter goes back on once dynamic completion is ready
+  not(string/contains[text: query.value substring: " "])
   lookup[attribute]
 bind
   query.completion += [text: attribute value: attribute]
@@ -137,18 +137,17 @@ end
 
 Find records that match the current completer pattern.
 When the completion pattern has at least one attribute, create a completer block.
-@TODO: Gotta implement block removal as a result of CodeTransaction's or this'll panic on changes.
 ~~~ eve
-// search
-//   [#db-explorer/query completion-pattern]
-//   completion-pattern.attribute
-// bind
-//   output-var = [#eve/compiler/variable name: "completion" completion-pattern]
-//   record-var = [#eve/compiler/variable name: "record" completion-pattern]
-//   [#eve/compiler/block #db-explorer/completer type: "bind" | record-var constraint:
-//     [#eve/compiler/output entity: output-var attribute: "tag" value: "db-explorer/completion-record"]
-//     [#eve/compiler/output entity: output-var attribute: "record" value: record-var]]
-// end
+search
+  [#db-explorer/query completion-pattern]
+  completion-pattern.attribute
+bind
+  output-var = [#eve/compiler/variable name: "completion" completion-pattern]
+  record-var = [#eve/compiler/variable name: "record" completion-pattern]
+  [#eve/compiler/block #db-explorer/completer type: "bind" | record-var constraint:
+    [#eve/compiler/output entity: output-var attribute: "tag" value: "db-explorer/completion-record"]
+    [#eve/compiler/output entity: output-var attribute: "record" value: record-var]]
+end
 ~~~
 
 Fully formed AVs translate into eAV scans.
