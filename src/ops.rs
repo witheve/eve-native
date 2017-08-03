@@ -628,13 +628,13 @@ impl Row {
 // Estimate Iter
 //-------------------------------------------------------------------------
 
-pub struct EstimateIterPool<'a> {
-    available: Vec<EstimateIter<'a>>,
-    iters: Vec<Option<EstimateIter<'a>>>,
+pub struct EstimateIterPool {
+    available: Vec<EstimateIter>,
+    iters: Vec<Option<EstimateIter>>,
 }
 
-impl<'a> EstimateIterPool<'a> {
-    pub fn new() -> EstimateIterPool<'a> {
+impl EstimateIterPool {
+    pub fn new() -> EstimateIterPool {
         let mut iters = vec![];
         for _ in 0..64 {
             iters.push(None);
@@ -642,16 +642,16 @@ impl<'a> EstimateIterPool<'a> {
         EstimateIterPool { iters, available:vec![] }
     }
 
-    pub fn get(&mut self) -> EstimateIter<'a> {
+    pub fn get(&mut self) -> EstimateIter {
         self.available.pop().unwrap_or_else(|| { EstimateIter::new() })
     }
 
-    pub fn release(&mut self, mut iter: EstimateIter<'a>) {
+    pub fn release(&mut self, mut iter: EstimateIter) {
         iter.reset();
         self.available.push(iter);
     }
 
-    pub fn check_iter(&mut self, iter_ix:usize, iter: EstimateIter<'a>) {
+    pub fn check_iter(&mut self, iter_ix:usize, iter: EstimateIter) {
         let ix = iter_ix as usize;
         let (replace, release) = if let Some(ref cur_iter) = self.iters[ix] {
             if cur_iter.estimate > iter.estimate {
@@ -674,23 +674,22 @@ impl<'a> EstimateIterPool<'a> {
     }
 }
 
-pub struct EstimateIter<'a> {
+pub struct EstimateIter {
     pub pass_through: bool,
     pub estimate: usize,
-    pub iter: OutputingIter<'a>,
+    pub iter: OutputingIter,
     pub constraint: usize,
 }
 
-impl<'a> EstimateIter<'a> {
-    pub fn new() -> EstimateIter<'a> {
+impl EstimateIter {
+    pub fn new() -> EstimateIter {
        EstimateIter { pass_through:false, estimate:0, iter:OutputingIter::Empty, constraint:0 }
     }
 
     pub fn reset(&mut self) {
         self.pass_through = false;
         self.estimate = 0;
-        let old = mem::replace(&mut self.iter, OutputingIter::Empty);
-        old.reset();
+        self.iter = OutputingIter::Empty;
         self.constraint = 0;
     }
 
@@ -707,13 +706,22 @@ impl<'a> EstimateIter<'a> {
     }
 }
 
-pub enum OutputingIter<'a> {
+pub enum OutputingIter {
     Empty,
-    Single(usize, Box<Iterator<Item=Interned> + 'a>),
-    Multi(Vec<usize>, Box<Iterator<Item=Vec<Interned>> + 'a>),
+    Single(usize, Box<Iterator<Item=Interned>>),
+    Multi(Vec<usize>, Box<Iterator<Item=Vec<Interned>>>),
 }
 
-impl<'a> OutputingIter<'a> {
+impl OutputingIter {
+
+    pub fn make_ptr<'a>(value: Box<Iterator<Item=Interned> + 'a>) -> Box<Iterator<Item=Interned> + 'static> {
+        unsafe { mem::transmute(value) }
+    }
+
+    pub fn make_multi_ptr<'a>(value: Box<Iterator<Item=Vec<Interned>> + 'a>) -> Box<Iterator<Item=Vec<Interned>> + 'static> {
+        unsafe { mem::transmute(value) }
+    }
+
     pub fn next(&mut self, row:&mut Row, iterator: usize) -> bool {
         match self {
             &mut OutputingIter::Empty => { false }
@@ -746,18 +754,6 @@ impl<'a> OutputingIter<'a> {
                 }
                 false
             },
-        }
-    }
-
-    pub fn reset(self) {
-        match self {
-            OutputingIter::Empty => {}
-            OutputingIter::Single(output, iter) => {
-                // Box::from_raw(iter);
-            },
-            OutputingIter::Multi(outputs, iter) => {
-                // Box::from_raw(iter);
-            }
         }
     }
 
@@ -914,7 +910,7 @@ pub fn accept_intermediate_field(frame: &mut Frame, from:usize, value:Interned, 
 }
 
 #[inline(never)]
-pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateIndex, index: &'a HashIndex, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool<'a>, frame: &mut Frame, iter_ix:usize, cur_constraint:usize, bail:i32) -> i32 {
+pub fn get_iterator(interner: &mut Interner, intermediates:&IntermediateIndex, index: &HashIndex, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iter_ix:usize, cur_constraint:usize, bail:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
     let jump = match cur {
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
@@ -929,7 +925,7 @@ pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateInde
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
             let mut iter = iter_pool.get();
-            index.propose::<'a>(&mut iter, resolved_e, resolved_a, resolved_v);
+            index.propose(&mut iter, resolved_e, resolved_a, resolved_v);
             iter.constraint = cur_constraint;
             match iter.iter {
                 OutputingIter::Single(ref mut output, _) => {
@@ -968,7 +964,7 @@ pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateInde
                         let result_iter = iter::once(id);
                         iter.constraint = cur_constraint;
                         iter.estimate = 1;
-                        iter.iter = OutputingIter::Single(reg, Box::new(result_iter));
+                        iter.iter = OutputingIter::Single(reg, OutputingIter::make_ptr(Box::new(result_iter)));
                         iter_pool.check_iter(iter_ix, iter);
                         1
                     }
@@ -1002,10 +998,10 @@ pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateInde
                         }).collect();
                         let result_iter = result_values.drain(..).map(|mut row| {
                             row.drain(..).map(|field| interner.internable_to_id(field)).collect()
-                        }).collect::<Vec<_>>().into_iter();
+                        }).collect::<Vec<Vec<Interned>>>().into_iter();
                         iter.constraint = cur_constraint;
                         iter.estimate = result_values.len();
-                        iter.iter = OutputingIter::Multi(outputs, Box::new(result_iter));
+                        iter.iter = OutputingIter::Multi(outputs, OutputingIter::make_multi_ptr(Box::new(result_iter)));
                         iter_pool.check_iter(iter_ix, iter);
                         1
                     }
@@ -2383,8 +2379,7 @@ pub fn check_bit(solved:u64, bit:usize) -> bool {
 //-------------------------------------------------------------------------
 
 #[inline(never)]
-pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, _iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    let mut iter_pool = EstimateIterPool::new();
+pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     let ref mut interner = program.interner;
@@ -2410,14 +2405,14 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, _iter_pool:
                 accept_intermediate_field(frame, from, value, bail)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
-                get_iterator(interner, intermediates, index, block_info, &mut iter_pool, frame, iterator, constraint, bail)
+                get_iterator(interner, intermediates, index, block_info, iter_pool, frame, iterator, constraint, bail)
             },
             Instruction::IteratorNext { iterator, bail, finished_mask } => {
-                iterator_next(&mut iter_pool, frame, iterator, bail, finished_mask)
+                iterator_next(iter_pool, frame, iterator, bail, finished_mask)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();
-                let next = accept(interner, intermediates, index, block_info, &mut iter_pool, frame, constraint, iterator, bail);
+                let next = accept(interner, intermediates, index, block_info, iter_pool, frame, constraint, iterator, bail);
                 // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
                 next
             },
@@ -2670,7 +2665,7 @@ pub struct RoundHolderIter {
     cur_changes: Vec<Change>,
 }
 
-impl<'a> RoundHolderIter {
+impl RoundHolderIter {
     pub fn new() -> RoundHolderIter {
         RoundHolderIter { round_ix: 0, change_ix: 0, cur_changes: vec![] }
     }
@@ -3031,16 +3026,16 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
     }
 }
 
-pub struct Transaction<'a> {
+pub struct Transaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
-    iter_pool: EstimateIterPool<'a>,
+    iter_pool: EstimateIterPool,
     collapsed_commits: CollapsedChanges,
     frame: Frame,
 }
 
-impl<'a> Transaction<'a> {
-    pub fn new() -> Transaction<'a> {
+impl Transaction {
+    pub fn new() -> Transaction {
         let frame = Frame::new();
         let iter_pool = EstimateIterPool::new();
         Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame, iter_pool}
@@ -3085,15 +3080,15 @@ impl<'a> Transaction<'a> {
 // Code Transaction
 //-------------------------------------------------------------------------
 
-pub struct CodeTransaction<'a> {
+pub struct CodeTransaction {
     changes: Vec<Change>,
     commits: Vec<Change>,
-    iter_pool: EstimateIterPool<'a>,
+    iter_pool: EstimateIterPool,
     frame: Frame,
 }
 
-impl<'a> CodeTransaction<'a> {
-    pub fn new() -> CodeTransaction<'a> {
+impl CodeTransaction {
+    pub fn new() -> CodeTransaction {
         let frame = Frame::new();
         let iter_pool = EstimateIterPool::new();
         CodeTransaction { changes: vec![], commits:vec![], frame, iter_pool}
