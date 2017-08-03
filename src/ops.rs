@@ -2847,17 +2847,17 @@ impl Program {
     }
 
     pub fn unregister_block(&mut self, name:String) {
-        let block_ix = self.block_info.block_names.remove(&name).unwrap();
-        let block = self.block_info.blocks.remove(block_ix);
-
-        for (pipe_ix, pipe) in block.pipes.iter().enumerate() {
-            for shape in block.shapes[pipe_ix].iter() {
-                match shape {
-                    &PipeShape::Scan(e, a, v) => {
-                        self.block_info.pipe_lookup.get_mut(&(e, a, v)).unwrap().remove_item(pipe);
-                    },
-                    &PipeShape::Intermediate(id) => {
-                        self.block_info.intermediate_pipe_lookup.get_mut(&id).unwrap().remove_item(pipe);
+        if let Some(block_ix) = self.block_info.block_names.remove(&name) {
+            let block = self.block_info.blocks.remove(block_ix);
+            for (pipe_ix, pipe) in block.pipes.iter().enumerate() {
+                for shape in block.shapes[pipe_ix].iter() {
+                    match shape {
+                        &PipeShape::Scan(e, a, v) => {
+                            self.block_info.pipe_lookup.get_mut(&(e, a, v)).unwrap().remove_item(pipe);
+                        },
+                        &PipeShape::Intermediate(id) => {
+                            self.block_info.intermediate_pipe_lookup.get_mut(&id).unwrap().remove_item(pipe);
+                        }
                     }
                 }
             }
