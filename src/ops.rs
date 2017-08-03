@@ -1935,6 +1935,7 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "string/contains" => string_contains,
         "string/lowercase" => string_lowercase,
         "string/uppercase" => string_uppercase,
+        "string/substring" => string_substring,
         "string/length" => string_length,
         "concat" => concat,
         "gen_id" => gen_id,
@@ -1947,6 +1948,7 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
     let output_mask = make_register_mask(outputs.iter().collect::<Vec<&Field>>());
     let func = match op {
+        "eve-internal/string/split-reverse" => string_split_reverse,
         "string/split" => string_split,
         "string/index-of" => string_index_of,
         "math/range" => math_range,
@@ -2188,6 +2190,33 @@ pub fn string_length(params: Vec<&Internable>) -> Option<Internable> {
     }
 }
 
+pub fn string_substring(params: Vec<&Internable>) -> Option<Internable> {
+    let params_slice = params.as_slice();
+    match params_slice {
+        &[&Internable::String(ref text), ..] => {
+            let graphemes:Vec<&str> = UnicodeSegmentation::graphemes(text.as_str(), true).collect();
+            let length = graphemes.len();
+
+            let (from, to) = match params_slice {
+                &[_, &Internable::Number(_), &Internable::Number(_)] => (Internable::to_number(params[1]) as isize, Internable::to_number(params[2]) as isize),
+                &[_, _, &Internable::Number(_)] => (1 as isize, Internable::to_number(params[2]) as isize),
+                &[_, &Internable::Number(_), _] => (Internable::to_number(params[1]) as isize, (length + 1) as isize),
+                _ => (1 as isize, 1 as isize)
+            };
+            let start = if from < 1 { length - from.abs() as usize } else { (from - 1) as usize };
+            let end = if to < 1 { length - to.abs() as usize} else { (to - 1) as usize };
+
+            if start > end {
+                None
+            } else {
+                Some(Internable::String(graphemes[start..end].join("")))
+            }
+        },
+        _ => None
+    }
+}
+
+
 pub fn string_index_of(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref substring)] => {
@@ -2204,6 +2233,17 @@ pub fn string_split(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
     match params.as_slice() {
         &[&Internable::String(ref text), &Internable::String(ref by)] => {
             let results = text.split(by).enumerate().map(|(ix, v)| {
+                vec![Internable::String(v.to_string()), Internable::from_number((ix + 1) as f32)]
+            }).collect();
+            Some(results)
+        },
+        _ => { None }
+    }
+}
+pub fn string_split_reverse(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::String(ref text), &Internable::String(ref by)] => {
+            let results = text.rsplit(by).enumerate().map(|(ix, v)| {
                 vec![Internable::String(v.to_string()), Internable::from_number((ix + 1) as f32)]
             }).collect();
             Some(results)
