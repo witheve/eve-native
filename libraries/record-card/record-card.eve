@@ -109,13 +109,28 @@ Record values are shown as record links.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "record" value]
-  name = if n = value.name then n else value
+  name = value.name // if n = value.name then n else value
 
 bind
   attr-value <- [#ui/a #record-card/record href: "#record-card-{{value}}" text: name]
 end
 ~~~
 
+Unnamed record links show the records tags and attributes.
+~~~ eve
+search
+  attr-value = [#record-card/value type: "record" value]
+  not(value.name)
+
+  lookup[entity: value attribute]
+  text = if t = value.tag then "#{{t}}"
+         if attribute != "tag" then attribute
+
+bind
+  attr-value <- [#ui/a #record-card/record href: "#record-card-{{value}}" | children:
+    [#ui/text sort: text text: "{{text}} "]]
+end
+~~~
 
 ## Styles
 

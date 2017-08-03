@@ -1,0 +1,285 @@
+# DB Explorer
+
+## Root
+
+~~~ eve
+commit
+  [#init stage: 1]
+  [#ui/column #db-explorer/root | children:
+    [#ui/row #db-explorer/query-box | children:
+      [#token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
+      [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
+    [#ui/row #db-explorer/card-list]]
+end
+~~~
+
+Draw each matching record as a record card.
+~~~ eve
+search
+  [#db-explorer/root record]
+  card-list = [#db-explorer/card-list]
+bind
+  card-list.children += [#record-card/card #db-explorer/card record]
+end
+~~~
+
+If no records are specified, show any record.
+// ~~~ eve
+// search
+//   lookup[entity: record]
+//   not(record = [#record-card/card])
+//   root = [#db-explorer/root]
+
+//   not(root.record)
+// bind
+//   card-list.children += [#record-card/card #db-explorer/card record]
+// end
+// ~~~
+
+
+## Record Card
+
+Clicking a record link opens it in a card.
+~~~ eve
+search
+  e = [#html/event/click element: [#record-card/record value]]
+  container = [#db-explorer/card-list]
+  count = gather/count[for:container.children]
+
+commit
+  container.children += [#record-card/card record: value]
+end
+~~~
+
+Add a control for deleting the card.
+~~~ eve
+search
+  controls = [#record-card/controls card]
+
+bind
+  controls.children += [#ui/button #flat #db-explorer/close-card sort: 99 icon: "close-round" card]
+end
+~~~
+
+~~~ eve
+search
+  [#html/event/click element: [#db-explorer/close-card card]]
+commit
+  card := none
+end
+~~~
+
+
+## Search
+
+### Completions
+
+Add tag completions to queries with no existing filters.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  // not(string/contains[text: query.value substring: " "]) // @TODO: This filter goes back on once dynamic completion is ready
+  [tag]
+bind
+  query.completion += [text: "#{{tag}}" value: tag]
+end
+~~~
+
+Add attribute completions to queries with no existing filters.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  // not(string/contains[text: query.value substring: " "]) // @TODO: This filter goes back on once dynamic completion is ready
+  lookup[attribute]
+bind
+  query.completion += [text: attribute value: attribute]
+end
+~~~
+
+If multiple tokens exist, assume all but the last are fully formed tags or attributes to filter upon.
+~~~ eve
+search
+  query = [#db-explorer/query completion-pattern value]
+  (token, ix) = eve-internal/string/split-reverse[text: value by: " "]
+  ix != 1
+
+bind
+  [#db-explorer/tokens-to-pattern pattern: completion-pattern token]
+end
+~~~
+
+### Token Parsing
+
+`#db-explorer/tokens-to-pattern` attaches AVs to the records attribute for each token.
+
+If the token starts with `#`, it's a tag.
+~~~ eve
+search
+  [#db-explorer/tokens-to-pattern pattern token]
+  1 = string/index-of[text: token substring: "#"]
+  value = string/substring[text: token from: 2 to: 0]
+bind
+  pattern.attribute += [attribute: "tag" value]
+end
+~~~
+
+If the token doesn't start with `#`, it's an attribute.
+~~~ eve
+search
+  [#db-explorer/tokens-to-pattern pattern token]
+  not(1 = string/index-of[text: token substring: "#"])
+bind
+  pattern.attributes += [attribute: token]
+end
+~~~
+
+### Completer Generation
+
+Find records that match the current completer pattern.
+When the completion pattern has at least one attribute, create a completer block.
+@TODO: Gotta implement block removal as a result of CodeTransaction's or this'll panic on changes.
+~~~ eve
+// search
+//   [#db-explorer/query completion-pattern]
+//   completion-pattern.attribute
+// bind
+//   output-var = [#eve/compiler/variable name: "completion" completion-pattern]
+//   record-var = [#eve/compiler/variable name: "record" completion-pattern]
+//   [#eve/compiler/block #db-explorer/completer type: "bind" | record-var constraint:
+//     [#eve/compiler/output entity: output-var attribute: "tag" value: "db-explorer/completion-record"]
+//     [#eve/compiler/output entity: output-var attribute: "record" value: record-var]]
+// end
+~~~
+
+Fully formed AVs translate into eAV scans.
+~~~ eve
+search
+  [#db-explorer/query completion-pattern: [attribute: [attribute value]]]
+  block = [#db-explorer/completer record-var]
+bind
+  block.constraint += [#eve/compiler/scan entity: record-var attribute value]
+end
+~~~
+
+AVs with only an A translate into eAv scans.
+~~~ eve
+search
+  [#db-explorer/query completion-pattern]
+  completion-pattern = [attribute]
+  not(attribute.value)
+  block = [#db-explorer/completer record-var]
+bind
+  value-var = [#eve/compiler/variable completion-pattern attribute]
+  block.constraint += [#eve/compiler/scan entity: record-var attribute value: value-var]
+end
+~~~
+
+DEBUG
+~~~ eve
+search
+  [#db-explorer/completion-record record]
+bind
+  [#ui/div text: record]
+end
+~~~
+
+
+
+When the search button is clicked, parse the current search string into a search block.
+~~~ eve
+search
+  [#html/event/click element: [#db-explorer/query-button]]
+  query = [#db-explorer/query]
+commit
+  [#ui/div text: "hai '{{query.value}}'"]
+end
+~~~
+
+
+## Token Completer
+
+Token completers are autocompleters.
+~~~ eve
+search
+  completer = [#token-completer]
+bind
+  completer <- [#ui/autocomplete]
+end
+~~~
+
+~~~ eve
+search
+  completer = [#token-completer value]
+  (token, 1) = eve-internal/string/split-reverse[text: value by: " "]
+bind
+  completer.needle += token
+end
+~~~
+
+~~~ eve
+search
+  event = [#ui/event/select autocomplete selected]
+  input = [#ui/autocomplete/input autocomplete]
+  autocomplete = [#token-completer]
+  needle-start = 0 - string/length[text: autocomplete.needle]
+  value = string/substring[text: input.value from: 1 to: needle-start]
+commit
+  input.value := "{{value}}{{selected.text}}"
+  autocomplete.selected := selected
+  event := none
+
+end
+~~~
+
+## Test
+
+~~~ eve
+commit
+  dubdub = [#person #employee #male text: "wump" sort: 7 name: "dubdub" blarg: "crab" salary: 96 | company: kodowa friend: jubalyn]
+  jubalyn = [#person #female name: "jubalyn" weight: 13 age: 91 coolness: 6 | friend: dubdub]
+  kodowa = [#company #startup name: "kodowa" ceo: "chris" man-of-distinction: "josh" | employees: (dubdub, "josh", "chris", "corey", "rob")]
+end
+~~~
+
+~~~ eve
+search
+  foo = [#person name: "dubdub"]
+commit
+  foo <- [pet:
+    [#pet name: "blort" age: 13 | owner: foo]
+    [#pet name: "steve" age: 3 | owner: foo]]
+end
+~~~
+
+
+~~~ eve
+search
+  init = [#init stage: 1]
+  root = [#db-explorer/root]
+  record = [#pet]
+commit
+  root.record += record
+  init.stage := 2
+end
+~~~
+
+DEBUG
+~~~ eve
+search
+  [#db-explorer/query completion-pattern]
+  root = [#db-explorer/root]
+bind
+  root.record += completion-pattern
+end
+~~~
+
+
+
+~~~ eve
+commit
+  [#ui/style text: "
+    .db-explorer-root { max-width: 900px; }
+    .db-explorer-card-list { flex-wrap: wrap; }
+"]
+end
+~~~
