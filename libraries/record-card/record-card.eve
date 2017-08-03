@@ -116,19 +116,21 @@ bind
 end
 ~~~
 
-Unnamed record links show the records tags.
+Unnamed record links show the records tags and attributes.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "record" value]
   not(value.name)
-  tag = value.tag
+
+  lookup[entity: value attribute]
+  text = if t = value.tag then "#{{t}}"
+         if attribute != "tag" then attribute
 
 bind
   attr-value <- [#ui/a #record-card/record href: "#record-card-{{value}}" | children:
-    [#ui/text sort: tag text: "#{{tag}} "]]
+    [#ui/text sort: text text: "{{text}} "]]
 end
 ~~~
-
 
 ## Styles
 
