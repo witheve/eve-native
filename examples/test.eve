@@ -1,6 +1,15 @@
+commit
+  [#file/read #sudoku path: "person.json"]
+end
+
 search
-  (text, ix) = string/split[text:"f o o" by:" "]
-  ix = 1
-bind
-  [#ui/text text]
+  [#sudoku contents]
+commit
+  [#json/decode json: contents]
+end
+
+search
+  [#json/decode json-object]
+commit
+  [#console/log text: json-object.Time.Total]
 end
