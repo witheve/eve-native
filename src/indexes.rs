@@ -3,16 +3,16 @@
 //-------------------------------------------------------------------------
 
 // use std::collections::HashMap;
-use ops::{EstimateIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange, Internable, Interner, AggregateFunction};
+use ops::{EstimateIter, OutputingIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange, Internable, Interner, AggregateFunction};
 use std::cmp;
 
 extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault};
-use hash::map::{GetDangerousKeys, HashMap, Entry, DangerousKeys};
+use std::collections::hash_map::{Entry};
 use std::collections::btree_map;
-use std::iter::{Iterator};
-use std::collections::BTreeMap;
+use std::iter::{Iterator, self};
+use std::collections::{BTreeMap, HashMap};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -35,45 +35,6 @@ pub fn get_delta(last:i32, next:i32) -> i32 {
 }
 
 //-------------------------------------------------------------------------
-// HashIndexIter
-//-------------------------------------------------------------------------
-
-#[derive(Clone, Debug)]
-pub enum HashIndexIter {
-    Empty,
-    Single { value:Interned, returned:bool },
-    Root(DangerousKeys<Interned, HashIndexLevel>),
-    Middle(DangerousKeys<Interned, HashIndexLeaf>),
-    Leaf(DangerousKeys<Interned, ()>),
-}
-
-impl HashIndexIter {
-    pub fn len(&self) -> usize {
-        match self {
-            &HashIndexIter::Empty => 0,
-            &HashIndexIter::Single {..} => 1,
-            &HashIndexIter::Root(ref iter) => iter.len(),
-            &HashIndexIter::Middle(ref iter) => iter.len(),
-            &HashIndexIter::Leaf(ref iter) => iter.len(),
-        }
-    }
-}
-
-impl Iterator for HashIndexIter {
-    type Item = Interned;
-
-    fn next(&mut self) -> Option<Interned> {
-        match self {
-            &mut HashIndexIter::Empty => None,
-            &mut HashIndexIter::Single { value, ref mut returned } => if *returned { None } else { *returned = true; Some(value) },
-            &mut HashIndexIter::Root(ref mut iter) => iter.next().map(|x| *x),
-            &mut HashIndexIter::Middle(ref mut iter) => iter.next().map(|x| *x),
-            &mut HashIndexIter::Leaf(ref mut iter) => iter.next().map(|x| *x),
-        }
-    }
-}
-
-//-------------------------------------------------------------------------
 // HashIndexLeaf
 //-------------------------------------------------------------------------
 
@@ -84,16 +45,21 @@ pub enum HashIndexLeaf {
 }
 
 impl HashIndexLeaf {
-    pub fn insert(&mut self, neue_value:Interned) {
+    pub fn insert(&mut self, neue_value:Interned) -> bool {
         match self {
             &mut HashIndexLeaf::Single(prev) => {
-                let mut neue = HashMap::default();
-                neue.insert(prev, ());
-                neue.insert(neue_value, ());
-                *self = HashIndexLeaf::Many(neue);
+                if prev != neue_value {
+                    let mut neue = HashMap::default();
+                    neue.insert(prev, ());
+                    neue.insert(neue_value, ());
+                    *self = HashIndexLeaf::Many(neue);
+                    true
+                } else {
+                    false
+                }
             },
             &mut HashIndexLeaf::Many(ref mut prev) => {
-                prev.insert(neue_value, ());
+                prev.insert(neue_value, ()).is_none()
             },
         }
     }
@@ -117,10 +83,10 @@ impl HashIndexLeaf {
         }
     }
 
-    pub fn iter(&self) -> HashIndexIter {
+    pub fn iter<'a>(&'a self) -> Box<ExactSizeIterator<Item=Interned> + 'a> {
         match self {
-            &HashIndexLeaf::Single(value) => HashIndexIter::Single{ value, returned: false },
-            &HashIndexLeaf::Many(ref index) => HashIndexIter::Leaf(index.get_dangerous_keys()),
+            &HashIndexLeaf::Single(value) => Box::new(iter::once(value)),
+            &HashIndexLeaf::Many(ref index) => Box::new(index.keys().cloned()),
         }
     }
 }
@@ -144,8 +110,7 @@ impl HashIndexLevel {
     pub fn insert(&mut self, e: Interned, v:Interned) -> bool {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
-                o.get_mut().insert(v);
-                true
+                o.get_mut().insert(v)
             }
             Entry::Vacant(o) => {
                 o.insert(HashIndexLeaf::Single(v));
@@ -209,21 +174,21 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn find_values(&self, e:Interned) -> Option<HashIndexIter>  {
+    pub fn find_values<'a>(&'a self, e:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
         match self.e.get(&e) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn find_entities(&self, v:Interned) -> Option<HashIndexIter> {
+    pub fn find_entities<'a>(&'a self, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
         match self.v.get(&v) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn get(&self, e:Interned, v:Interned) -> Option<HashIndexIter> {
+    pub fn get<'a>(&'a self, e:Interned, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
         if e > 0 {
             // println!("here looking for v {:?}", e);
             self.find_values(e)
@@ -234,13 +199,13 @@ impl HashIndexLevel {
             let vs_len = self.v.len();
             if es_len < vs_len {
                 if es_len > 0 {
-                    Some(HashIndexIter::Middle(self.e.get_dangerous_keys()))
+                    Some(Box::new(self.e.keys().cloned()))
                 } else {
                     None
                 }
             } else {
                 if vs_len > 0 {
-                    Some(HashIndexIter::Middle(self.v.get_dangerous_keys()))
+                    Some(Box::new(self.v.keys().cloned()))
                 } else {
                     None
                 }
@@ -248,44 +213,59 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn propose(&self, iter:&mut EstimateIter, e:Interned, v:Interned) {
-        match *iter {
-            EstimateIter::Scan { ref mut estimate, ref mut output, ref mut iter, .. } => {
-                if e > 0 {
-                    if let Some(hash_iter) = self.find_values(e) {
-                        *estimate = hash_iter.len() as u32;
-                        *iter = hash_iter;
-                        *output = 2;
-                    }
-                } else if v > 0 {
-                    if let Some(hash_iter) = self.find_entities(v) {
-                        *estimate = hash_iter.len() as u32;
-                        *iter = hash_iter;
-                        *output = 0;
-                    }
+    pub fn propose(&self, iter:&mut EstimateIter, e:Interned, v:Interned) -> bool {
+        if e > 0 {
+            if let Some(hash_iter) = self.find_values(e) {
+                let estimate = hash_iter.len();
+                if iter.is_better(estimate) {
+                    iter.estimate = estimate;
+                    iter.iter = OutputingIter::Single(2, OutputingIter::make_ptr(Box::new(hash_iter)));
+                    true
                 } else {
-                    let es_len = self.e.len();
-                    let vs_len = self.v.len();
-                    if es_len < vs_len {
-                        // only if we have values do we fill in the iter
-                        if es_len > 0 {
-                            let hash_iter = self.e.get_dangerous_keys();
-                            *estimate = hash_iter.len() as u32;
-                            *iter = HashIndexIter::Middle(hash_iter);
-                            *output = 0;
-                        }
-                    } else {
-                        // only if we have values do we fill in the iter
-                        if vs_len > 0 {
-                            let hash_iter = self.v.get_dangerous_keys();
-                            *estimate = hash_iter.len() as u32;
-                            *iter = HashIndexIter::Middle(hash_iter);
-                            *output = 2;
-                        }
-                    }
+                    false
+                }
+            } else {
+                iter.estimate = 0;
+                iter.iter = OutputingIter::Empty;
+                true
+            }
+        } else if v > 0 {
+            if let Some(hash_iter) = self.find_entities(v) {
+                let estimate = hash_iter.len();
+                if iter.is_better(estimate) {
+                    iter.estimate = estimate;
+                    iter.iter = OutputingIter::Single(0, OutputingIter::make_ptr(Box::new(hash_iter)));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                iter.estimate = 0;
+                iter.iter = OutputingIter::Empty;
+                true
+            }
+        } else {
+            let es_len = self.e.len();
+            let vs_len = self.v.len();
+            if es_len < vs_len {
+                let hash_iter = Box::new(self.e.keys().cloned());
+                if iter.is_better(es_len) {
+                    iter.estimate = es_len;
+                    iter.iter = OutputingIter::Single(0, OutputingIter::make_ptr(hash_iter));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                let hash_iter = Box::new(self.v.keys().cloned());
+                if iter.is_better(vs_len) {
+                    iter.estimate = vs_len;
+                    iter.iter = OutputingIter::Single(2, OutputingIter::make_ptr(hash_iter));
+                    true
+                } else {
+                    false
                 }
             }
-            _ => panic!("Non scan iter passed to index propose"),
         }
     }
 }
@@ -403,18 +383,127 @@ impl RoundEntry {
 
 pub struct HashIndex {
     a: HashMap<Interned, HashIndexLevel, MyHasher>,
-    pub eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
-    empty: Vec<i32>,
     pub size: u32,
 }
 
 impl HashIndex {
     pub fn new() -> HashIndex{
-        HashIndex { a: HashMap::default(), eavs: HashMap::default(), size: 0, empty: vec![] }
+        HashIndex { a: HashMap::default(), size: 0 }
     }
 
-    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
-        let added = match self.eavs.entry((e,a,v)) {
+    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+        let added = match self.a.entry(a) {
+            Entry::Occupied(mut o) => {
+                let mut level = o.get_mut();
+                level.insert(e, v)
+            }
+            Entry::Vacant(o) => {
+                let mut level = HashIndexLevel::new();
+                level.insert(e,v);
+                o.insert(level);
+                true
+            },
+        };
+        if added { self.size += 1 };
+        added
+    }
+
+    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+        let removed = match self.a.entry(a) {
+            Entry::Occupied(mut o) => {
+                let mut level = o.get_mut();
+                level.remove(e, v)
+            }
+            Entry::Vacant(_) => { false },
+        };
+        if removed { self.size -= 1; };
+        removed
+    }
+
+    #[inline(never)]
+    pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
+        if a > 0 {
+            match self.a.get(&a) {
+                Some(level) => level.check(e, v),
+                None => false,
+            }
+        } else {
+            for level in self.a.values() {
+                if level.check(e, v) {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+
+    pub fn fast_check(&self, distinct: &DistinctIndex, e: Interned, a:Interned, v:Interned) -> bool {
+        if e > 0 && a > 0 && v > 0 {
+            distinct.check(e, a, v)
+        } else {
+            self.check(e,a,v)
+        }
+    }
+
+    pub fn get<'a>(&'a self, e:Interned, a:Interned, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
+        if a == 0 {
+            if self.a.len() > 0 {
+                Some(Box::new(self.a.keys().cloned()))
+            } else {
+                None
+            }
+        } else {
+            let level = match self.a.get(&a) {
+                None => return None,
+                Some(level) => level,
+            };
+            level.get(e, v)
+        }
+    }
+
+    pub fn propose(&self, iter: &mut EstimateIter, e:Interned, a:Interned, v:Interned) -> bool {
+        if a == 0 {
+            // @NOTE: In the case where we have an arbitrary lookup we may propose values that may not be correct, but
+            // get_rounds should handle this for us.
+            let attrs_iter = self.a.keys();
+            let estimate = attrs_iter.len();
+            if iter.is_better(estimate)  {
+                iter.estimate = estimate;
+                iter.iter = OutputingIter::Single(1, OutputingIter::make_ptr(Box::new(attrs_iter.cloned())));
+                true
+            } else {
+                false
+            }
+        } else {
+            let level = match self.a.get(&a) {
+                None => {
+                    iter.estimate = 0;
+                    iter.iter = OutputingIter::Empty;
+                    return true;
+                },
+                Some(level) => level,
+            };
+            level.propose(iter, e, v)
+        }
+    }
+}
+
+//-------------------------------------------------------------------------
+// Distinct Index
+//-------------------------------------------------------------------------
+
+pub struct DistinctIndex {
+    pub eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
+    empty: Vec<i32>,
+}
+
+impl DistinctIndex {
+    pub fn new() -> DistinctIndex {
+        DistinctIndex { eavs: HashMap::default(), empty: vec![] }
+    }
+
+    pub fn insert_active(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
+        match self.eavs.entry((e,a,v)) {
             Entry::Occupied(mut entry) => {
                 let info = entry.get_mut();
                 let needs_insert = info.inserted;
@@ -425,29 +514,12 @@ impl HashIndex {
             Entry::Vacant(o) => {
                 o.insert(RoundEntry { inserted: true, rounds: vec![], active_rounds:vec![round as i32] });
                 true
-            },
-
-        };
-        if added {
-            self.size += 1;
-            match self.a.entry(a) {
-                Entry::Occupied(mut o) => {
-                    let mut level = o.get_mut();
-                    level.insert(e, v)
-                }
-                Entry::Vacant(o) => {
-                    let mut level = HashIndexLevel::new();
-                    level.insert(e,v);
-                    o.insert(level);
-                    true
-                },
-            };
+            }
         }
-        added
     }
 
-    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
-        let removed = match self.eavs.entry((e,a,v)) {
+    pub fn remove_active(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
+        match self.eavs.entry((e,a,v)) {
             Entry::Occupied(mut entry) => {
                 // There are two possibilities we have to worry about here. One is that we have
                 // completely removed all traces of this eav, which we identify by having the
@@ -467,37 +539,11 @@ impl HashIndex {
                 remove_indexed
             }
             Entry::Vacant(_) => { false },
-        };
-        if removed {
-            self.size -= 1;
-            match self.a.entry(a) {
-                Entry::Occupied(mut o) => {
-                    let mut level = o.get_mut();
-                    level.remove(e, v);
-                }
-                Entry::Vacant(_) => { },
-            };
         }
-        removed
     }
 
-    #[inline(never)]
     pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
-        if e > 0 && a > 0 && v > 0 {
-            self.eavs.contains_key(&(e,a,v))
-        } else if a > 0 {
-            match self.a.get(&a) {
-                Some(level) => level.check(e, v),
-                None => false,
-            }
-        } else {
-            for level in self.a.values() {
-                if level.check(e, v) {
-                    return true;
-                }
-            }
-            false
-        }
+        self.eavs.contains_key(&(e,a,v))
     }
 
     pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
@@ -512,80 +558,30 @@ impl HashIndex {
         }
     }
 
-    pub fn get(&self, e:Interned, a:Interned, v:Interned) -> Option<HashIndexIter> {
-        if a == 0 {
-            if self.a.len() > 0 {
-                Some(HashIndexIter::Root(self.a.get_dangerous_keys()))
-            } else {
-                None
-            }
-        } else {
-            let level = match self.a.get(&a) {
-                None => return None,
-                Some(level) => level,
-            };
-            level.get(e, v)
-        }
+    pub fn get(&self, e:Interned, a:Interned, v:Interned) -> Option<&RoundEntry> {
+        self.eavs.get(&(e,a,v))
     }
 
-    pub fn propose(&self, iter: &mut EstimateIter, e:Interned, a:Interned, v:Interned) {
-        if a == 0 {
-            // @NOTE: In the case where we have an arbitrary lookup we may propose values that may not be correct, but
-            // get_rounds should handle this for us.
-            // if e != 0 && v != 0 {
-            //     panic!("ERROR: Proposing for unsafe a");
-            // }
-            match iter {
-                &mut EstimateIter::Scan { ref mut estimate, ref mut iter, ref mut output, .. } => {
-                    let attrs_iter = self.a.get_dangerous_keys();
-                    *output = 1;
-                    *estimate = attrs_iter.len() as u32;
-                    *iter = HashIndexIter::Root(attrs_iter);
-                },
-                _ => panic!("Non scan iter passed to propose"),
-            }
-        } else {
-            let level = match self.a.get(&a) {
-                None => return,
-                Some(level) => level,
-            };
-            level.propose(iter, e, v);
-        }
-    }
-
-    //---------------------------------------------------------------------
-    // Distinct methods
-    //---------------------------------------------------------------------
-
-    pub fn insert_distinct(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
+    pub fn raw_insert(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) -> bool {
         let key = (e, a, v);
-        let needs_insert = {
-            let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
-            let ref mut counts = info.rounds;
-            ensure_len(counts, (round + 1) as usize);
-            if round == 0 {
-                if count < 0 {
-                    counts[round as usize] = 0;
-                } else {
-                    counts[round as usize] = 1;
-                }
+        let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
+        let ref mut counts = info.rounds;
+        ensure_len(counts, (round + 1) as usize);
+        if round == 0 {
+            if count < 0 {
+                counts[round as usize] = 0;
             } else {
-                counts[round as usize] += count;
+                counts[round as usize] = 1;
             }
-            // if the passed count is less than 0, this is actually a remove and we should send it
-            // through that path
-            !info.inserted || count < 0
-        };
-        if needs_insert {
-            if count > 0 {
-                self.insert(e,a,v,round);
-            } else if count < 0 {
-                self.remove(e,a,v,round);
-            }
+        } else {
+            counts[round as usize] += count;
         }
+        // if the passed count is less than 0, this is actually a remove and we should send it
+        // through that path
+        !info.inserted || count < 0
     }
 
-    pub fn distinct_iter(&self, e:Interned, a:Interned, v:Interned) -> DistinctIter {
+    pub fn iter(&self, e:Interned, a:Interned, v:Interned) -> DistinctIter {
         let key = (e, a, v);
         match self.eavs.get(&key) {
             Some(&RoundEntry { ref active_rounds, .. }) => DistinctIter::new(active_rounds),
@@ -840,23 +836,34 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>) {
-        match iter {
-            &mut EstimateIter::Intermediate { ref mut estimate, ref mut iter, .. } => {
-                match self.index.get(&key) {
-                    Some(&IntermediateLevel::Value(ref lookup)) => {
-                        *estimate = lookup.len() as u32;
-                        *iter = Some(lookup.get_dangerous_keys());
-                    },
-                    Some(&IntermediateLevel::KeyOnly(_)) => { *estimate = 0 },
-                    Some(&IntermediateLevel::SumAggregate(_)) => {
-                        unimplemented!();
-                    },
-                    None => { *estimate = 0; }
-
+    pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>, outputs: Vec<usize>) -> bool {
+        match self.index.get(&key) {
+            Some(&IntermediateLevel::Value(ref lookup)) => {
+                let estimate = lookup.len();
+                if iter.is_better(estimate) {
+                    iter.estimate = estimate;
+                    // @TODO: This clone is going to really hurt, we should be able to come
+                    // up with a way not to need to do this if we can turn these into
+                    // references instead of owned values
+                    iter.iter = OutputingIter::Multi(outputs, OutputingIter::make_multi_ptr(Box::new(lookup.keys().cloned().collect::<Vec<_>>().into_iter())));
+                    true
+                } else {
+                    false
                 }
+            },
+            Some(&IntermediateLevel::KeyOnly(_)) => {
+                iter.estimate = 0;
+                iter.iter = OutputingIter::Empty;
+                true
+            },
+            Some(&IntermediateLevel::SumAggregate(_)) => {
+                unimplemented!();
+            },
+            None => {
+                iter.iter = OutputingIter::Empty;
+                iter.estimate = 0;
+                true
             }
-            _ => panic!("Non intermediate iterator passed to intermediate propose")
         }
     }
 

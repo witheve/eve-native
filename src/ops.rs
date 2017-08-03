@@ -9,9 +9,8 @@ extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use indexes::{HashIndex, DistinctIter, HashIndexIter, WatchIndex, IntermediateIndex, MyHasher, RoundEntry, AggregateEntry, CollapsedChanges};
+use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
-use hash::map::{DangerousKeys};
 use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
@@ -20,7 +19,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::cmp::Eq;
 use std::collections::HashSet;
-use std::iter::Iterator;
+use std::iter::{self, Iterator};
 use std::fmt;
 use watchers::{Watcher};
 use std::sync::mpsc::{Sender, Receiver};
@@ -33,6 +32,7 @@ use std::io::{Write, BufReader, BufWriter};
 use std::fs::{OpenOptions, File};
 use std::f32::consts::{PI};
 use std::mem;
+use std::usize;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use self::term_painter::ToStyle;
 use self::term_painter::Color::*;
@@ -187,8 +187,8 @@ impl Block {
     }
 
     pub fn gen_pipes(&mut self) {
-        const NO_INPUTS_PIPE:u32 = 1000000;
-        let mut moves:HashMap<u32, Vec<Instruction>> = HashMap::new();
+        const NO_INPUTS_PIPE:usize = 1000000;
+        let mut moves:HashMap<usize, Vec<Instruction>> = HashMap::new();
         let mut scans = vec![NO_INPUTS_PIPE];
         let mut get_iters = vec![];
         let mut accepts = vec![];
@@ -197,8 +197,7 @@ impl Block {
         let mut project_constraints = vec![];
         let mut watch_constraints = vec![];
         let mut registers = 0;
-        for (ix_usize, constraint) in self.constraints.iter().enumerate() {
-            let ix = ix_usize as u32;
+        for (ix, constraint) in self.constraints.iter().enumerate() {
             match constraint {
                 &Constraint::Scan {ref e, ref a, ref v, .. } => {
                     scans.push(ix);
@@ -208,15 +207,15 @@ impl Block {
 
                     let mut scan_moves = vec![];
                     if let &Field::Register(offset) = e {
-                        scan_moves.push(Instruction::MoveInputField { from:0, to:offset as u32 });
+                        scan_moves.push(Instruction::MoveInputField { from:0, to:offset });
                         registers = cmp::max(registers, offset + 1);
                     }
                     if let &Field::Register(offset) = a {
-                        scan_moves.push(Instruction::MoveInputField { from:1, to:offset as u32 });
+                        scan_moves.push(Instruction::MoveInputField { from:1, to:offset });
                         registers = cmp::max(registers, offset + 1);
                     }
                     if let &Field::Register(offset) = v {
-                        scan_moves.push(Instruction::MoveInputField { from:2, to:offset as u32 });
+                        scan_moves.push(Instruction::MoveInputField { from:2, to:offset });
                         registers = cmp::max(registers, offset + 1);
                     }
                     moves.insert(ix, scan_moves);
@@ -226,11 +225,11 @@ impl Block {
                     let mut intermediate_moves = vec![];
                     for (field_ix, field) in key.iter().enumerate() {
                         if let &Field::Register(offset) = field {
-                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix as u32, to:offset as u32 });
+                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix, to:offset });
                             registers = cmp::max(registers, offset + 1);
                         } else if field_ix > 0 {
                             if let &Field::Value(value) = field {
-                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix as u32, value, bail: 0 });
+                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix, value, bail: 0 });
                             }
                         }
                     }
@@ -246,11 +245,11 @@ impl Block {
                     let mut intermediate_moves = vec![];
                     for (field_ix, field) in full_key.iter().enumerate() {
                         if let &Field::Register(offset) = field {
-                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix as u32, to:offset as u32 });
+                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix, to:offset});
                             registers = cmp::max(registers, offset + 1);
                         } else if field_ix > 0 {
                             if let &Field::Value(value) = field {
-                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix as u32, value, bail: 0 });
+                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix, value, bail: 0 });
                             }
                         }
                     }
@@ -360,7 +359,7 @@ impl Block {
                             last_iter_next -= 1;
                             let mut neue = get_iter.clone();
                             if let Instruction::GetIterator { ref mut bail, ref mut iterator, .. } = neue {
-                                *iterator = ix as u32;
+                                *iterator = ix;
                                 if ix == 0 {
                                     *bail = PIPE_FINISHED;
                                 } else {
@@ -374,7 +373,7 @@ impl Block {
 
                 last_iter_next -= 1;
                 let iter_bail = if ix == 0 { PIPE_FINISHED } else { last_iter_next };
-                pipe.push(Instruction::IteratorNext { bail: iter_bail, iterator: ix as u32, finished_mask: (2u64.pow(registers as u32) - 1) });
+                pipe.push(Instruction::IteratorNext { bail: iter_bail, iterator: ix, finished_mask: (2u64.pow(registers as u32) - 1) });
                 last_iter_next = 0;
 
                 for accept in accepts.iter() {
@@ -383,7 +382,7 @@ impl Block {
                             last_iter_next -= 1;
                             let mut neue = accept.clone();
                             if let Instruction::Accept { ref mut bail, ref mut iterator, .. } = neue {
-                                *iterator = (ix + 1) as u32;
+                                *iterator = ix + 1;
                                 *bail = last_iter_next;
                             }
                             pipe.push(neue);
@@ -450,9 +449,9 @@ impl Block {
                     for (ix, reg) in registers.iter().enumerate() {
                         last_iter_next -= 1;
                         if ix < registers_len - 1 {
-                            pipe.push(Instruction::Project { next:1, from: *reg as u32 });
+                            pipe.push(Instruction::Project { next:1, from: *reg });
                         } else {
-                            let mut neue = Instruction::Project {next: 1, from: *reg as u32 };
+                            let mut neue = Instruction::Project {next: 1, from: *reg };
                             if let Instruction::Project {ref mut next, ..} = neue {
                                 *next = if to_solve > 0 {
                                     last_iter_next
@@ -577,35 +576,31 @@ impl Row {
         Row { fields: vec![0; size], solved_fields: 0, solving_for: 0, solved_stack:vec![0; size] }
     }
 
-    pub fn put_solved(&mut self, ix:u32) {
-        self.solved_stack[ix as usize] = self.solved_fields;
+    pub fn put_solved(&mut self, ix:usize) {
+        self.solved_stack[ix + 1] = self.solved_fields;
     }
 
-    pub fn clear_solved(&mut self, ix:u32) {
-        self.solved_stack[ix as usize] = 0;
+    pub fn clear_solved(&mut self, ix:usize) {
+        self.solved_stack[ix + 1] = 0;
     }
 
-    pub fn get_solved(&self, ix:i32) -> u64 {
-        if ix >= 0 {
-            self.solved_stack[ix as usize]
-        } else {
-            0
-        }
+    pub fn get_solved(&self, ix:usize) -> u64 {
+        self.solved_stack[ix]
     }
 
-    pub fn check(&self, field_index:u32, value:Interned) -> bool {
-        let cur = self.fields[field_index as usize];
+    pub fn check(&self, field_index:usize, value:Interned) -> bool {
+        let cur = self.fields[field_index];
         cur == 0 || cur == value
     }
 
-    pub fn set(&mut self, field_index:u32, value:Interned) {
-        self.fields[field_index as usize] = value;
+    pub fn set(&mut self, field_index:usize, value:Interned) {
+        self.fields[field_index] = value;
         self.solving_for = set_bit(0, field_index);
         self.solved_fields = set_bit(self.solved_fields, field_index);
     }
 
-    pub fn set_multi(&mut self, field_index:u32, value:Interned) {
-        self.fields[field_index as usize] = value;
+    pub fn set_multi(&mut self, field_index:usize, value:Interned) {
+        self.fields[field_index] = value;
         self.solving_for = set_bit(self.solving_for, field_index);
         self.solved_fields = set_bit(self.solved_fields, field_index);
     }
@@ -614,8 +609,8 @@ impl Row {
         self.solving_for = 0;
     }
 
-    pub fn clear(&mut self, field_index:u32) {
-        self.fields[field_index as usize] = 0;
+    pub fn clear(&mut self, field_index:usize) {
+        self.fields[field_index] = 0;
         self.solving_for = 0;
         self.solved_fields = clear_bit(self.solved_fields, field_index);
     }
@@ -625,7 +620,7 @@ impl Row {
         self.solved_fields = 0;
         self.solving_for = 0;
         for field_index in 0..size {
-            self.fields[field_index as usize] = 0;
+            self.fields[field_index] = 0;
         }
     }
 }
@@ -635,259 +630,139 @@ impl Row {
 //-------------------------------------------------------------------------
 
 pub struct EstimateIterPool {
-    available: Vec<EstimateIter>,
-    available_funcs: Vec<EstimateIter>,
-    available_multi_funcs: Vec<EstimateIter>,
-    available_intermedaites: Vec<EstimateIter>,
-    iters: Vec<Option<EstimateIter>>,
+    iters: Vec<EstimateIter>,
 }
 
 impl EstimateIterPool {
     pub fn new() -> EstimateIterPool {
-        EstimateIterPool { available: vec![], available_funcs: vec![], available_multi_funcs: vec![], available_intermedaites: vec![], iters:vec![None; 64] }
+        let mut iters = vec![];
+        for _ in 0..64 {
+            iters.push(EstimateIter::new());
+        }
+        EstimateIterPool { iters }
     }
 
-    pub fn release(&mut self, mut estimate_iter:EstimateIter) {
-        match estimate_iter {
-            EstimateIter::Scan {ref mut estimate, ref mut iter, ref mut output, ref mut constraint} => {
-                *estimate = 0;
-                *iter = HashIndexIter::Empty;
-                *output = 0;
-                *constraint = 0;
-            },
-            EstimateIter::Function { ref mut estimate, ref mut result, ref mut output, ref mut returned, ref mut constraint } => {
-                *estimate = 0;
-                *result = 0;
-                *output = 0;
-                *constraint = 0;
-                *returned = false;
-            },
-            EstimateIter::MultiFunction { ref mut estimate, ref mut results, ref mut outputs, ref mut ix, ref mut constraint } => {
-                *estimate = 0;
-                *results = None;
-                *outputs = None;
-                *constraint = 0;
-                *ix = 0;
-            },
-            EstimateIter::Intermediate {ref mut estimate, ref mut iter, ref mut output, ref mut constraint} => {
-                *estimate = 0;
-                *iter = None;
-                *output = None;
-                *constraint = 0;
-            },
-            EstimateIter::PassThrough => {}
-        }
-        match estimate_iter {
-            EstimateIter::Scan {..} => {
-                self.available.push(estimate_iter);
-            },
-            EstimateIter::Function {..} => {
-                self.available_funcs.push(estimate_iter);
-            },
-            EstimateIter::MultiFunction {..} => {
-                self.available_multi_funcs.push(estimate_iter);
-            },
-            EstimateIter::Intermediate {..} => {
-                self.available_intermedaites.push(estimate_iter);
-            },
-            EstimateIter::PassThrough => {}
-        }
-    }
-
-    pub fn get(&mut self) -> EstimateIter {
-        match self.available.pop() {
-            Some(iter) => iter,
-            None => EstimateIter::Scan { estimate:0, iter:HashIndexIter::Empty, output:0, constraint: 0 },
-        }
-    }
-
-    pub fn get_func(&mut self) -> EstimateIter {
-        match self.available_funcs.pop() {
-            Some(iter) => iter,
-            None => EstimateIter::Function { estimate:0, result:0, output:0, returned: false, constraint:0 },
-        }
-    }
-
-    pub fn get_multi_func(&mut self) -> EstimateIter {
-        match self.available_multi_funcs.pop() {
-            Some(iter) => iter,
-            None => EstimateIter::MultiFunction { estimate:0, results:None, outputs:None, ix: 0, constraint:0 },
-        }
-    }
-
-    pub fn get_intermediate(&mut self) -> EstimateIter {
-        match self.available_intermedaites.pop() {
-            Some(iter) => iter,
-            None => EstimateIter::Intermediate { estimate:0, iter:None, output:None, constraint:0 },
-        }
-    }
-
-    pub fn check_iter(&mut self, iter_ix:u32, iter: EstimateIter) {
-        let ix = iter_ix as usize;
-        let (replace, release) = if let Some(ref cur_iter) = self.iters[ix] {
-            if cur_iter.estimate() > iter.estimate() {
-                (true, true)
-            } else {
-                (false, false)
-            }
-        } else {
-            (true, false)
-        };
-
-        if replace {
-            let cur = mem::replace(&mut self.iters[ix], Some(iter));
-            if release {
-                self.release(cur.unwrap());
-            }
-        }
+    pub fn get(&mut self, iter_ix:usize) -> &mut EstimateIter {
+        &mut self.iters[iter_ix]
     }
 }
 
-
-#[derive(Clone)]
-pub enum EstimateIter {
-    PassThrough,
-    Scan {estimate: u32, iter: HashIndexIter, output: u32, constraint: u32},
-    Function {estimate: u32, output: u32, result: Interned, returned: bool, constraint: u32},
-    MultiFunction {estimate: u32, outputs: Option<Vec<u32>>, ix:usize, results: Option<Vec<Vec<Interned>>>, constraint: u32},
-    Intermediate {estimate: u32, iter: Option<DangerousKeys<Vec<Interned>, RoundEntry>>, output: Option<Vec<u32>>, constraint: u32},
+#[derive(Debug)]
+pub struct EstimateIter {
+    pub pass_through: bool,
+    pub estimate: usize,
+    pub iter: OutputingIter,
+    pub constraint: usize,
 }
 
 impl EstimateIter {
-    pub fn estimate(&self) -> u32 {
-        match self {
-            &EstimateIter::Scan {ref estimate, .. } |
-            &EstimateIter::Function {ref estimate, .. } |
-            &EstimateIter::Intermediate {ref estimate, .. } |
-            &EstimateIter::MultiFunction {ref estimate, .. } => {
-                *estimate
-            },
-            &EstimateIter::PassThrough => 1
+    pub fn new() -> EstimateIter {
+       EstimateIter { pass_through:false, estimate:usize::MAX, iter:OutputingIter::Empty, constraint:0 }
+    }
+
+    pub fn is_better(&self, estimate:usize) -> bool {
+        self.estimate > estimate
+    }
+
+    pub fn reset(&mut self) {
+        self.pass_through = false;
+        self.estimate = usize::MAX;
+        self.iter = OutputingIter::Empty;
+        self.constraint = 0;
+    }
+
+    pub fn next(&mut self, row:&mut Row, iterator: usize) -> bool {
+        if self.pass_through {
+            false
+        } else {
+            self.iter.next(row, iterator)
         }
     }
 
-    pub fn constraint(&self) -> u32 {
-        match self {
-            &EstimateIter::Scan {constraint, .. } |
-            &EstimateIter::Function {constraint, .. } |
-            &EstimateIter::Intermediate {constraint, .. } |
-            &EstimateIter::MultiFunction {constraint, .. } => {
-                constraint
-            },
-            &EstimateIter::PassThrough => 999999
-        }
+    pub fn clear(&self, row:&mut Row, iterator: usize) {
+        self.iter.clear(row, iterator);
+    }
+}
+
+pub enum OutputingIter {
+    Empty,
+    Single(usize, Box<Iterator<Item=Interned>>),
+    Multi(Vec<usize>, Box<Iterator<Item=Vec<Interned>>>),
+}
+
+impl OutputingIter {
+
+    pub fn make_ptr<'a>(value: Box<Iterator<Item=Interned> + 'a>) -> Box<Iterator<Item=Interned> + 'static> {
+        unsafe { mem::transmute(value) }
     }
 
-    pub fn next(&mut self, row:&mut Row, iterator: u32) -> bool {
+    pub fn make_multi_ptr<'a>(value: Box<Iterator<Item=Vec<Interned>> + 'a>) -> Box<Iterator<Item=Vec<Interned>> + 'static> {
+        unsafe { mem::transmute(value) }
+    }
+
+    pub fn next(&mut self, row:&mut Row, iterator: usize) -> bool {
         match self {
-            &mut EstimateIter::Scan {ref mut iter, ref output, .. } => {
-                if let Some(v) = iter.next() {
-                    row.set(*output, v);
+            &mut OutputingIter::Empty => { false }
+            &mut OutputingIter::Single(output, ref mut iter) => {
+                if let Some(v) = (*iter).next() {
+                    row.set(output, v);
                     true
                 } else {
                     false
                 }
             },
-            &mut EstimateIter::Function { result, ref output, ref mut returned, .. } => {
-                if !*returned && result > 0 {
-                    *returned = true;
-                    row.set(*output, result);
-                    true
-                } else {
-                    false
-                }
-            },
-            &mut EstimateIter::MultiFunction {ref results, ref mut ix, outputs: Some(ref outputs), .. } => {
-                if let &Some(ref rows) = results {
-                    loop {
-                        if *ix < rows.len() {
-                            let prev_solved = row.get_solved(iterator as i32 - 1);
-                            let mut valid = true;
-                            row.clear_solving_for();
-                            for (out, v) in outputs.iter().zip(rows[*ix].iter()) {
-                                if check_bit(prev_solved, *out) {
-                                    if !row.check(*out, *v) {
-                                        valid = false;
-                                        break;
-                                    }
-                                } else {
-                                    row.set_multi(*out, *v);
-                                }
-                            }
-                            *ix += 1;
-                            if valid {
-                                return true;
+            &mut OutputingIter::Multi(ref outputs, ref mut iter) => {
+                for result in iter {
+                    let prev_solved = row.get_solved(iterator);
+                    let mut valid = true;
+                    row.clear_solving_for();
+                    for (out, v) in outputs.iter().zip(result.iter()) {
+                        if check_bit(prev_solved, *out) {
+                            if !row.check(*out, *v) {
+                                valid = false;
+                                break;
                             }
                         } else {
-                            return false
+                            row.set_multi(*out, *v);
                         }
                     }
-                } else {
-                    false
-                }
-            },
-            &mut EstimateIter::Intermediate {ref mut iter, output: Some(ref outputs), .. } => {
-                if let &mut Some(ref mut keys) = iter {
-                    loop {
-                        if let Some(key) = keys.next() {
-                            let prev_solved = row.get_solved(iterator as i32 - 1);
-                            let mut valid = true;
-                            row.clear_solving_for();
-                            for (out, v) in outputs.iter().zip(key) {
-                                if check_bit(prev_solved, *out) {
-                                    if !row.check(*out, *v) {
-                                        valid = false;
-                                        break;
-                                    }
-                                } else {
-                                    row.set_multi(*out, *v);
-                                }
-                            }
-                            if valid {
-                                return true;
-                            }
-                        } else {
-                            return false;
-                        }
+                    if valid {
+                        return true;
                     }
-                } else {
-                    false
                 }
+                false
             },
-            &mut EstimateIter::PassThrough => { false }
-            _ => panic!("Implement me"),
         }
     }
 
-    pub fn clear(&self, row:&mut Row, iterator: u32) {
+    pub fn clear(&self, row:&mut Row, iterator: usize) {
         match self {
-            &EstimateIter::Scan {ref output, .. } => {
-                row.clear(*output);
+            &OutputingIter::Empty => {}
+            &OutputingIter::Single(output, _) => {
+                row.clear(output);
             },
-            &EstimateIter::Function { ref output, .. } => {
-                row.clear(*output);
-            },
-            &EstimateIter::MultiFunction { outputs: Some(ref outputs), .. } => {
-                let prev_solved = row.get_solved(iterator as i32 - 1);
+            &OutputingIter::Multi(ref outputs, _) => {
+                let prev_solved = row.get_solved(iterator);
                 for output in outputs.iter() {
                     if !check_bit(prev_solved, *output) {
                         row.clear(*output);
                     }
                 }
-            },
-            &EstimateIter::Intermediate { output: Some(ref outputs), .. } => {
-                let prev_solved = row.get_solved(iterator as i32 - 1);
-                for output in outputs.iter() {
-                    if !check_bit(prev_solved, *output) {
-                        row.clear(*output);
-                    }
-                }
-            },
-            &EstimateIter::PassThrough => { }
-            _ => panic!("Implement me"),
+            }
         }
     }
 }
+
+impl fmt::Debug for OutputingIter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &OutputingIter::Empty => { write!(f, "OutputingIter::Empty") }
+            &OutputingIter::Single(..) => { write!(f, "OutputingIter::Single") }
+            &OutputingIter::Multi(..) => { write!(f, "OutputingIter::Multi") }
+        }
+    }
+}
+
 
 //-------------------------------------------------------------------------
 // Frame
@@ -937,8 +812,8 @@ impl Frame {
         Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
-    pub fn get_register(&self, register:u32) -> Interned {
-        self.row.fields[register as usize]
+    pub fn get_register(&self, register:usize) -> Interned {
+        self.row.fields[register]
     }
 
     pub fn resolve(&self, field:&Field) -> Interned {
@@ -965,31 +840,31 @@ impl Frame {
 #[derive(Debug, Clone)]
 pub enum Instruction {
     StartBlock { block: usize },
-    GetIterator {iterator: u32, bail: i32, constraint: u32},
-    IteratorNext {iterator: u32, bail: i32, finished_mask: u64},
-    Accept {bail: i32, constraint:u32, iterator:u32},
-    MoveInputField { from:u32, to:u32, },
-    MoveIntermediateField { from:u32, to:u32, },
-    AcceptIntermediateField { from:u32, value:Interned, bail:i32 },
+    GetIterator {iterator: usize, bail: i32, constraint: usize},
+    IteratorNext {iterator: usize, bail: i32, finished_mask: u64},
+    Accept {bail: i32, constraint:usize, iterator:usize},
+    MoveInputField { from:usize, to:usize, },
+    MoveIntermediateField { from:usize, to:usize, },
+    AcceptIntermediateField { from:usize, value:Interned, bail:i32 },
     ClearRounds,
-    GetRounds {bail: i32, constraint: u32},
-    GetIntermediateRounds {bail: i32, constraint: u32},
-    Bind {next: i32, constraint:u32},
-    Commit {next: i32, constraint:u32},
-    InsertIntermediate {next: i32, constraint:u32},
-    Project {next: i32, from:u32},
+    GetRounds {bail: i32, constraint: usize},
+    GetIntermediateRounds {bail: i32, constraint: usize},
+    Bind {next: i32, constraint:usize},
+    Commit {next: i32, constraint:usize},
+    InsertIntermediate {next: i32, constraint:usize},
+    Project {next: i32, from:usize},
     Watch { next:i32, name:String, constraint:usize}
 }
 
 #[inline(never)]
-pub fn start_block(_: &mut RuntimeState, frame: &mut Frame, block:usize) -> i32 {
-    // println!("STARTING! {:?}", block);
+pub fn start_block(frame: &mut Frame, block:usize) -> i32 {
+    // println!("\nSTARTING! {:?}", block);
     frame.block_ix = block;
     1
 }
 
 #[inline(never)]
-pub fn move_input_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u32) -> i32 {
+pub fn move_input_field(frame: &mut Frame, from:usize, to:usize) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(change) = frame.input {
         match from {
@@ -1003,7 +878,7 @@ pub fn move_input_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u3
 }
 
 #[inline(never)]
-pub fn move_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, to:u32) -> i32 {
+pub fn move_intermediate_field(frame: &mut Frame, from:usize, to:usize) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(ref intermediate) = frame.intermediate {
         frame.row.set_multi(to, intermediate.key[from as usize]);
@@ -1014,7 +889,7 @@ pub fn move_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u32
 }
 
 #[inline(never)]
-pub fn accept_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u32, value:Interned, bail:i32) -> i32 {
+pub fn accept_intermediate_field(frame: &mut Frame, from:usize, value:Interned, bail:i32) -> i32 {
     // println!("STARTING! {:?}", block);
     if let Some(ref intermediate) = frame.intermediate {
         if intermediate.key[from as usize] == value { 1 } else { bail }
@@ -1024,7 +899,7 @@ pub fn accept_intermediate_field(_: &mut RuntimeState, frame: &mut Frame, from:u
 }
 
 #[inline(never)]
-pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iter_ix:u32, cur_constraint:u32, bail:i32) -> i32 {
+pub fn get_iterator(interner: &mut Interner, intermediates:&IntermediateIndex, index: &HashIndex, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iter_ix:usize, cur_constraint:usize, bail:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
     let jump = match cur {
         &Constraint::Scan {ref e, ref a, ref v, ref register_mask} => {
@@ -1038,23 +913,22 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
             let resolved_v = frame.resolve(v);
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
-            let mut iter = iter_pool.get();
-            program.index.propose(&mut iter, resolved_e, resolved_a, resolved_v);
-            match iter {
-                EstimateIter::Scan {ref mut output, ref mut constraint, ..} => {
-                    *constraint = cur_constraint;
-                    *output = match (*output, e, a, v) {
-                        (0, &Field::Register(reg), _, _) => reg as u32,
-                        (1, _, &Field::Register(reg), _) => reg as u32,
-                        (2, _, _, &Field::Register(reg)) => reg as u32,
-                        _ => panic!("bad scan output {:?} {:?} {:?} {:?}", output,e,a,v),
-                    };
+            let mut iter = iter_pool.get(iter_ix);
+            if index.propose(&mut iter, resolved_e, resolved_a, resolved_v) {
+                iter.constraint = cur_constraint;
+                match iter.iter {
+                    OutputingIter::Single(ref mut output, _) => {
+                        *output = match (*output, e, a, v) {
+                            (0, &Field::Register(reg), _, _) => reg,
+                            (1, _, &Field::Register(reg), _) => reg,
+                            (2, _, _, &Field::Register(reg)) => reg,
+                            _ => panic!("bad scan output {:?} {:?} {:?} {:?}", output,e,a,v),
+                        };
+                    }
+                    _ => {}
                 }
-                _ => panic!("Implement me"),
             }
-
-            // if program.debug { println!("get iter: {:?} -> estimate {:?}", cur_constraint, iter.estimate()); }
-            iter_pool.check_iter(iter_ix, iter);
+            // if program.debug { println!("get iter: {:?} -> estimate {:?}", cur_constraint, iter.estimate); }
             1
         },
         &Constraint::Function {ref func, ref output, ref params, param_mask, output_mask, ..} => {
@@ -1063,26 +937,25 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                 let result = {
                     let mut resolved = vec![];
                     for param in params {
-                        resolved.push(program.interner.get_value(frame.resolve(param)));
+                        resolved.push(interner.get_value(frame.resolve(param)));
                     }
                     func(resolved)
                 };
-                let mut iter = iter_pool.get_func();
                 match result {
                     Some(v) => {
-                        let id = program.interner.internable_to_id(v);
-                        let reg = if let &Field::Register(reg) = output {
-                            reg as u32
-                        } else {
-                            panic!("Function output is not a register");
-                        };
-                        if let EstimateIter::Function {ref mut estimate, ref mut output, ref mut result, ref mut constraint, ..} = iter {
-                            *constraint = cur_constraint;
-                            *estimate = 1;
-                            *result = id;
-                            *output = reg;
+                        let mut iter = iter_pool.get(iter_ix);
+                        if iter.is_better(1) {
+                            let id = interner.internable_to_id(v);
+                            let reg = if let &Field::Register(reg) = output {
+                                reg
+                            } else {
+                                panic!("Function output is not a register");
+                            };
+                            let result_iter = iter::once(id);
+                            iter.constraint = cur_constraint;
+                            iter.estimate = 1;
+                            iter.iter = OutputingIter::Single(reg, OutputingIter::make_ptr(Box::new(result_iter)));
                         }
-                        iter_pool.check_iter(iter_ix, iter);
                         1
                     }
                     _ => bail,
@@ -1099,29 +972,29 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
                 let result = {
                     let mut resolved = vec![];
                     for param in params {
-                        resolved.push(program.interner.get_value(frame.resolve(param)));
+                        resolved.push(interner.get_value(frame.resolve(param)));
                     }
                     func(resolved)
                 };
-                let mut iter = iter_pool.get_multi_func();
                 match result {
                     Some(mut result_values) => {
-                        if let EstimateIter::MultiFunction {ref mut estimate, ref mut outputs, ref mut results, ref mut constraint, ..} = iter {
-                            *constraint = cur_constraint;
-                            *estimate = 1;
-                            *results = Some(result_values.drain(..).map(|mut row| {
-                                row.drain(..).map(|field| program.interner.internable_to_id(field)).collect()
-                            }).collect());
-                            // @TODO this could be precomputed
-                            *outputs = Some(output_fields.iter().map(|x| {
+                        let mut iter = iter_pool.get(iter_ix);
+                        let estimate = result_values.len();
+                        if iter.is_better(estimate) {
+                            let outputs = output_fields.iter().map(|x| {
                                 if let &Field::Register(reg) = x {
-                                    reg as u32
+                                    reg
                                 } else {
                                     panic!("Non-register multi-function output")
                                 }
-                            }).collect());
+                            }).collect();
+                            let result_iter = result_values.drain(..).map(|mut row| {
+                                row.drain(..).map(|field| interner.internable_to_id(field)).collect()
+                            }).collect::<Vec<Vec<Interned>>>().into_iter();
+                            iter.constraint = cur_constraint;
+                            iter.estimate = estimate;
+                            iter.iter = OutputingIter::Multi(outputs, OutputingIter::make_multi_ptr(Box::new(result_iter)));
                         }
-                        iter_pool.check_iter(iter_ix, iter);
                         1
                     }
                     _ => bail,
@@ -1142,105 +1015,70 @@ pub fn get_iterator(program: &mut RuntimeState, block_info: &BlockInfo, iter_poo
             let resolved = key.iter().map(|param| frame.resolve(param)).collect();
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
-            let mut iter = iter_pool.get_intermediate();
-            program.intermediates.propose(&mut iter, resolved);
-            match iter {
-                EstimateIter::Intermediate {ref mut output, ref mut constraint, ..} => {
-                    *constraint = cur_constraint;
-                    // @TODO this could be precomputed
-                    *output = Some(value.iter().map(|x| {
-                        if let &Field::Register(reg) = x {
-                            reg as u32
-                        } else {
-                            panic!("Non-register intermediate scan output")
-                        }
-                    }).collect());
+            let mut iter = iter_pool.get(iter_ix);
+            let outputs = value.iter().map(|x| {
+                if let &Field::Register(reg) = x {
+                    reg
+                } else {
+                    panic!("Non-register intermediate scan output")
                 }
-                _ => panic!("Non-intermediate iterator for IntermediateScan"),
+            }).collect();
+            if intermediates.propose(&mut iter, resolved, outputs) {
+                iter.constraint = cur_constraint;
             }
-
-            // println!("get iter: {:?}", cur_constraint);
-            iter_pool.check_iter(iter_ix, iter);
             1
         },
         _ => { 1 }
     };
-    if jump == bail {
-        iter_pool.iters[iter_ix as usize].take();
-    }
     jump
 }
 
 #[inline(never)]
-pub fn iterator_next(_: &mut RuntimeState, iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:u32, bail:i32, finished_mask:u64) -> i32 {
-    let mut passthrough = false;
-    let go = {
-        let mut iter = iter_pool.iters[iterator as usize].as_mut();
-        // println!("Iter Next: {:?}", iter);
-        match iter {
-            Some(ref mut cur) => {
-                // if program.debug { println!("iter next: {:?} -> estimate {:?}", cur.constraint(), cur.estimate()); }
-                match cur.next(&mut frame.row, iterator) {
-                    false => {
-                        if cur.estimate() != 0 {
-                            frame.row.clear_solved(iterator);
-                            cur.clear(&mut frame.row, iterator);
-                        }
-                        bail
-                    },
-                    true => {
-                        // frame.counters.iter_next += 1;
-                        frame.row.put_solved(iterator);
-                        1
-                    },
+pub fn iterator_next(iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterator:usize, bail:i32, finished_mask:u64) -> i32 {
+    let mut iter = iter_pool.get(iterator);
+    // println!("Iter Next: {:?} {:?}", iterator, iter);
+    match iter.next(&mut frame.row, iterator) {
+        // if program.debug { println!("iter next: {:?} -> estimate {:?}", cur.constraint(), cur.estimate); }
+        false => {
+            if !iter.pass_through && iter.estimate == usize::MAX && frame.row.get_solved(iterator) == finished_mask {
+                // if we were solved when we came into here, and there were no
+                // iterators set, that means we've completely solved for all the variables
+                // and we just need to passthrough to the end, by setting the current iter
+                // to the PassThrough iterator, when we come back into this instruction,
+                // we'll go through the other branch and bail out appropriately. Effectively
+                // setting the passthrough iterator allows you to proceed through the pipe
+                // exactly once without needing to iterate normally. This is necessary because
+                // some instructions can solve for multiple registers at once, but it's not
+                // guaranteed that they'll run before some other provider that might do each
+                // register one by one, so the number of iterations necessary may vary.
+                iter.pass_through = true;
+                1
+            } else {
+                if iter.estimate != 0 && iter.estimate != usize::MAX {
+                    frame.row.clear_solved(iterator);
+                    iter.clear(&mut frame.row, iterator);
                 }
-            },
-            None => {
-                if frame.row.get_solved(iterator as i32 - 1) == finished_mask {
-                    // if we were solved when we came into here, and there were no
-                    // iterators set, that means we've completely solved for all the variables
-                    // and we just need to passthrough to the end, by setting the current iter
-                    // to the PassThrough iterator, when we come back into this instruction,
-                    // we'll go through the other branch and bail out appropriately. Effectively
-                    // setting the passthrough iterator allows you to proceed through the pipe
-                    // exactly once without needing to iterate normally. This is necessary because
-                    // some instructions can solve for multiple registers at once, but it's not
-                    // guaranteed that they'll run before some other provider that might do each
-                    // register one by one, so the number of iterations necessary may vary.
-                    passthrough = true;
-                    1
-                } else {
-                    bail
-                }
-            },
-        }
-    };
-    if passthrough {
-        iter_pool.iters[iterator as usize] = Some(EstimateIter::PassThrough);
-    } else if go == bail {
-        let old = iter_pool.iters[iterator as usize].take();
-        if let Some(cur) = old {
-            let est = cur.estimate();
-            frame.counters.considered += est as u64;
-            iter_pool.release(cur);
-        }
+                // frame.counters.considered += iter.estimate as u64;
+                iter.reset();
+                bail
+            }
+        },
+        true => {
+            // frame.counters.iter_next += 1;
+            frame.row.put_solved(iterator);
+            1
+        },
     }
-    // println!("Row: {:?}", &frame.row.fields[0..3]);
-    go
 }
 
 #[inline(never)]
-pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut EstimateIterPool, frame: &mut Frame, cur_constraint:u32, cur_iterator:u32, bail:i32) -> i32 {
+pub fn accept(interner:&mut Interner, intermediates:&mut IntermediateIndex, index:&HashIndex, block_info:&BlockInfo, iter_pool:&mut EstimateIterPool, frame: &mut Frame, cur_constraint:usize, cur_iterator:usize, bail:i32) -> i32 {
     frame.counters.accept += 1;
     let cur = &block_info.blocks[frame.block_ix].constraints[cur_constraint as usize];
     if cur_iterator > 0 {
-        let iter = &iter_pool.iters[(cur_iterator - 1) as usize];
-        match iter {
-            &Some(EstimateIter::Scan { constraint, .. }) => {
-                if constraint == cur_constraint { return 1; }
-            }
-            &Some(EstimateIter::PassThrough) => { return 1; }
-            _ => {}
+        let iter = iter_pool.get(cur_iterator - 1);
+        if iter.pass_through || iter.constraint == cur_constraint {
+            return 1;
         }
     }
     match cur {
@@ -1254,7 +1092,7 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let resolved_e = frame.resolve(e);
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
-            let checked = program.index.check(resolved_e, resolved_a, resolved_v);
+            let checked = index.check(resolved_e, resolved_a, resolved_v);
             // if program.debug { println!("scan accept {:?} {:?}", cur_constraint, checked); }
             if checked { 1 } else { bail }
         },
@@ -1274,13 +1112,13 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let result = {
                 let mut resolved = vec![];
                 for param in params {
-                    resolved.push(program.interner.get_value(frame.resolve(param)));
+                    resolved.push(interner.get_value(frame.resolve(param)));
                 }
                 func(resolved)
             };
             match result {
                 Some(v) => {
-                    let id = program.interner.internable_to_id(v);
+                    let id = interner.internable_to_id(v);
                     if id == frame.resolve(output) { 1 } else { bail }
                 }
                 _ => bail,
@@ -1291,8 +1129,8 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
                return 1;
             }
             if check_bits(frame.row.solved_fields, *param_mask) {
-                let resolved_left = program.interner.get_value(frame.resolve(left));
-                let resolved_right = program.interner.get_value(frame.resolve(right));
+                let resolved_left = interner.get_value(frame.resolve(left));
+                let resolved_right = interner.get_value(frame.resolve(right));
                 if func(resolved_left, resolved_right) {
                     1
                 } else {
@@ -1312,26 +1150,26 @@ pub fn accept(program: &mut RuntimeState, block_info:&BlockInfo, iter_pool:&mut 
             let resolved = key.iter().map(|param| frame.resolve(param)).collect();
             let resolved_value = value.iter().map(|param| frame.resolve(param)).collect();
 
-            if program.intermediates.check(&resolved, &resolved_value) { 1 } else { bail }
+            if intermediates.check(&resolved, &resolved_value) { 1 } else { bail }
         },
         _ => { 1 }
     }
 }
 
 #[inline(never)]
-pub fn clear_rounds(program: &mut RuntimeState, frame: &mut Frame) -> i32 {
-    program.rounds.clear_output_rounds();
+pub fn clear_rounds(rounds: &mut RoundHolder, frame: &mut Frame) -> i32 {
+    rounds.clear_output_rounds();
     if let Some(ref change) = frame.input {
-        program.rounds.output_rounds.push((change.round, change.count));
+        rounds.output_rounds.push((change.round, change.count));
     } else if let Some(ref change) = frame.intermediate {
         let count = if change.negate { change.count * -1 } else { change.count };
-        program.rounds.output_rounds.push((change.round, count));
+        rounds.output_rounds.push((change.round, count));
     }
     1
 }
 
 #[inline(never)]
-pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
+pub fn get_rounds(distinct_index: &mut DistinctIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, bail:i32) -> i32 {
     // println!("get rounds!");
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
@@ -1340,9 +1178,9 @@ pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut
             let resolved_a = frame.resolve(a);
             let resolved_v = frame.resolve(v);
             // println!("getting rounds for {:?} {:?} {:?}", e, a, v);
-            program.rounds.compute_output_rounds(program.index.distinct_iter(resolved_e, resolved_a, resolved_v));
+            rounds.compute_output_rounds(distinct_index.iter(resolved_e, resolved_a, resolved_v));
             // if program.debug { println!("get rounds: ({}, {}, {}) -> {:?}", resolved_e, resolved_a, resolved_v, program.rounds.get_output_rounds()); }
-            if program.rounds.get_output_rounds().len() > 0 {
+            if rounds.get_output_rounds().len() > 0 {
                 1
             } else {
                 bail
@@ -1353,22 +1191,22 @@ pub fn get_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut
 }
 
 #[inline(never)]
-pub fn get_intermediate_rounds(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, bail:i32) -> i32 {
+pub fn get_intermediate_rounds(intermediates: &mut IntermediateIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, bail:i32) -> i32 {
     // println!("get rounds!");
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::AntiScan {ref key, .. } => {
             let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
-            program.rounds.compute_anti_output_rounds(program.intermediates.distinct_iter(&resolved, &vec![]));
+            rounds.compute_anti_output_rounds(intermediates.distinct_iter(&resolved, &vec![]));
         },
         &Constraint::IntermediateScan {ref key, ref value, .. } => {
             let resolved:Vec<Interned> = key.iter().map(|v| frame.resolve(v)).collect();
             let resolved_value:Vec<Interned> = value.iter().map(|v| frame.resolve(v)).collect();
-            program.rounds.compute_output_rounds(program.intermediates.distinct_iter(&resolved, &resolved_value));
+            rounds.compute_output_rounds(intermediates.distinct_iter(&resolved, &resolved_value));
         },
         _ => { panic!("Get rounds on non-scan") }
     };
-    if program.rounds.get_output_rounds().len() > 0 {
+    if rounds.get_output_rounds().len() > 0 {
         1
     } else {
         bail
@@ -1376,18 +1214,17 @@ pub fn get_intermediate_rounds(program: &mut RuntimeState, block_info:&BlockInfo
 }
 
 #[inline(never)]
-pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+pub fn bind(distinct_index: &mut DistinctIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Insert {ref e, ref a, ref v, ..} => {
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n: 0, round:0, transaction: 0, count:0, };
-            let ref mut rounds = program.rounds;
             // println!("rounds {:?}", rounds.output_rounds);
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(round, count) in rounds.get_output_rounds().clone().iter() {
                 let output = &c.with_round_count(round + 1, count);
                 frame.counters.inserts += 1;
-                program.index.distinct(output, rounds);
+                distinct_index.distinct(output, rounds);
             }
         },
         _ => {}
@@ -1396,13 +1233,12 @@ pub fn bind(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame
 }
 
 #[inline(never)]
-pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+pub fn commit(rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Insert {ref e, ref a, ref v, ..} => {
-            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
-            let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count);
@@ -1412,9 +1248,8 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             }
         },
         &Constraint::Remove {ref e, ref a, ref v } => {
-            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
-            let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
@@ -1423,9 +1258,8 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             }
         },
         &Constraint::RemoveAttribute {ref e, ref a } => {
-            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:0, n, round:0, transaction: 0, count:0, };
-            let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
@@ -1434,9 +1268,8 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
             }
         },
         &Constraint::RemoveEntity {ref e } => {
-            let n = (frame.block_ix as u32) * 10000 + constraint;
+            let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: 0, v:0, n, round:0, transaction: 0, count:0, };
-            let ref mut rounds = program.rounds;
             // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
             for &(_, count) in rounds.get_output_rounds().clone().iter() {
                 let output = c.with_round_count(0, count * -1);
@@ -1450,7 +1283,7 @@ pub fn commit(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Fra
 }
 
 #[inline(never)]
-pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, constraint:u32, next:i32) -> i32 {
+pub fn insert_intermediate(interner: &mut Interner, intermediates:&mut IntermediateIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::InsertIntermediate {ref key, ref value, negate} => {
@@ -1458,20 +1291,19 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
             let resolved_value:Vec<Interned> = value.iter().map(|v| frame.resolve(v)).collect();
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
-            for &(round, count) in program.rounds.get_output_rounds().iter() {
+            for &(round, count) in rounds.get_output_rounds().iter() {
                 frame.counters.inserts += 1;
-                program.intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
+                intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
         },
         &Constraint::Aggregate {ref group, ref params, ref output_key, ref add, ref remove, ..} => {
-            let ref mut interner = program.interner;
             let resolved_group:Vec<Interned> = group.iter().map(|v| frame.resolve(v)).collect();
             let resolved_params:Vec<Internable> = { params.iter().map(|v| interner.get_value(frame.resolve(v)).clone()).collect() };
             let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
-            for &(round, count) in program.rounds.get_output_rounds().iter() {
+            for &(round, count) in rounds.get_output_rounds().iter() {
                 let action = if count < 0 { remove } else { add };
                 frame.counters.inserts += 1;
-                program.intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
+                intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
             }
         },
         _ => {}
@@ -1481,24 +1313,25 @@ pub fn insert_intermediate(program: &mut RuntimeState, block_info:&BlockInfo, fr
 
 
 #[inline(never)]
-pub fn project(_: &mut RuntimeState, frame: &mut Frame, from:u32, next:i32) -> i32 {
+pub fn project(frame: &mut Frame, from:usize, next:i32) -> i32 {
     let value = frame.get_register(from);
     frame.results.push(value);
     next
 }
 
 #[inline(never)]
-pub fn watch(program: &mut RuntimeState, block_info:&BlockInfo, frame: &mut Frame, name:&str, next:i32, constraint:usize) -> i32 {
+pub fn watch(watches: &mut HashMap<String, WatchIndex>, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, name:&str, next:i32, constraint:usize) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Watch { ref registers, ..} => {
             let resolved:Vec<Interned> = registers.iter().map(|x| frame.resolve(x)).collect();
             let mut total = 0;
-            for &(_, count) in program.rounds.get_output_rounds().iter() {
+            for &(_, count) in rounds.get_output_rounds().iter() {
                 total += count;
             }
             frame.counters.inserts += 1;
-            program.watch(name, resolved, total);
+            let index = watches.entry(name.to_string()).or_insert_with(|| WatchIndex::new());
+            index.insert(resolved, total);
         },
         _ => unreachable!()
     }
@@ -2053,7 +1886,7 @@ pub fn make_register_mask(fields: Vec<&Field>) -> u64 {
     let mut mask = 0;
     for field in fields {
         match field {
-            &Field::Register(r) => mask = set_bit(mask, (r % 64) as u32),
+            &Field::Register(r) => mask = set_bit(mask, (r % 64)),
             _ => {},
         }
     }
@@ -2116,6 +1949,7 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     let func = match op {
         "string/split" => string_split,
         "string/index-of" => string_index_of,
+        "math/range" => math_range,
         _ => panic!("Unknown multi function: {:?}", op)
     };
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
@@ -2273,6 +2107,18 @@ pub fn math_round(params: Vec<&Internable>) -> Option<Internable> {
         &[&Internable::Number(_)] => {
             let a = Internable::to_number(params[0]);
             Some(Internable::from_number(a.round()))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_range(params: Vec<&Internable>) -> Option<Vec<Vec<Internable>>> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let from = Internable::to_number(params[0]) as i64;
+            let to = Internable::to_number(params[1]) as i64;
+
+            Some((from..to+1).map(|x| vec![Internable::from_number(x as f32)]).collect())
         },
         _ => { None }
     }
@@ -2494,15 +2340,15 @@ pub fn has_any_bits(solved:u64, checking:u64) -> bool {
     solved & checking != 0
 }
 
-pub fn set_bit(solved:u64, bit:u32) -> u64 {
+pub fn set_bit(solved:u64, bit:usize) -> u64 {
     solved | (1 << bit)
 }
 
-pub fn clear_bit(solved:u64, bit:u32) -> u64 {
+pub fn clear_bit(solved:u64, bit:usize) -> u64 {
     solved & !(1 << bit)
 }
 
-pub fn check_bit(solved:u64, bit:u32) -> bool {
+pub fn check_bit(solved:u64, bit:usize) -> bool {
    solved & (1 << bit) != 0
 }
 
@@ -2514,57 +2360,63 @@ pub fn check_bit(solved:u64, bit:u32) -> bool {
 pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
+    let ref mut interner = program.interner;
+    let ref mut distinct_index = program.distinct_index;
+    let ref mut intermediates = program.intermediates;
+    let ref mut watches = program.watch_indexes;
+    let ref mut rounds = program.rounds;
+    let ref index = program.index;
     while pointer < len {
         frame.counters.instructions += 1;
         let inst = &pipe[pointer as usize];
         pointer += match *inst {
             Instruction::StartBlock {block} => {
-                start_block(program, frame, block)
+                start_block(frame, block)
             },
             Instruction::MoveInputField { from, to } => {
-                move_input_field(program, frame, from, to)
+                move_input_field(frame, from, to)
             },
             Instruction::MoveIntermediateField { from, to } => {
-                move_intermediate_field(program, frame, from, to)
+                move_intermediate_field(frame, from, to)
             },
             Instruction::AcceptIntermediateField { from, value, bail } => {
-                accept_intermediate_field(program, frame, from, value, bail)
+                accept_intermediate_field(frame, from, value, bail)
             },
             Instruction::GetIterator { iterator, constraint, bail } => {
-                get_iterator(program, block_info, iter_pool, frame, iterator, constraint, bail)
+                get_iterator(interner, intermediates, index, block_info, iter_pool, frame, iterator, constraint, bail)
             },
             Instruction::IteratorNext { iterator, bail, finished_mask } => {
-                iterator_next(program, iter_pool, frame, iterator, bail, finished_mask)
+                iterator_next(iter_pool, frame, iterator, bail, finished_mask)
             },
             Instruction::Accept { constraint, bail, iterator } => {
                 // let start_ns = time::precise_time_ns();
-                let next = accept(program, block_info, iter_pool, frame, constraint, iterator, bail);
+                let next = accept(interner, intermediates, index, block_info, iter_pool, frame, constraint, iterator, bail);
                 // frame.counters.accept_ns += time::precise_time_ns() - start_ns;
                 next
             },
             Instruction::ClearRounds => {
-                clear_rounds(program, frame)
+                clear_rounds(rounds, frame)
             },
             Instruction::GetRounds { constraint, bail } => {
-                get_rounds(program, block_info, frame, constraint, bail)
+                get_rounds(distinct_index, rounds, block_info, frame, constraint, bail)
             },
             Instruction::GetIntermediateRounds { constraint, bail } => {
-                get_intermediate_rounds(program, block_info, frame, constraint, bail)
+                get_intermediate_rounds(intermediates, rounds, block_info, frame, constraint, bail)
             },
             Instruction::Bind { constraint, next } => {
-                bind(program, block_info, frame, constraint, next)
+                bind(distinct_index, rounds, block_info, frame, constraint, next)
             },
             Instruction::Commit { constraint, next } => {
-                commit(program, block_info, frame, constraint, next)
+                commit(rounds, block_info, frame, constraint, next)
             },
             Instruction::InsertIntermediate { constraint, next } => {
-                insert_intermediate(program, block_info, frame, constraint, next)
+                insert_intermediate(interner, intermediates, rounds, block_info, frame, constraint, next)
             },
             Instruction::Project { from, next } => {
-                project(program, frame, from, next)
+                project(frame, from, next)
             },
             Instruction::Watch { ref name, next, constraint } => {
-                watch(program, block_info, frame, name, next, constraint)
+                watch(watches, rounds, block_info, frame, name, next, constraint)
             },
         }
     };
@@ -2693,7 +2545,7 @@ impl RoundHolder {
         };
     }
 
-    pub fn prepare_commits(&mut self, index:&mut HashIndex) -> bool {
+    pub fn prepare_commits(&mut self, index:&mut HashIndex, distinct_index:&mut DistinctIndex) -> bool {
         for key in self.staged_commit_keys.iter() {
             match self.commits.get(key) {
                 Some(&(ChangeType::Remove, Change {count, e, a, v, n, transaction, round})) => {
@@ -2705,7 +2557,7 @@ impl RoundHolder {
                                     for attr in attrs {
                                         if let Some(vals) = index.get(e, attr, 0) {
                                             for val in vals {
-                                                match index.eavs.get(&(e, attr, val)) {
+                                                match distinct_index.get(e,attr,val) {
                                                     Some(entry) => {
                                                         if entry.rounds[0] > 0 {
                                                             let cloned = Change {e, a:attr, v:val, n, count, transaction, round};
@@ -2722,7 +2574,7 @@ impl RoundHolder {
                             (_, 0) => {
                                 if let Some(vals) = index.get(e, a, 0) {
                                     for val in vals {
-                                        match index.eavs.get(&(e, a, val)) {
+                                        match distinct_index.get(e,a,val) {
                                             Some(entry) => {
                                                 if entry.rounds[0] > 0 {
                                                     let cloned = Change {e, a, v:val, n, count, transaction, round};
@@ -2762,7 +2614,7 @@ impl RoundHolder {
         for change in drained {
             has_changes = true;
             // apply it
-            index.distinct(&change, self);
+            distinct_index.distinct(&change, self);
         }
         has_changes
     }
@@ -2791,7 +2643,7 @@ pub struct RoundHolderIter {
     cur_changes: Vec<Change>,
 }
 
-impl<'a> RoundHolderIter {
+impl RoundHolderIter {
     pub fn new() -> RoundHolderIter {
         RoundHolderIter { round_ix: 0, change_ix: 0, cur_changes: vec![] }
     }
@@ -2849,18 +2701,11 @@ pub struct RuntimeState {
     pub debug: bool,
     pub rounds: RoundHolder,
     pub index: HashIndex,
+    pub distinct_index: DistinctIndex,
     pub interner: Interner,
     pub watch_indexes: HashMap<String, WatchIndex>,
     pub intermediates: IntermediateIndex,
 }
-
-impl RuntimeState {
-    pub fn watch(&mut self, name:&str, resolved:Vec<Interned>, count:Count) {
-        let index = self.watch_indexes.entry(name.to_string()).or_insert_with(|| WatchIndex::new());
-        index.insert(resolved, count);
-    }
-}
-
 
 pub struct BlockInfo {
     pub pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
@@ -2894,6 +2739,7 @@ pub struct Program {
 impl Program {
     pub fn new() -> Program {
         let index = HashIndex::new();
+        let distinct_index = DistinctIndex::new();
         let intermediates = IntermediateIndex::new();
         let interner = Interner::new();
         let rounds = RoundHolder::new();
@@ -2904,7 +2750,7 @@ impl Program {
         let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
         let (outgoing, incoming) = mpsc::channel();
-        let state = RuntimeState { debug:false, rounds, index, interner, watch_indexes, intermediates };
+        let state = RuntimeState { debug:false, rounds, index, distinct_index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
     }
@@ -2927,7 +2773,14 @@ impl Program {
 
     #[allow(dead_code)]
     pub fn raw_insert(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) {
-        self.state.index.insert_distinct(e,a,v,round,count);
+        self.state.distinct_index.raw_insert(e,a,v,round,count);
+        if count > 0 {
+            self.state.distinct_index.insert_active(e,a,v,round);
+            self.state.index.insert(e,a,v);
+        } else {
+            self.state.distinct_index.remove_active(e,a,v,round);
+            self.state.index.remove(e,a,v);
+        }
     }
 
     pub fn register_block(&mut self, mut block:Block) {
@@ -3107,7 +2960,9 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // want to do a real remove until *after* the pipes have run. Hence, the
                     // separation of insert and remove.
                     if change.count > 0 {
-                        program.state.index.insert(change.e, change.a, change.v, change.round);
+                        if program.state.distinct_index.insert_active(change.e, change.a, change.v, change.round) {
+                            program.state.index.insert(change.e, change.a, change.v);
+                        }
                     }
                     pipes.clear();
                     program.get_pipes(&program.block_info, change, &mut pipes);
@@ -3125,7 +2980,9 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // as stated above, we want to do removes after so that when we look
                     // for AB and BA, they find the same values as when they were added.
                     if change.count < 0 {
-                        program.state.index.remove(change.e, change.a, change.v, change.round);
+                        if program.state.distinct_index.remove_active(change.e, change.a, change.v, change.round) {
+                            program.state.index.remove(change.e, change.a, change.v);
+                        }
                     }
                     if current_round == 0 { commits.push(change.clone()); }
                 }
@@ -3133,7 +2990,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                 max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
                 current_round += 1;
             }
-            next_frame = program.state.rounds.prepare_commits(&mut program.state.index);
+            next_frame = program.state.rounds.prepare_commits(&mut program.state.index, &mut program.state.distinct_index);
         }
     }
 
@@ -3147,18 +3004,17 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
     }
 }
 
-pub struct Transaction {
+pub struct Transaction<'a> {
     changes: Vec<Change>,
     commits: Vec<Change>,
-    iter_pool: EstimateIterPool,
+    iter_pool: &'a mut EstimateIterPool,
     collapsed_commits: CollapsedChanges,
     frame: Frame,
 }
 
-impl Transaction {
-    pub fn new() -> Transaction {
+impl<'a> Transaction<'a> {
+    pub fn new(iter_pool:&mut EstimateIterPool) -> Transaction {
         let frame = Frame::new();
-        let iter_pool = EstimateIterPool::new();
         Transaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame, iter_pool}
     }
 
@@ -3173,9 +3029,9 @@ impl Transaction {
 
     pub fn exec(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>) {
         for change in self.changes.iter() {
-            program.state.index.distinct(&change, &mut program.state.rounds);
+            program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, &mut self.iter_pool, program);
+        transaction_flow(&mut self.commits, &mut self.frame, self.iter_pool, program);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -3249,7 +3105,7 @@ impl CodeTransaction {
         intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, 0, &mut max_round);
 
         for change in self.changes.iter() {
-            program.state.index.distinct(&change, &mut program.state.rounds);
+            program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
 
         transaction_flow(&mut self.commits, frame, iter_pool, program);
@@ -3411,13 +3267,14 @@ impl ProgramRunner {
             end_ns = time::precise_time_ns();
             println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
 
+            let mut iter_pool = EstimateIterPool::new();
             println!("Starting run loop.");
 
             'outer: loop {
                 match program.incoming.recv() {
                     Ok(RunLoopMessage::Transaction(v)) => {
                         let start_ns = time::precise_time_ns();
-                        let mut txn = Transaction::new();
+                        let mut txn = Transaction::new(&mut iter_pool);
                         for cur in v {
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };

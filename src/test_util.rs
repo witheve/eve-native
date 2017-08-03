@@ -21,7 +21,7 @@ macro_rules! valid (($blocks:tt) => ({
             loop {
                 match iter.next() {
                     Some(e) => {
-                        if program.state.index.is_available(e,a,v) {
+                        if program.state.distinct_index.is_available(e,a,v) {
                             found = true;
                             break;
                         }
