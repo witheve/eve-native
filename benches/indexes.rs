@@ -17,8 +17,6 @@ fn rand(rseed:u32) -> u32 {
 
 #[bench]
 fn hash_write(b:&mut Bencher) {
-    let mut total = 0;
-    let mut times = 0;
     let mut index = HashIndex::new();
     let mut seed = 0;
     // for ix in 0..10_000_000 {
@@ -30,9 +28,7 @@ fn hash_write(b:&mut Bencher) {
     //     seed = val;
     //     index.insert(e % 10000, (a % 50) + 1, val % 10000);
     // }
-    seed = 0;
     b.iter(|| {
-        times += 1;
         let e = rand(seed);
         seed = e;
         let a = rand(seed);
@@ -50,10 +46,7 @@ fn hash_write(b:&mut Bencher) {
 
 #[bench]
 fn hash_write_200_000(b:&mut Bencher) {
-    let mut total = 0;
-    let mut times = 0;
     let mut seed = 0;
-    seed = 0;
     b.iter(|| {
         let mut index = HashIndex::new();
         for _ in 0..200_000 {
@@ -71,12 +64,9 @@ fn hash_write_200_000(b:&mut Bencher) {
 
 #[bench]
 fn hash_read(b:&mut Bencher) {
-    let mut total = 0;
-    let mut times = 0;
-    let mut levels = 0;
     let mut index = HashIndex::new();
     let mut seed = 0;
-    for ix in 0..100_000 {
+    for _ in 0..100_000 {
         let e = rand(seed);
         seed = e;
         let a = rand(seed);
@@ -94,7 +84,6 @@ fn hash_read(b:&mut Bencher) {
         seed = a;
         let val = rand(seed);
         seed = val;
-        total += seed;
         index.check(e % 100000, (a % 50) + 1, val % 100000);
     });
     // println!("results: {:?}", total);

@@ -1569,7 +1569,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
     }
 }
 
-pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
+pub fn parse_file(program:&mut Program, path:&str, report: bool) -> Vec<Block> {
     let metadata = fs::metadata(path).expect(&format!("Invalid path: {:?}", path));
     let mut paths = vec![];
     if metadata.is_file() {
@@ -1589,7 +1589,9 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
     }
     let mut blocks = vec![];
     for cur_path in paths {
-        println!("{} {}", BrightCyan.paint("Compiling:"), cur_path.replace("\\","/"));
+        if report {
+            println!("{} {}", BrightCyan.paint("Compiling:"), cur_path.replace("\\","/"));
+        }
         let mut file = File::open(&cur_path).expect("Unable to open the file");
         let mut contents = String::new();
         file.read_to_string(&mut contents).expect("Unable to read the file");
