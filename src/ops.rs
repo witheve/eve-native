@@ -629,6 +629,7 @@ impl Row {
 //-------------------------------------------------------------------------
 
 pub struct EstimateIterPool<'a> {
+    available: Vec<EstimateIter<'a>>,
     iters: Vec<Option<EstimateIter<'a>>>,
 }
 
@@ -638,23 +639,37 @@ impl<'a> EstimateIterPool<'a> {
         for _ in 0..64 {
             iters.push(None);
         }
-        EstimateIterPool { iters }
+        EstimateIterPool { iters, available:vec![] }
+    }
+
+    pub fn get(&mut self) -> EstimateIter<'a> {
+        self.available.pop().unwrap_or_else(|| { EstimateIter::new() })
+    }
+
+    pub fn release(&mut self, mut iter: EstimateIter<'a>) {
+        iter.reset();
+        self.available.push(iter);
     }
 
     pub fn check_iter(&mut self, iter_ix:usize, iter: EstimateIter<'a>) {
         let ix = iter_ix as usize;
-        let replace = if let Some(ref cur_iter) = self.iters[ix] {
+        let (replace, release) = if let Some(ref cur_iter) = self.iters[ix] {
             if cur_iter.estimate > iter.estimate {
-                true
+                (true, true)
             } else {
-                false
+                (false, false)
             }
         } else {
-            true
+            (true, false)
         };
 
         if replace {
-            mem::replace(&mut self.iters[ix], Some(iter));
+            let old = mem::replace(&mut self.iters[ix], Some(iter));
+            if release {
+                self.release(old.unwrap());
+            }
+        } else {
+            self.release(iter);
         }
     }
 }
@@ -669,6 +684,14 @@ pub struct EstimateIter<'a> {
 impl<'a> EstimateIter<'a> {
     pub fn new() -> EstimateIter<'a> {
        EstimateIter { pass_through:false, estimate:0, iter:OutputingIter::Empty, constraint:0 }
+    }
+
+    pub fn reset(&mut self) {
+        self.pass_through = false;
+        self.estimate = 0;
+        let old = mem::replace(self.iter, OutputingIter::Empty);
+        old.reset();
+        self.constraint = 0;
     }
 
     pub fn next(&mut self, row:&mut Row, iterator: usize) -> bool {
@@ -723,6 +746,18 @@ impl<'a> OutputingIter<'a> {
                 }
                 false
             },
+        }
+    }
+
+    pub fn reset(self) {
+        match self {
+            OutputingIter::Empty => {}
+            OutputingIter::Single(output, iter) => {
+                Box::from_raw(iter);
+            },
+            OutputingIter::Multi(ref outputs, iter) => {
+                Box::from_raw(iter);
+            }
         }
     }
 
@@ -893,7 +928,7 @@ pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateInde
             let resolved_v = frame.resolve(v);
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
-            let mut iter = EstimateIter::new();
+            let mut iter = iter_pool.get();
             index.propose::<'a>(&mut iter, resolved_e, resolved_a, resolved_v);
             iter.constraint = cur_constraint;
             match iter.iter {
@@ -923,7 +958,7 @@ pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateInde
                 };
                 match result {
                     Some(v) => {
-                        let mut iter = EstimateIter::new();
+                        let mut iter = iter_pool.get();
                         let id = interner.internable_to_id(v);
                         let reg = if let &Field::Register(reg) = output {
                             reg
@@ -957,7 +992,7 @@ pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateInde
                 };
                 match result {
                     Some(mut result_values) => {
-                        let mut iter = EstimateIter::new();
+                        let mut iter = iter_pool.get();
                         let outputs = output_fields.iter().map(|x| {
                             if let &Field::Register(reg) = x {
                                 reg
@@ -992,7 +1027,7 @@ pub fn get_iterator<'a>(interner: &mut Interner, intermediates:&IntermediateInde
             let resolved = key.iter().map(|param| frame.resolve(param)).collect();
 
             // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
-            let mut iter = EstimateIter::new();
+            let mut iter = iter_pool.get();
             let outputs = value.iter().map(|x| {
                 if let &Field::Register(reg) = x {
                     reg
@@ -1058,7 +1093,7 @@ pub fn iterator_next(iter_pool:&mut EstimateIterPool, frame: &mut Frame, iterato
         }
     };
     if pass_through {
-        let mut iter = EstimateIter::new();
+        let mut iter = iter_pool.get();
         iter.pass_through = true;
         iter_pool.iters[iterator] = Some(iter);
     } else if go == bail {
@@ -2349,7 +2384,7 @@ pub fn check_bit(solved:u64, bit:usize) -> bool {
 
 #[inline(never)]
 pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, _iter_pool:&mut EstimateIterPool, frame:&mut Frame, pipe:&Vec<Instruction>) {
-    let mut iter_pool = EstimateIterPool::new();
+    let iter_pool = EstimateIterPool::new();
     let mut pointer:i32 = 0;
     let len = pipe.len() as i32;
     let ref mut interner = program.interner;
