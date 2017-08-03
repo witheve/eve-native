@@ -2,6 +2,7 @@ use super::super::indexes::{WatchDiff};
 use super::super::ops::{Interned, Internable, Interner, RawChange, RunLoopMessage, JSONInternable};
 use std::sync::mpsc::{self, Sender};
 use std::collections::hash_map::{Entry};
+use std::collections::HashMap;
 use super::Watcher;
 use std::ops::{Neg, AddAssign, MulAssign};
 use serde::de::{self, Deserialize, DeserializeSeed, Visitor, SeqAccess,
@@ -31,13 +32,13 @@ impl Watcher for JsonWatcher {
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
         println!("Making changes");
-        let mut record_map: Map<String, Value> = Map::new();
+        let mut record_map = Map::new();
         let mut id = "".to_string();
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
             let record_id = Internable::to_string(interner.get_value(add[1]));
-            id = record_id.clone();
             let j_arg = Internable::to_string(interner.get_value(add[2]));
+            id = j_arg.clone();
             let mut changes = vec![];
             match (&kind[..], j_arg) {
                 ("decode", j_arg) => {
@@ -49,30 +50,16 @@ impl Watcher for JsonWatcher {
                     let e = j_arg;
                     let a = Internable::to_string(interner.get_value(add[3]));
                     let v = Internable::to_string(interner.get_value(add[4]));
+                    println!("[e: {:?} a: {:?} v: {:?}]",e,a,v);
                     if record_map.contains_key(&e) {
-
-
-                        let foo = record_map.get(&e).unwrap();
-                        //foo.bar
-
-                        //match record_map.get(&e).unwrap() {
-                        //    &Value::Object(ref mut map) => Some(map),
-                        //    _ => None,
-                        //};
-
-
-                        //let mut v = json!({ "a": { "nested": true } });
-                        //v["a"].as_object_mut().unwrap().clear();
-
-                        //let record: Map<String,Value> = record_map.get(&e).as_object_mut().unwrap();
-                        //record.insert(a, Value::String(v));
+                        let mut record = record_map.get_mut(&e).unwrap();
+                        let r_map = record.as_object_mut().unwrap();
+                        r_map.insert(a, Value::String(v));
                     } else {
-                        let mut m = Value::Object(Map::new());
-                        let q = m.as_object_mut();
-                        q.bar
-                        //record_map.insert(e, m);
+                        let mut new_record = Map::new();
+                        new_record.insert(a, Value::String(v));
+                        record_map.insert(e, Value::Object(new_record));
                     }
-                    //println!("[e: {:?} a: {:?} v: {:?}]",e,a,v);
                 }
                 _ => {},
             }           
@@ -81,9 +68,12 @@ impl Watcher for JsonWatcher {
                 _ => (),
             }
         }
-        let json = serde_json::to_string(&record_map).unwrap();
-        println!("{}",json);
-        //let mut chchanges = vec![];
+        //let json = serde_json::to_string(&record_map).unwrap();
+        
+        let target_record = record_map.get_mut(&id);
+
+
+        println!("{:?}",target_record);
         //chchanges.push(RawChange {e: Internable::String(id.clone().to_string()), a: Internable::String("json-string".to_string()), v: Internable::String(json.clone()), n: Internable::String("json/encode".to_string()), count: 1});
         //match self.outgoing.send(RunLoopMessage::Transaction(chchanges)) {
         //    Err(_) => (),
