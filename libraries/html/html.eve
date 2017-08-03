@@ -114,20 +114,6 @@ end
 ~~~
 
 
-
-
-~~~ eve
-search
-  [#html/client-value element value]
-  element = [#html/element value: cur]
-bind
-  [#ui/div style: [text-align: "right"] text: "CLIENT VAL: '{{value}}' CUR: '{{cur}}' for {{element}}"]
-end
-~~~
-
-
-
-
 ## Exports
 
 Export all instances.
