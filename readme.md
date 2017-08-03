@@ -12,24 +12,29 @@ Eve is a programming language based on years of research into building a human-f
 
 ### From Source
 
-Start by installing [Node](https://nodejs.org/en/download/) for your platform, and [Rust](https://www.rust-lang.org/en-US/install.html) via the `rustup` tool. Use `rustup` to install the latest "nightly" build of Rust.
+Start by installing [Node](https://nodejs.org/en/download/) for your platform, and [Rust](https://www.rust-lang.org/en-US/install.html) via the `rustup` tool. Use `rustup` to install the latest "nightly" build of Rust:
+
+```sh
+rustup install nightly
+```
 
 Then clone and build the [Eve repository](https://github.com/kodowa/eve-native):
 
-```
+```sh
 git clone git@github.com:Kodowa/eve-native.git
 cd eve-native
 npm install
-cargo build --release
 ```
 
-From the `eve-native` directory, you can start an Eve server with a given `*.eve` file:
+You can start an Eve server running a given `*.eve` file:
 
-```
+```sh
 cargo run --bin server -- examples/test.eve libraries
 ```
 
-This starts an Eve server at `localhost:8081`, which you can connect to using your browser. Each connection will create a new instance of the supplied program.
+This builds Eve and runs an Eve server at `localhost:8081`, which hosts the program's output. Each connection will create a new instance of the supplied program(s).
+
+**Note:** running `cargo run` with the `--release` flag will execute 10x - 30x faster, but will take longer to build.
 
 ## Learning Eve
 
