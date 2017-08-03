@@ -837,7 +837,7 @@ impl Frame {
 // Instruction
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
     StartBlock { block: usize },
     GetIterator {iterator: usize, bail: i32, constraint: usize},
@@ -2847,8 +2847,24 @@ impl Program {
     }
 
     pub fn unregister_block(&mut self, name:String) {
-        println!("Unregister: {}", name);
-        unimplemented!();
+        let block_ix = self.block_info.block_names.remove(&name).unwrap();
+        let block = self.block_info.blocks.remove(block_ix);
+
+        for (pipe_ix, pipe) in block.pipes.iter().enumerate() {
+            for shape in block.shapes[pipe_ix].iter() {
+                match shape {
+                    &PipeShape::Scan(e, a, v) => {
+                        self.block_info.pipe_lookup.get_mut(&(e, a, v)).unwrap().remove_item(pipe);
+                    },
+                    &PipeShape::Intermediate(id) => {
+                        self.block_info.intermediate_pipe_lookup.get_mut(&id).unwrap().remove_item(pipe);
+                    }
+                }
+            }
+
+        }
+
+        // unimplemented!();
     }
 
     pub fn insert_block(&mut self, name:&str, code:&str) {
@@ -3119,13 +3135,6 @@ impl CodeTransaction {
         let ref mut frame = self.frame;
         let ref mut iter_pool = self.iter_pool;
 
-        for add in to_add {
-            frame.reset();
-            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:1 });
-            program.register_block(add);
-            interpret(&mut program.state, &program.block_info, iter_pool, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
-        }
-
         for name in to_remove {
             {
                 let block_ix = match program.block_info.block_names.get(&name) {
@@ -3139,6 +3148,13 @@ impl CodeTransaction {
                 interpret(&mut program.state, &program.block_info, iter_pool, frame, &remove.pipes[0]);
             }
             program.unregister_block(name);
+        }
+
+        for add in to_add {
+            frame.reset();
+            frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:1 });
+            program.register_block(add);
+            interpret(&mut program.state, &program.block_info, iter_pool, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
         }
 
         let mut max_round = 0;
