@@ -58,7 +58,8 @@ search
   autocomplete = [#ui/autocomplete]
 bind
   autocomplete <- [#ui/column children:
-    [#ui/input #ui/autocomplete/input sort: 1 autocomplete]]
+    [#ui/input #ui/autocomplete/input sort: 1 autocomplete]
+    [#ui/column #ui/autocomplete/matches sort: 2 autocomplete]]
 end
 ~~~
 
@@ -155,8 +156,9 @@ Show the matches in a popout beneath the input.
 ~~~ eve
 search
   autocomplete = [#ui/autocomplete match]
+  matches = [#ui/autocomplete/matches autocomplete]
 bind
-  autocomplete.children += [#ui/autocomplete/matches #ui/column sort: 2 autocomplete | children: match]
+  matches.children += match
   match <- [#ui/autocomplete/match #ui/text autocomplete]
 end
 ~~~
