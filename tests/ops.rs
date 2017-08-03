@@ -19,7 +19,7 @@ fn test_set_bit() {
 }
 
 fn check_output_rounds(existing: Vec<(u32, i32)>, neue_rounds: Vec<i32>, expected: Vec<(u32, i32)>) {
-    let mut holder = RoundHolder::new();
+    let mut holder = OutputRounds::new();
     let mut active_rounds = vec![];
     let mut total = 0;
     for (round, count) in neue_rounds.iter().enumerate() {

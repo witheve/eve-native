@@ -1157,8 +1157,8 @@ pub fn accept(interner:&mut Interner, intermediates:&mut IntermediateIndex, inde
 }
 
 #[inline(never)]
-pub fn clear_rounds(rounds: &mut RoundHolder, frame: &mut Frame) -> i32 {
-    rounds.clear_output_rounds();
+pub fn clear_rounds(rounds: &mut OutputRounds, frame: &mut Frame) -> i32 {
+    rounds.clear();
     if let Some(ref change) = frame.input {
         rounds.output_rounds.push((change.round, change.count));
     } else if let Some(ref change) = frame.intermediate {
@@ -1169,7 +1169,7 @@ pub fn clear_rounds(rounds: &mut RoundHolder, frame: &mut Frame) -> i32 {
 }
 
 #[inline(never)]
-pub fn get_rounds(distinct_index: &mut DistinctIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, bail:i32) -> i32 {
+pub fn get_rounds(distinct_index: &mut DistinctIndex, rounds: &mut OutputRounds, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, bail:i32) -> i32 {
     // println!("get rounds!");
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
@@ -1191,7 +1191,7 @@ pub fn get_rounds(distinct_index: &mut DistinctIndex, rounds: &mut RoundHolder, 
 }
 
 #[inline(never)]
-pub fn get_intermediate_rounds(intermediates: &mut IntermediateIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, bail:i32) -> i32 {
+pub fn get_intermediate_rounds(intermediates: &mut IntermediateIndex, rounds: &mut OutputRounds, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, bail:i32) -> i32 {
     // println!("get rounds!");
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
@@ -1214,14 +1214,13 @@ pub fn get_intermediate_rounds(intermediates: &mut IntermediateIndex, rounds: &m
 }
 
 #[inline(never)]
-pub fn bind(distinct_index: &mut DistinctIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
+pub fn bind(distinct_index: &mut DistinctIndex, output_rounds: &OutputRounds, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Insert {ref e, ref a, ref v, ..} => {
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n: 0, round:0, transaction: 0, count:0, };
             // println!("rounds {:?}", rounds.output_rounds);
-            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(round, count) in rounds.get_output_rounds().clone().iter() {
+            for &(round, count) in output_rounds.get_output_rounds().iter() {
                 let output = &c.with_round_count(round + 1, count);
                 frame.counters.inserts += 1;
                 distinct_index.distinct(output, rounds);
@@ -1233,14 +1232,13 @@ pub fn bind(distinct_index: &mut DistinctIndex, rounds: &mut RoundHolder, block_
 }
 
 #[inline(never)]
-pub fn commit(rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
+pub fn commit(output_rounds: &OutputRounds, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Insert {ref e, ref a, ref v, ..} => {
             let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
-            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(_, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in output_rounds.get_output_rounds().iter() {
                 let output = c.with_round_count(0, count);
                 frame.counters.inserts += 1;
                 // if program.debug { println!("     -> Commit {:?}", output); }
@@ -1250,8 +1248,7 @@ pub fn commit(rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame
         &Constraint::Remove {ref e, ref a, ref v } => {
             let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:frame.resolve(v), n, round:0, transaction: 0, count:0, };
-            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(_, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in output_rounds.get_output_rounds().iter() {
                 let output = c.with_round_count(0, count * -1);
                 frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
@@ -1260,8 +1257,7 @@ pub fn commit(rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame
         &Constraint::RemoveAttribute {ref e, ref a } => {
             let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: frame.resolve(a), v:0, n, round:0, transaction: 0, count:0, };
-            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(_, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in output_rounds.get_output_rounds().iter() {
                 let output = c.with_round_count(0, count * -1);
                 frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
@@ -1270,8 +1266,7 @@ pub fn commit(rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame
         &Constraint::RemoveEntity {ref e } => {
             let n = (frame.block_ix * 10000 + constraint) as u32;
             let c = Change { e: frame.resolve(e), a: 0, v:0, n, round:0, transaction: 0, count:0, };
-            // @FIXME this clone is completely unnecessary, but borrows are a bit sad here
-            for &(_, count) in rounds.get_output_rounds().clone().iter() {
+            for &(_, count) in output_rounds.get_output_rounds().iter() {
                 let output = c.with_round_count(0, count * -1);
                 frame.counters.inserts += 1;
                 rounds.commit(output, ChangeType::Remove)
@@ -1283,7 +1278,7 @@ pub fn commit(rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame
 }
 
 #[inline(never)]
-pub fn insert_intermediate(interner: &mut Interner, intermediates:&mut IntermediateIndex, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
+pub fn insert_intermediate(interner: &mut Interner, intermediates:&mut IntermediateIndex, output_rounds: &mut OutputRounds, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::InsertIntermediate {ref key, ref value, negate} => {
@@ -1291,7 +1286,7 @@ pub fn insert_intermediate(interner: &mut Interner, intermediates:&mut Intermedi
             let resolved_value:Vec<Interned> = value.iter().map(|v| frame.resolve(v)).collect();
             let mut full_key = resolved.clone();
             full_key.extend(resolved_value.iter());
-            for &(round, count) in rounds.get_output_rounds().iter() {
+            for &(round, count) in output_rounds.get_output_rounds().iter() {
                 frame.counters.inserts += 1;
                 intermediates.distinct(full_key.clone(), resolved.clone(), resolved_value.clone(), round, count, negate);
             }
@@ -1300,7 +1295,7 @@ pub fn insert_intermediate(interner: &mut Interner, intermediates:&mut Intermedi
             let resolved_group:Vec<Interned> = group.iter().map(|v| frame.resolve(v)).collect();
             let resolved_params:Vec<Internable> = { params.iter().map(|v| interner.get_value(frame.resolve(v)).clone()).collect() };
             let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
-            for &(round, count) in rounds.get_output_rounds().iter() {
+            for &(round, count) in output_rounds.get_output_rounds().iter() {
                 let action = if count < 0 { remove } else { add };
                 frame.counters.inserts += 1;
                 intermediates.aggregate(interner, resolved_group.clone(), resolved_params.clone(), round, *action, resolved_output.clone());
@@ -1320,13 +1315,13 @@ pub fn project(frame: &mut Frame, from:usize, next:i32) -> i32 {
 }
 
 #[inline(never)]
-pub fn watch(watches: &mut HashMap<String, WatchIndex>, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, name:&str, next:i32, constraint:usize) -> i32 {
+pub fn watch(watches: &mut HashMap<String, WatchIndex>, output_rounds: &mut OutputRounds, block_info:&BlockInfo, frame: &mut Frame, name:&str, next:i32, constraint:usize) -> i32 {
     let cur = &block_info.blocks[frame.block_ix].constraints[constraint as usize];
     match cur {
         &Constraint::Watch { ref registers, ..} => {
             let resolved:Vec<Interned> = registers.iter().map(|x| frame.resolve(x)).collect();
             let mut total = 0;
-            for &(_, count) in rounds.get_output_rounds().iter() {
+            for &(_, count) in output_rounds.get_output_rounds().iter() {
                 total += count;
             }
             frame.counters.inserts += 1;
@@ -2405,6 +2400,7 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&
     let ref mut intermediates = program.intermediates;
     let ref mut watches = program.watch_indexes;
     let ref mut rounds = program.rounds;
+    let ref mut output_rounds = program.output_rounds;
     let ref index = program.index;
     while pointer < len {
         frame.counters.instructions += 1;
@@ -2435,28 +2431,28 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&
                 next
             },
             Instruction::ClearRounds => {
-                clear_rounds(rounds, frame)
+                clear_rounds(output_rounds, frame)
             },
             Instruction::GetRounds { constraint, bail } => {
-                get_rounds(distinct_index, rounds, block_info, frame, constraint, bail)
+                get_rounds(distinct_index, output_rounds, block_info, frame, constraint, bail)
             },
             Instruction::GetIntermediateRounds { constraint, bail } => {
-                get_intermediate_rounds(intermediates, rounds, block_info, frame, constraint, bail)
+                get_intermediate_rounds(intermediates, output_rounds, block_info, frame, constraint, bail)
             },
             Instruction::Bind { constraint, next } => {
-                bind(distinct_index, rounds, block_info, frame, constraint, next)
+                bind(distinct_index, output_rounds, rounds, block_info, frame, constraint, next)
             },
             Instruction::Commit { constraint, next } => {
-                commit(rounds, block_info, frame, constraint, next)
+                commit(output_rounds, rounds, block_info, frame, constraint, next)
             },
             Instruction::InsertIntermediate { constraint, next } => {
-                insert_intermediate(interner, intermediates, rounds, block_info, frame, constraint, next)
+                insert_intermediate(interner, intermediates, output_rounds, block_info, frame, constraint, next)
             },
             Instruction::Project { from, next } => {
                 project(frame, from, next)
             },
             Instruction::Watch { ref name, next, constraint } => {
-                watch(watches, rounds, block_info, frame, name, next, constraint)
+                watch(watches, output_rounds, block_info, frame, name, next, constraint)
             },
         }
     };
@@ -2467,23 +2463,6 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&
 //-------------------------------------------------------------------------
 
 type RoundCount = (Round, Count);
-
-#[derive(Debug)]
-pub enum RoundState {
-    Equal,
-    Left,
-    Right
-}
-
-pub struct RoundHolder {
-    pub output_rounds: Vec<RoundCount>,
-    prev_output_rounds: Vec<RoundCount>,
-    rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
-    commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
-    staged_commit_keys: Vec<(Interned, Interned, Interned, Interned)>,
-    collapsed_commits: CollapsedChanges,
-    pub max_round: usize,
-}
 
 fn collapse_rounds(results:&Vec<RoundCount>, collapsed: &mut Vec<RoundCount>) {
     collapsed.clear();
@@ -2499,14 +2478,14 @@ fn collapse_rounds(results:&Vec<RoundCount>, collapsed: &mut Vec<RoundCount>) {
     if prev.1 != 0 { collapsed.push(prev); }
 }
 
+pub struct OutputRounds {
+    pub output_rounds: Vec<RoundCount>,
+    prev_output_rounds: Vec<RoundCount>,
+}
 
-impl RoundHolder {
-    pub fn new() -> RoundHolder {
-        let mut rounds = vec![];
-        for _ in 0..100 {
-            rounds.push(HashMap::new());
-        }
-        RoundHolder { rounds, output_rounds:vec![], prev_output_rounds:vec![], commits:HashMap::new(), staged_commit_keys:vec![], collapsed_commits:CollapsedChanges::new(), max_round: 0 }
+impl OutputRounds {
+    pub fn new() -> OutputRounds {
+        OutputRounds { output_rounds:vec![], prev_output_rounds:vec![] }
     }
 
     pub fn get_output_rounds(&self) -> &Vec<RoundCount> {
@@ -2554,6 +2533,30 @@ impl RoundHolder {
         }
         result.sort();
         collapse_rounds(&result, neue);
+    }
+
+    pub fn clear(&mut self) {
+        self.output_rounds.clear();
+        self.prev_output_rounds.clear();
+    }
+}
+
+pub struct RoundHolder {
+    rounds: Vec<HashMap<(Interned,Interned,Interned), Change>>,
+    commits: HashMap<(Interned, Interned, Interned, Interned), (ChangeType, Change)>,
+    staged_commit_keys: Vec<(Interned, Interned, Interned, Interned)>,
+    collapsed_commits: CollapsedChanges,
+    pub max_round: usize,
+}
+
+
+impl RoundHolder {
+    pub fn new() -> RoundHolder {
+        let mut rounds = vec![];
+        for _ in 0..100 {
+            rounds.push(HashMap::new());
+        }
+        RoundHolder { rounds, commits:HashMap::new(), staged_commit_keys:vec![], collapsed_commits:CollapsedChanges::new(), max_round: 0 }
     }
 
     pub fn insert(&mut self, change:Change) {
@@ -2663,13 +2666,7 @@ impl RoundHolder {
         for ix in 0..self.max_round {
             self.rounds[ix].clear();
         }
-        self.clear_output_rounds();
         self.max_round = 0;
-    }
-
-    pub fn clear_output_rounds(&mut self) {
-        self.output_rounds.clear();
-        self.prev_output_rounds.clear();
     }
 
     pub fn iter(&self) -> RoundHolderIter {
@@ -2740,6 +2737,7 @@ impl RoundHolderIter {
 pub struct RuntimeState {
     pub debug: bool,
     pub rounds: RoundHolder,
+    pub output_rounds: OutputRounds,
     pub index: HashIndex,
     pub distinct_index: DistinctIndex,
     pub interner: Interner,
@@ -2783,6 +2781,7 @@ impl Program {
         let intermediates = IntermediateIndex::new();
         let interner = Interner::new();
         let rounds = RoundHolder::new();
+        let output_rounds = OutputRounds::new();
         let block_names = HashMap::new();
         let watch_indexes = HashMap::new();
         let watchers = HashMap::new();
@@ -2790,7 +2789,7 @@ impl Program {
         let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
         let (outgoing, incoming) = mpsc::channel();
-        let state = RuntimeState { debug:false, rounds, index, distinct_index, interner, watch_indexes, intermediates };
+        let state = RuntimeState { debug:false, rounds, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
     }

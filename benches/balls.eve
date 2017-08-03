@@ -82,7 +82,7 @@ end
 ```
 
 Display
-search
+disabled search
   screen = [#screen]
   boid = [#boid]
 
@@ -91,13 +91,13 @@ bind
     [#arc boid | type: "arc" sort: 1 radius: 5 startAngle: 0 endAngle: 2 * 3.14]]
 end
 
-search
+disabled search
   arc = [#arc boid]
 bind
   arc.x += boid.x
 end
 
-search
+disabled search
   arc = [#arc boid]
 bind
   arc.y += boid.y

@@ -9,7 +9,7 @@ use test::Bencher;
 
 #[bench]
 pub fn round_holder_compute_output_rounds_bench(b:&mut Bencher) {
-    let mut holder = RoundHolder::new();
+    let mut holder = OutputRounds::new();
     let rounds = vec![1,-1,0,0,1,0,-1];
     holder.output_rounds = vec![(3,1), (5,1)];
     b.iter(|| {
