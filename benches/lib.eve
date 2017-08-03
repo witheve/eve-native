@@ -1,0 +1,6 @@
+
+search
+  t = [#time tick]
+commit
+  t := none
+end

@@ -3306,7 +3306,7 @@ impl ProgramRunner {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                blocks.extend(parse_file(&mut program, &path));
+                blocks.extend(parse_file(&mut program, &path, true));
             }
             let mut end_ns = time::precise_time_ns();
             println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
