@@ -5,6 +5,7 @@ extern crate eve;
 
 use eve::ops::*;
 use eve::instructions::*;
+use eve::compiler::{parse_string};
 use eve::indexes::{DistinctIter};
 use test::Bencher;
 
@@ -19,76 +20,96 @@ pub fn round_holder_compute_output_rounds_bench(b:&mut Bencher) {
     });
 }
 
-fn test_pipe(b: &mut Bencher, constraints: Vec<Constraint>, instructions: Vec<Instruction>) {
+fn test_pipe(b: &mut Bencher, code: &str, setup:&str) {
     let mut program = Program::new();
-    program.block_info.blocks.push(Block { name: "foo".to_string(), constraints, pipes:vec![], shapes:vec![] });
+
+    let to_test = parse_string(&mut program, code, "test").pop().unwrap();
+    let pipe = to_test.pipes[0].clone();
+    program.block_info.blocks.push(to_test);
+
+    let mut blocks = vec![];
+    blocks.extend(parse_string(&mut program, setup, "test"));
+
+    let mut txn = CodeTransaction::new();
+    txn.exec(&mut program, blocks, vec![]);
+
     let mut pool = EstimateIterPool::new();
     let mut frame = Frame::new();
     frame.input = Some(Change {e:0, a:0, v:0, n:0, round:0, count:1, transaction:0});
     frame.block_ix = 0;
 
     b.iter(|| {
-        interpret(&mut program.state, &program.block_info, &mut pool, &mut frame, &instructions);
+        interpret(&mut program.state, &program.block_info, &mut pool, &mut frame, &pipe);
     });
 }
 
-fn v(cur:u32) -> Field {
-    Field::Value(cur)
-}
-
-fn test_closure(constraints: Vec<Constraint>) -> (Program, EstimateIterPool, Frame) {
+fn test_solver(b: &mut Bencher, code: &str, setup:&str) {
     let mut program = Program::new();
-    program.block_info.blocks.push(Block { name: "foo".to_string(), constraints, pipes:vec![], shapes:vec![] });
-    let pool = EstimateIterPool::new();
+
+    let to_test = parse_string(&mut program, code, "test").pop().unwrap();
+    let solver = Solver::new(0, None, &to_test.constraints);
+    program.block_info.blocks.push(to_test);
+
+    let mut blocks = vec![];
+    blocks.extend(parse_string(&mut program, setup, "test"));
+
+    let mut txn = CodeTransaction::new();
+    txn.exec(&mut program, blocks, vec![]);
+
+    let mut pool = EstimateIterPool::new();
     let mut frame = Frame::new();
     frame.input = Some(Change {e:0, a:0, v:0, n:0, round:0, count:1, transaction:0});
     frame.block_ix = 0;
-    (program, pool, frame)
 
+    b.iter(|| {
+        solver.run(&mut program.state, &mut pool, &mut frame)
+    });
 }
 
 #[bench]
 pub fn ops_bind_pipe(b:&mut Bencher) {
-    test_pipe(b, vec![
-        Constraint::Insert { e:v(1), a:v(2), v:v(3), commit:false },
-        Constraint::Insert { e:v(1), a:v(4), v:v(8), commit:false },
-        Constraint::Insert { e:v(1), a:v(5), v:v(9), commit:false },
-        Constraint::Insert { e:v(1), a:v(6), v:v(10), commit:false },
-        Constraint::Insert { e:v(9), a:v(2), v:v(3), commit:false },
-        Constraint::Insert { e:v(9), a:v(4), v:v(8), commit:false },
-        Constraint::Insert { e:v(9), a:v(5), v:v(9), commit:false },
-        Constraint::Insert { e:v(9), a:v(6), v:v(10), commit:false }
-    ], vec![
-        Instruction::ClearRounds,
-        Instruction::Bind { next: 1, constraint: 0 },
-        Instruction::Bind { next: 1, constraint: 1 },
-        Instruction::Bind { next: 1, constraint: 2 },
-        Instruction::Bind { next: 1, constraint: 3 },
-        Instruction::Bind { next: 1, constraint: 4 },
-        Instruction::Bind { next: 1, constraint: 5 },
-        Instruction::Bind { next: 1, constraint: 6 },
-        Instruction::Bind { next: 1, constraint: 7 },
-    ]);
+    test_pipe(b, r#"
+        search
+            f = [#foo bar baz]
+            [#meep foo:f woah]
+        bind
+            f.zomg += 3
+        end
+    "#, r#"
+        commit
+            foo = [#foo bar: 3 baz: 4]
+            [#foo bar: 3 baz: 0]
+            [#foo bar: 4 baz: 0]
+            [#foo bar: 9 baz: 0]
+            [#foo bar: 0 baz: 0]
+            [#meep foo woah:"yeah"]
+            [#meep foo woah:"leep"]
+            [#meep foo woah:"seep"]
+        end
+    "#);
 }
 
 #[bench]
-pub fn ops_bind_closure_pipe(b:&mut Bencher) {
-    let constraints = vec![
-        Constraint::Insert { e:v(1), a:v(2), v:v(3), commit:false },
-        Constraint::Insert { e:v(1), a:v(4), v:v(8), commit:false },
-        Constraint::Insert { e:v(1), a:v(5), v:v(9), commit:false },
-        Constraint::Insert { e:v(1), a:v(6), v:v(10), commit:false },
-        Constraint::Insert { e:v(9), a:v(2), v:v(3), commit:false },
-        Constraint::Insert { e:v(9), a:v(4), v:v(8), commit:false },
-        Constraint::Insert { e:v(9), a:v(5), v:v(9), commit:false },
-        Constraint::Insert { e:v(9), a:v(6), v:v(10), commit:false }
-    ];
-    let func = make_bind_instruction(&constraints.iter().collect(), 1);
-    let (mut program, _, mut frame) = test_closure(constraints);
-    b.iter(|| {
-        clear_rounds(&mut program.state.output_rounds, &mut frame);
-        (func.0)(&mut program.state.distinct_index, &program.state.output_rounds, &mut program.state.rounds, &mut frame);
-    });
+pub fn ops_bind_solver(b:&mut Bencher) {
+    test_solver(b, r#"
+        search
+            f = [#foo bar baz]
+            [#meep foo:f woah]
+        bind
+            f.zomg += 3
+        end
+    "#, r#"
+        commit
+            foo = [#foo bar: 3 baz: 4]
+            [#foo bar: 3 baz: 0]
+            [#foo bar: 4 baz: 0]
+            [#foo bar: 9 baz: 0]
+            [#foo bar: 0 baz: 0]
+            [#meep foo woah:"yeah"]
+            [#meep foo woah:"leep"]
+            [#meep foo woah:"seep"]
+        end
+    "#);
 }
 
 #[bench]

@@ -9,7 +9,6 @@ extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use instructions::*;
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
 use std::collections::HashMap;
@@ -429,42 +428,26 @@ impl Block {
                 }
             }
 
-
-            match outputs.get(0) {
-                Some(&Instruction::Bind {..}) if outputs_len <= 4 => {
-                    last_iter_next -= 1;
-                    let next = if to_solve > 0 { last_iter_next } else { PIPE_FINISHED };
-                    pipe.push(Instruction::BindFunc { func: make_bind_instruction(&binds, next) })
+            for (ix, output) in outputs.iter().enumerate() {
+                last_iter_next -= 1;
+                if ix < outputs_len - 1 {
+                    pipe.push(output.clone());
+                } else {
+                    let mut neue = output.clone();
+                    match neue {
+                        Instruction::Bind {ref mut next, ..} |
+                            Instruction::Commit { ref mut next, ..} |
+                            Instruction::InsertIntermediate { ref mut next, ..} => {
+                                *next = if to_solve > 0 {
+                                    last_iter_next
+                                } else {
+                                    PIPE_FINISHED
+                                }
+                            }
+                        _ => { panic!("Invalid output instruction"); }
+                    };
+                    pipe.push(neue);
                 }
-                Some(&Instruction::Commit {..}) if outputs_len <= 4 => {
-                    last_iter_next -= 1;
-                    let next = if to_solve > 0 { last_iter_next } else { PIPE_FINISHED };
-                    pipe.push(Instruction::CommitFunc { func: make_commit_instruction(&commits, next) })
-                }
-                _ => {
-                    for (ix, output) in outputs.iter().enumerate() {
-                        last_iter_next -= 1;
-                        if ix < outputs_len - 1 {
-                            pipe.push(output.clone());
-                        } else {
-                            let mut neue = output.clone();
-                            match neue {
-                                Instruction::Bind {ref mut next, ..} |
-                                    Instruction::Commit { ref mut next, ..} |
-                                    Instruction::InsertIntermediate { ref mut next, ..} => {
-                                        *next = if to_solve > 0 {
-                                            last_iter_next
-                                        } else {
-                                            PIPE_FINISHED
-                                        }
-                                    }
-                                _ => { panic!("Invalid output instruction"); }
-                            };
-                            pipe.push(neue);
-                        }
-                    }
-                }
-
             }
 
             for constraint in project_constraints.iter() {
@@ -589,9 +572,9 @@ impl Block {
 
 #[derive(Debug)]
 pub struct Row {
-    fields: Vec<Interned>,
-    solved_fields: u64,
-    solving_for:u64,
+    pub fields: Vec<Interned>,
+    pub solved_fields: u64,
+    pub solving_for:u64,
     solved_stack: Vec<u64>,
 }
 
@@ -823,10 +806,10 @@ impl fmt::Debug for Counters {
 
 pub struct Frame {
     pub input: Option<Change>,
-    intermediate: Option<IntermediateChange>,
-    row: Row,
+    pub intermediate: Option<IntermediateChange>,
+    pub row: Row,
     pub block_ix: usize,
-    results: Vec<Interned>,
+    pub results: Vec<Interned>,
     #[allow(dead_code)]
     pub counters: Counters,
 }
@@ -874,9 +857,7 @@ pub enum Instruction {
     GetRounds {bail: i32, constraint: usize},
     GetIntermediateRounds {bail: i32, constraint: usize},
     Bind {next: i32, constraint:usize},
-    BindFunc { func:BindCallback },
     Commit {next: i32, constraint:usize},
-    CommitFunc { func:CommitCallback },
     InsertIntermediate {next: i32, constraint:usize},
     Project {next: i32, from:usize},
     Watch { next:i32, name:String, constraint:usize}
@@ -2469,14 +2450,8 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&
             Instruction::Bind { constraint, next } => {
                 bind(distinct_index, output_rounds, rounds, block_info, frame, constraint, next)
             },
-            Instruction::BindFunc { func: BindCallback(ref func) } => {
-                func(distinct_index, output_rounds, rounds, frame)
-            },
             Instruction::Commit { constraint, next } => {
                 commit(output_rounds, rounds, block_info, frame, constraint, next)
-            },
-            Instruction::CommitFunc { func: CommitCallback(ref func) } => {
-                func(output_rounds, rounds, frame)
             },
             Instruction::InsertIntermediate { constraint, next } => {
                 insert_intermediate(interner, intermediates, output_rounds, block_info, frame, constraint, next)
