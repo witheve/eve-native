@@ -3134,15 +3134,14 @@ impl CodeTransaction {
 
         for name in to_remove {
             {
-                let block_ix = match program.block_info.block_names.get(&name) {
-                    Some(v) => *v,
-                    _ => panic!("Unable to find block to remove: '{}'", name)
-                };
-
-                let remove = &program.block_info.blocks[block_ix];
-                frame.reset();
-                frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
-                interpret(&mut program.state, &program.block_info, iter_pool, frame, &remove.pipes[0]);
+                if let Some(&block_ix) = program.block_info.block_names.get(&name) {
+                    let remove = &program.block_info.blocks[block_ix];
+                    frame.reset();
+                    frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
+                    interpret(&mut program.state, &program.block_info, iter_pool, frame, &remove.pipes[0]);
+                } else {
+                    println!("WARN: Skipped removal of nonexistent block '{}'", name);
+                }
             }
             program.unregister_block(name);
         }
