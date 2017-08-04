@@ -822,7 +822,7 @@ impl fmt::Debug for Counters {
 }
 
 pub struct Frame {
-    input: Option<Change>,
+    pub input: Option<Change>,
     intermediate: Option<IntermediateChange>,
     row: Row,
     pub block_ix: usize,
@@ -2469,13 +2469,13 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&
             Instruction::Bind { constraint, next } => {
                 bind(distinct_index, output_rounds, rounds, block_info, frame, constraint, next)
             },
-            Instruction::BindFunc { func: BindCallback(func) } => {
+            Instruction::BindFunc { func: BindCallback(ref func) } => {
                 func(distinct_index, output_rounds, rounds, frame)
             },
             Instruction::Commit { constraint, next } => {
                 commit(output_rounds, rounds, block_info, frame, constraint, next)
             },
-            Instruction::CommitFunc { func: CommitCallback(func) } => {
+            Instruction::CommitFunc { func: CommitCallback(ref func) } => {
                 func(output_rounds, rounds, frame)
             },
             Instruction::InsertIntermediate { constraint, next } => {

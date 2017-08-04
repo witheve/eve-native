@@ -1,6 +1,8 @@
 #![feature(slice_patterns)]
 #![feature(box_patterns)]
 #![feature(vec_remove_item)]
+#![feature(conservative_impl_trait)]
+
 
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 extern {}
