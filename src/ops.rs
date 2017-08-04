@@ -9,6 +9,7 @@ extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
+use instructions::*;
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
 use compiler::{make_block, parse_file};
 use std::collections::HashMap;
@@ -87,7 +88,7 @@ pub fn print_pipe(pipe: &Pipe, block_info:&BlockInfo, state:&mut RuntimeState) {
 // Change
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ChangeType {
     Insert,
     Remove,
@@ -190,6 +191,8 @@ impl Block {
         const NO_INPUTS_PIPE:usize = 1000000;
         let mut moves:HashMap<usize, Vec<Instruction>> = HashMap::new();
         let mut scans = vec![NO_INPUTS_PIPE];
+        let mut binds = vec![];
+        let mut commits = vec![];
         let mut get_iters = vec![];
         let mut accepts = vec![];
         let mut get_rounds = vec![];
@@ -284,8 +287,10 @@ impl Block {
                 &Constraint::Insert {ref commit, ..} => {
                     if *commit {
                         outputs.push(Instruction::Commit { next: 1, constraint: ix });
+                        commits.push(constraint);
                     } else {
                         outputs.push(Instruction::Bind { next: 1, constraint: ix });
+                        binds.push(constraint);
                     }
                 },
                 &Constraint::InsertIntermediate {..} => {
@@ -293,12 +298,15 @@ impl Block {
                 }
                 &Constraint::Remove {..} => {
                     outputs.push(Instruction::Commit { next: 1, constraint: ix });
+                    commits.push(constraint);
                 },
                 &Constraint::RemoveAttribute {..} => {
                     outputs.push(Instruction::Commit { next: 1, constraint: ix });
+                    commits.push(constraint);
                 },
                 &Constraint::RemoveEntity {..} => {
                     outputs.push(Instruction::Commit { next: 1, constraint: ix });
+                    commits.push(constraint);
                 },
                 &Constraint::Project {..} => {
                     project_constraints.push(constraint);
@@ -421,26 +429,42 @@ impl Block {
                 }
             }
 
-            for (ix, output) in outputs.iter().enumerate() {
-                last_iter_next -= 1;
-                if ix < outputs_len - 1 {
-                    pipe.push(output.clone());
-                } else {
-                    let mut neue = output.clone();
-                    match neue {
-                        Instruction::Bind {ref mut next, ..} |
-                        Instruction::Commit { ref mut next, ..} |
-                        Instruction::InsertIntermediate { ref mut next, ..} => {
-                            *next = if to_solve > 0 {
-                                last_iter_next
-                            } else {
-                                PIPE_FINISHED
-                            }
-                        }
-                        _ => { panic!("Invalid output instruction"); }
-                    };
-                    pipe.push(neue);
+
+            match outputs.get(0) {
+                Some(&Instruction::Bind {..}) if outputs_len <= 4 => {
+                    last_iter_next -= 1;
+                    let next = if to_solve > 0 { last_iter_next } else { PIPE_FINISHED };
+                    pipe.push(Instruction::BindFunc { func: make_bind_instruction(&binds, next) })
                 }
+                Some(&Instruction::Commit {..}) if outputs_len <= 4 => {
+                    last_iter_next -= 1;
+                    let next = if to_solve > 0 { last_iter_next } else { PIPE_FINISHED };
+                    pipe.push(Instruction::CommitFunc { func: make_commit_instruction(&commits, next) })
+                }
+                _ => {
+                    for (ix, output) in outputs.iter().enumerate() {
+                        last_iter_next -= 1;
+                        if ix < outputs_len - 1 {
+                            pipe.push(output.clone());
+                        } else {
+                            let mut neue = output.clone();
+                            match neue {
+                                Instruction::Bind {ref mut next, ..} |
+                                    Instruction::Commit { ref mut next, ..} |
+                                    Instruction::InsertIntermediate { ref mut next, ..} => {
+                                        *next = if to_solve > 0 {
+                                            last_iter_next
+                                        } else {
+                                            PIPE_FINISHED
+                                        }
+                                    }
+                                _ => { panic!("Invalid output instruction"); }
+                            };
+                            pipe.push(neue);
+                        }
+                    }
+                }
+
             }
 
             for constraint in project_constraints.iter() {
@@ -769,14 +793,14 @@ impl fmt::Debug for OutputingIter {
 //-------------------------------------------------------------------------
 
 pub struct Counters {
-    total_ns: u64,
-    instructions: u64,
-    iter_next: u64,
-    accept: u64,
-    accept_bail: u64,
-    accept_ns: u64,
-    inserts: u64,
-    considered: u64,
+    pub total_ns: u64,
+    pub instructions: u64,
+    pub iter_next: u64,
+    pub accept: u64,
+    pub accept_bail: u64,
+    pub accept_ns: u64,
+    pub inserts: u64,
+    pub considered: u64,
 }
 
 #[allow(unused_must_use)]
@@ -801,10 +825,10 @@ pub struct Frame {
     input: Option<Change>,
     intermediate: Option<IntermediateChange>,
     row: Row,
-    block_ix: usize,
+    pub block_ix: usize,
     results: Vec<Interned>,
     #[allow(dead_code)]
-    counters: Counters,
+    pub counters: Counters,
 }
 
 impl Frame {
@@ -850,7 +874,9 @@ pub enum Instruction {
     GetRounds {bail: i32, constraint: usize},
     GetIntermediateRounds {bail: i32, constraint: usize},
     Bind {next: i32, constraint:usize},
+    BindFunc { func:BindCallback },
     Commit {next: i32, constraint:usize},
+    CommitFunc { func:CommitCallback },
     InsertIntermediate {next: i32, constraint:usize},
     Project {next: i32, from:usize},
     Watch { next:i32, name:String, constraint:usize}
@@ -1212,6 +1238,7 @@ pub fn get_intermediate_rounds(intermediates: &mut IntermediateIndex, rounds: &m
         bail
     }
 }
+
 
 #[inline(never)]
 pub fn bind(distinct_index: &mut DistinctIndex, output_rounds: &OutputRounds, rounds: &mut RoundHolder, block_info:&BlockInfo, frame: &mut Frame, constraint:usize, next:i32) -> i32 {
@@ -2442,8 +2469,14 @@ pub fn interpret(program: &mut RuntimeState, block_info: &BlockInfo, iter_pool:&
             Instruction::Bind { constraint, next } => {
                 bind(distinct_index, output_rounds, rounds, block_info, frame, constraint, next)
             },
+            Instruction::BindFunc { func: BindCallback(func) } => {
+                func(distinct_index, output_rounds, rounds, frame)
+            },
             Instruction::Commit { constraint, next } => {
                 commit(output_rounds, rounds, block_info, frame, constraint, next)
+            },
+            Instruction::CommitFunc { func: CommitCallback(func) } => {
+                func(output_rounds, rounds, frame)
             },
             Instruction::InsertIntermediate { constraint, next } => {
                 insert_intermediate(interner, intermediates, output_rounds, block_info, frame, constraint, next)
