@@ -43,6 +43,7 @@ pub struct Solver {
     watch_registers: Vec<(String, Vec<Field>)>,
     project_fields: Vec<usize>,
     intermediates: Vec<(Vec<Field>, Vec<Field>, bool)>,
+    intermediate_accepts: Vec<(usize, Interned)>,
     aggregates: Vec<(Vec<Field>, Vec<Field>, Vec<Field>, AggregateFunction, AggregateFunction)>,
 }
 
@@ -65,10 +66,11 @@ impl Clone for Solver {
             commits: self.commits.clone(),
             binds: self.binds.clone(),
             intermediates: self.intermediates.clone(),
+            intermediate_accepts: self.intermediate_accepts.clone(),
             outputs: self.outputs.iter().map(|x| *x).collect(),
             watch_registers: self.watch_registers.clone(),
             project_fields: self.project_fields.clone(),
-            aggregates: self.aggregates.iter().map(|&(a,b,c,d,e)| (a.clone(), b.clone(), c.clone(), d, e)).collect(),
+            aggregates: self.aggregates.iter().map(|&(ref a, ref b, ref c, d,e)| (a.clone(), b.clone(), c.clone(), d, e)).collect(),
             finished_mask: self.finished_mask,
         }
     }
@@ -93,8 +95,6 @@ impl Solver {
         let mut project_fields:Vec<usize> = vec![];
         let mut intermediates = vec![];
         let mut aggregates = vec![];
-
-        // TODO!!!!!!
         let mut intermediate_accepts = vec![];
 
         let mut output_funcs = HashSet::new();
@@ -106,7 +106,6 @@ impl Solver {
                 if let Field::Register(ix) = e { moves.push((0, ix)); }
                 if let Field::Register(ix) = a { moves.push((1, ix)); }
                 if let Field::Register(ix) = v { moves.push((2, ix)); }
-                // TODO!!!! we need to add accepts
             },
             Some(&Constraint::IntermediateScan { ref full_key, .. }) |
             Some(&Constraint::AntiScan { key: ref full_key, .. }) => {
@@ -203,12 +202,12 @@ impl Solver {
                 OutputFuncs::Aggregate => do_aggregate as OutputFunc,
             }
         }).collect();
-        Solver { block, id, moves, get_iters, accepts, get_rounds, commits, binds, intermediates, outputs, watch_registers, project_fields, aggregates, finished_mask }
+        Solver { block, id, moves, get_iters, accepts, get_rounds, commits, binds, intermediates, intermediate_accepts, outputs, watch_registers, project_fields, aggregates, finished_mask }
     }
 
     pub fn run(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame) {
-        self.do_move(frame);
-        if self.get_iters.len() > 0 {
+        if !self.do_move(state, frame) { return; }
+        if frame.row.solved_fields != self.finished_mask {
             self.solve_variables(state, pool, frame, 0);
         } else {
             self.clear_rounds(&mut state.output_rounds, frame);
@@ -217,8 +216,12 @@ impl Solver {
     }
 
     pub fn run_intermediate(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame) {
-        self.do_intermediate_move(frame);
-        if self.get_iters.len() > 0 {
+        if !self.do_intermediate_move(frame) { return }
+        for accept in self.accepts.iter() {
+            let res = (*accept)(state, frame, usize::MAX);
+            if !res { return }
+        }
+        if frame.row.solved_fields != self.finished_mask {
             self.solve_variables(state, pool, frame, 0);
         } else {
             self.clear_rounds(&mut state.output_rounds, frame);
@@ -226,23 +229,34 @@ impl Solver {
         }
     }
 
-    pub fn do_move(&self, frame:&mut Frame) {
-        let change = frame.input.expect("running solver without an input!");
-        for &(from, to) in self.moves.iter() {
-            match from {
-                0 => { frame.row.set_multi(to, change.e); }
-                1 => { frame.row.set_multi(to, change.a); }
-                2 => { frame.row.set_multi(to, change.v); }
-                _ => { unreachable!() },
+    pub fn do_move(&self, state: &mut RuntimeState, frame:&mut Frame) -> bool {
+        if self.moves.len() > 0 {
+            let change = frame.input.expect("running solver without an input!");
+            for &(from, to) in self.moves.iter() {
+                match from {
+                    0 => { frame.row.set_multi(to, change.e); }
+                    1 => { frame.row.set_multi(to, change.a); }
+                    2 => { frame.row.set_multi(to, change.v); }
+                    _ => { unreachable!() },
+                }
+            }
+            for accept in self.accepts.iter() {
+                if !(*accept)(state, frame, usize::MAX) { return false }
             }
         }
+        true
     }
 
-    pub fn do_intermediate_move(&self, frame:&mut Frame) {
-        let intermediate = frame.intermediate.expect("running solver without an input!");
-        for &(from, to) in self.moves.iter() {
-            frame.row.set_multi(to, intermediate.key[from]);
+    pub fn do_intermediate_move(&self, frame:&mut Frame) -> bool {
+        if let Some(ref intermediate) = frame.intermediate {
+            for &(from, to) in self.moves.iter() {
+                frame.row.set_multi(to, intermediate.key[from]);
+            }
+            for &(from, value) in self.intermediate_accepts.iter() {
+                if intermediate.key[from] != value { return false }
+            }
         }
+        true
     }
 
     pub fn clear_rounds(&self, output_rounds:&mut OutputRounds, frame: &mut Frame) {
@@ -275,11 +289,11 @@ impl Solver {
                 self.clear_rounds(&mut state.output_rounds, frame);
                 for get in self.get_rounds.iter() {
                     (*get)(state, frame);
-                    // if state.output_rounds.get_output_rounds().len() == 0 {
-                    //     continue 'main;
-                    // }
-                    self.do_output(state, frame);
+                    if state.output_rounds.get_output_rounds().len() == 0 {
+                        continue 'main;
+                    }
                 }
+                self.do_output(state, frame);
             } else {
                 self.solve_variables(state, pool, frame, ix + 1);
             }
@@ -323,7 +337,6 @@ pub fn make_scan_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIteratorFun
         let resolved_a = frame.resolve(&a);
         let resolved_v = frame.resolve(&v);
 
-        // println!("Getting proposal for {:?} {:?} {:?}", resolved_e, resolved_a, resolved_v);
         if state.index.propose(iter, resolved_e, resolved_a, resolved_v) {
             iter.constraint = ix;
             match iter.iter {
@@ -369,7 +382,8 @@ pub fn make_scan_get_rounds(scan:&Constraint) -> Arc<GetRoundsFunc> {
             let resolved_e = frame.resolve(&e);
             let resolved_a = frame.resolve(&a);
             let resolved_v = frame.resolve(&v);
-            state.output_rounds.compute_output_rounds(state.distinct_index.iter(resolved_e, resolved_a, resolved_v));
+            let iter = state.distinct_index.iter(resolved_e, resolved_a, resolved_v);
+            state.output_rounds.compute_output_rounds(iter);
     })
 }
 
@@ -433,7 +447,7 @@ pub fn make_function_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIterato
                 _ => false,
             }
         } else {
-            false
+            true
         }
     })
 }
@@ -626,10 +640,11 @@ pub fn do_bind(me: &Solver, state:&mut RuntimeState, frame: &mut Frame) {
 }
 
 pub fn do_commit(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
-    let n = (frame.block_ix * 10000) as u32;
+    let n = (me.block * 10000) as u32;
     for &(_, count) in state.output_rounds.get_output_rounds().iter() {
         for &(e, a, v, change_type) in me.commits.iter() {
-            let output = Change { e: frame.resolve(&e), a: frame.resolve(&a), v:frame.resolve(&v), n, round:0, transaction: 0, count };
+            let correct_count = if change_type == ChangeType::Remove { count * -1 } else { count };
+            let output = Change { e: frame.resolve(&e), a: frame.resolve(&a), v:frame.resolve(&v), n, round:0, transaction: 0, count:correct_count };
             frame.counters.inserts += 1;
             state.rounds.commit(output, change_type)
         }

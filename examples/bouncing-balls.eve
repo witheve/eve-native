@@ -1,24 +1,13 @@
-# Clock
-
-Create a timer that will tick once per second.
-```
 commit
   [#world tick: 0]
   [#time #system/timer resolution: 1000 / 60]
 end
-```
 
-Create a canvas element
-```
 commit
   [#canvas/root #screen width: 500 height: 500 style:
     [width: "500px" height: "500px" background-color: "rgb(226, 79, 94)" display: "block"]]
 end
-```
 
-
-Create our boids
-```
 search
   order = math/range[from:1 to:200]
   rand = random/number[seed: order]
@@ -30,72 +19,51 @@ search
 commit
   [#boid order x y vx vy]
 end
-```
 
-Update
-```
 search
   boid = [#boid x > 490]
   boid.vx > 0
-
 commit
   boid.vx := boid.vx * -0.9
 end
-```
 
-```
 search
   boid = [#boid y > 490]
   boid.vy > 0
-
 commit
   boid.vy := boid.vy * -0.9
 end
-```
 
-```
 search
   boid = [#boid x < 10]
   boid.vx < 0
-
 commit
   boid.vx := boid.vx * -0.9
 end
-```
 
-```
 search
   boid = [#boid y < 10]
   boid.vy < 0
-
 commit
   boid.vy := boid.vy * -0.9
 end
-```
 
-```
 search
   [#system/timer/change tick]
   boid = [#boid x y vx vy]
-
 commit
   boid.x := x + vx
   boid.y := y + vy
   boid.vy := vy + 0.07
 end
-```
 
-Display
-```
 search
   screen = [#screen]
   boid = [#boid]
-
 bind
   screen.children += [#canvas/path sort: boid.order | children:
     [#arc boid | type: "arc" sort: 1 radius: 5 startAngle: 0 endAngle: 2 * 3.14]]
 end
-```
 
 search
   arc = [#arc boid]

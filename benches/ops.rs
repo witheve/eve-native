@@ -20,34 +20,11 @@ pub fn round_holder_compute_output_rounds_bench(b:&mut Bencher) {
     });
 }
 
-fn test_pipe(b: &mut Bencher, code: &str, setup:&str) {
-    let mut program = Program::new();
-
-    let to_test = parse_string(&mut program, code, "test").pop().unwrap();
-    let pipe = to_test.pipes[0].clone();
-    program.block_info.blocks.push(to_test);
-
-    let mut blocks = vec![];
-    blocks.extend(parse_string(&mut program, setup, "test"));
-
-    let mut txn = CodeTransaction::new();
-    txn.exec(&mut program, blocks, vec![]);
-
-    let mut pool = EstimateIterPool::new();
-    let mut frame = Frame::new();
-    frame.input = Some(Change {e:0, a:0, v:0, n:0, round:0, count:1, transaction:0});
-    frame.block_ix = 0;
-
-    b.iter(|| {
-        interpret(&mut program.state, &program.block_info, &mut pool, &mut frame, &pipe);
-    });
-}
-
 fn test_solver(b: &mut Bencher, code: &str, setup:&str) {
     let mut program = Program::new();
 
     let to_test = parse_string(&mut program, code, "test").pop().unwrap();
-    let solver = Solver::new(0, None, &to_test.constraints);
+    let solver = Solver::new(0, 0, None, &to_test.constraints);
     program.block_info.blocks.push(to_test);
 
     let mut blocks = vec![];
@@ -64,23 +41,6 @@ fn test_solver(b: &mut Bencher, code: &str, setup:&str) {
     b.iter(|| {
         solver.run(&mut program.state, &mut pool, &mut frame)
     });
-}
-
-#[bench]
-pub fn ops_bind_pipe(b:&mut Bencher) {
-    test_pipe(b, r#"
-        search
-            f = [#foo bar baz]
-            [#meep foo:f woah]
-        bind
-            f.zomg += 3
-        end
-    "#, r#"
-        commit
-            foo = [#foo bar: 3 baz: 4]
-            [#meep foo woah:"yeah"]
-        end
-    "#);
 }
 
 #[bench]

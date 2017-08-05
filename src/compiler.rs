@@ -1503,7 +1503,7 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     compilation_to_blocks(comp, interner, name, content)
 }
 
-pub fn compilation_to_blocks(mut comp:Compilation, interner: &Interner, path:&str, source: &str) -> Vec<Block> {
+pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path:&str, source: &str) -> Vec<Block> {
     let mut compilation_blocks = vec![];
     if comp.errors.len() > 0 {
         report_errors(&comp.errors, path, source);
@@ -1558,7 +1558,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 // for c in comp.constraints.iter() {
                 //     println!("   {:?}", c);
                 // }
-                program_blocks.extend(compilation_to_blocks(comp, &mut program.state.interner, &block_name[..], content));
+                program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content));
             }
             program_blocks
         } else {
