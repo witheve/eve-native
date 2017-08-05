@@ -1500,10 +1500,10 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     // for c in comp.constraints.iter() {
     //     println!("{:?}", c);
     // }
-    compilation_to_blocks(comp, name, content)
+    compilation_to_blocks(comp, interner, name, content)
 }
 
-pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> Vec<Block> {
+pub fn compilation_to_blocks(mut comp:Compilation, interner: &Interner, path:&str, source: &str) -> Vec<Block> {
     let mut compilation_blocks = vec![];
     if comp.errors.len() > 0 {
         report_errors(&comp.errors, path, source);
@@ -1524,13 +1524,13 @@ pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> V
             // for c in sub_comp.constraints.iter() {
             //     println!("            {:?}", c);
             // }
-            compilation_blocks.push(Block::new(&sub_name, sub_comp.constraints.clone()));
+            compilation_blocks.push(Block::new(&sub_name, interner.string_id(&sub_name), sub_comp.constraints.clone()));
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
     // println!("");
-    compilation_blocks.push(Block::new(&block_name, comp.constraints));
+    compilation_blocks.push(Block::new(&block_name, interner.string_id(&block_name), comp.constraints));
     compilation_blocks
 }
 
@@ -1558,7 +1558,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 // for c in comp.constraints.iter() {
                 //     println!("   {:?}", c);
                 // }
-                program_blocks.extend(compilation_to_blocks(comp, &block_name[..], content));
+                program_blocks.extend(compilation_to_blocks(comp, &mut program.state.interner, &block_name[..], content));
             }
             program_blocks
         } else {

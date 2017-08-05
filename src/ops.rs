@@ -10,6 +10,7 @@ extern crate term_painter;
 use unicode_segmentation::UnicodeSegmentation;
 
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
+use instructions::Solver;
 use compiler::{make_block, parse_file};
 use std::collections::HashMap;
 use std::mem::transmute;
@@ -173,339 +174,40 @@ pub enum PipeShape {
 #[derive(Debug)]
 pub struct Block {
     pub name: String,
+    pub block_id: Interned,
     pub constraints: Vec<Constraint>,
-    pub pipes: Vec<Pipe>,
+    pub solver: Option<Solver>,
     pub shapes: Vec<Vec<PipeShape>>
 }
 
 impl Block {
 
-    pub fn new(name:&str, constraints:Vec<Constraint>) -> Block {
-       let mut me = Block { name:name.to_string(), constraints, pipes:vec![], shapes:vec![] };
-       me.gen_pipes();
+    pub fn new(name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
+       let mut me = Block { name:name.to_string(), block_id, constraints, solver:None, shapes: vec![] };
+       me.shapes.extend(me.to_shapes());
        me
     }
 
-    pub fn gen_pipes(&mut self) {
-        const NO_INPUTS_PIPE:usize = 1000000;
-        let mut moves:HashMap<usize, Vec<Instruction>> = HashMap::new();
-        let mut scans = vec![NO_INPUTS_PIPE];
-        let mut binds = vec![];
-        let mut commits = vec![];
-        let mut get_iters = vec![];
-        let mut accepts = vec![];
-        let mut get_rounds = vec![];
-        let mut outputs = vec![];
-        let mut project_constraints = vec![];
-        let mut watch_constraints = vec![];
-        let mut registers = 0;
-        for (ix, constraint) in self.constraints.iter().enumerate() {
+    pub fn get_block_scans(&self) -> Vec<&Constraint> {
+        self.constraints.iter().filter(|constraint| {
             match constraint {
-                &Constraint::Scan {ref e, ref a, ref v, .. } => {
-                    scans.push(ix);
-                    get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0});
-                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0});
-                    get_rounds.push(Instruction::GetRounds { bail: 0, constraint: ix });
-
-                    let mut scan_moves = vec![];
-                    if let &Field::Register(offset) = e {
-                        scan_moves.push(Instruction::MoveInputField { from:0, to:offset });
-                        registers = cmp::max(registers, offset + 1);
-                    }
-                    if let &Field::Register(offset) = a {
-                        scan_moves.push(Instruction::MoveInputField { from:1, to:offset });
-                        registers = cmp::max(registers, offset + 1);
-                    }
-                    if let &Field::Register(offset) = v {
-                        scan_moves.push(Instruction::MoveInputField { from:2, to:offset });
-                        registers = cmp::max(registers, offset + 1);
-                    }
-                    moves.insert(ix, scan_moves);
-                },
-                &Constraint::AntiScan {ref key, ..} => {
-                    scans.push(ix);
-                    let mut intermediate_moves = vec![];
-                    for (field_ix, field) in key.iter().enumerate() {
-                        if let &Field::Register(offset) = field {
-                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix, to:offset });
-                            registers = cmp::max(registers, offset + 1);
-                        } else if field_ix > 0 {
-                            if let &Field::Value(value) = field {
-                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix, value, bail: 0 });
-                            }
-                        }
-                    }
-                    moves.insert(ix, intermediate_moves);
-                    get_rounds.push(Instruction::GetIntermediateRounds { bail: 0, constraint: ix });
-                }
-                &Constraint::IntermediateScan {ref full_key, ..} => {
-                    scans.push(ix);
-                    get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0});
-                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0});
-                    get_rounds.push(Instruction::GetIntermediateRounds { bail: 0, constraint: ix });
-
-                    let mut intermediate_moves = vec![];
-                    for (field_ix, field) in full_key.iter().enumerate() {
-                        if let &Field::Register(offset) = field {
-                            intermediate_moves.push(Instruction::MoveIntermediateField { from:field_ix, to:offset});
-                            registers = cmp::max(registers, offset + 1);
-                        } else if field_ix > 0 {
-                            if let &Field::Value(value) = field {
-                                intermediate_moves.push(Instruction::AcceptIntermediateField { from:field_ix, value, bail: 0 });
-                            }
-                        }
-                    }
-                    moves.insert(ix, intermediate_moves);
-                }
-                &Constraint::Function {ref output, ..} => {
-                    // @TODO: ensure that all inputs are accounted for
-                    // count the registers in the functions
-                    if let &Field::Register(offset) = output {
-                        registers = cmp::max(registers, offset + 1);
-                    }
-                    get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
-                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0 });
-                },
-                &Constraint::MultiFunction {ref outputs, ..} => {
-                    // @TODO: ensure that all inputs are accounted for
-                    // count the registers in the functions
-                    for output in outputs.iter() {
-                        if let &Field::Register(offset) = output {
-                            registers = cmp::max(registers, offset + 1);
-                        }
-                    }
-                    get_iters.push(Instruction::GetIterator { bail: 0, constraint: ix, iterator: 0 });
-                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0 });
-                },
-                &Constraint::Aggregate {..} => {
-                    outputs.push(Instruction::InsertIntermediate { next: 1, constraint: ix });
-                },
-                &Constraint::Filter {..} => {
-                    accepts.push(Instruction::Accept { bail: 0, constraint: ix, iterator: 0, });
-                },
-                &Constraint::Insert {ref commit, ..} => {
-                    if *commit {
-                        outputs.push(Instruction::Commit { next: 1, constraint: ix });
-                        commits.push(constraint);
-                    } else {
-                        outputs.push(Instruction::Bind { next: 1, constraint: ix });
-                        binds.push(constraint);
-                    }
-                },
-                &Constraint::InsertIntermediate {..} => {
-                    outputs.push(Instruction::InsertIntermediate { next: 1, constraint: ix });
-                }
-                &Constraint::Remove {..} => {
-                    outputs.push(Instruction::Commit { next: 1, constraint: ix });
-                    commits.push(constraint);
-                },
-                &Constraint::RemoveAttribute {..} => {
-                    outputs.push(Instruction::Commit { next: 1, constraint: ix });
-                    commits.push(constraint);
-                },
-                &Constraint::RemoveEntity {..} => {
-                    outputs.push(Instruction::Commit { next: 1, constraint: ix });
-                    commits.push(constraint);
-                },
-                &Constraint::Project {..} => {
-                    project_constraints.push(constraint);
-                }
-                &Constraint::Watch {..} => {
-                    watch_constraints.push((ix, constraint));
-                }
+                &&Constraint::Scan {..} => true,
+                &&Constraint::AntiScan {..} => true,
+                &&Constraint::IntermediateScan {..} => true,
+                _ => false
             }
-        };
-
-        // println!("registers: {:?}", registers);
-
-        let mut pipes = vec![];
-        const PIPE_FINISHED:i32 = 1000000;
-        let outputs_len = outputs.len();
-        for scan_ix in &scans {
-            let mut to_solve = registers;
-            let mut pipe = vec![Instruction::StartBlock {block:0}];
-            let mut seen = HashSet::new();
-            if *scan_ix != NO_INPUTS_PIPE {
-                for move_inst in &moves[scan_ix] {
-                    match move_inst {
-                        &Instruction::MoveInputField {to, ..} |
-                        &Instruction::MoveIntermediateField {to, ..} => {
-                            pipe.push(move_inst.clone());
-                            if !seen.contains(&to) {
-                                to_solve -= 1;
-                                seen.insert(to);
-                            }
-                        },
-                        &Instruction::AcceptIntermediateField {..} => {
-                            let mut neue = move_inst.clone();
-                            if let Instruction::AcceptIntermediateField { ref mut bail, .. } = neue {
-                                *bail = PIPE_FINISHED;
-                            }
-                            pipe.push(neue);
-                        }
-                        _ => { panic!("invalid move instruction: {:?}", move_inst); }
-                    }
-                }
-                for accept in accepts.iter() {
-                    if let &Instruction::Accept { constraint, .. } = accept {
-                        if constraint != *scan_ix {
-                            let mut neue = accept.clone();
-                            if let Instruction::Accept { ref mut bail, .. } = neue {
-                                *bail = PIPE_FINISHED;
-                            }
-                            pipe.push(neue);
-                        }
-                    }
-                }
-            }
-            let mut last_iter_next = 0;
-            for ix in 0..to_solve {
-                for get_iter in get_iters.iter() {
-                    if let &Instruction::GetIterator { constraint, .. } = get_iter {
-                        if constraint != *scan_ix {
-                            last_iter_next -= 1;
-                            let mut neue = get_iter.clone();
-                            if let Instruction::GetIterator { ref mut bail, ref mut iterator, .. } = neue {
-                                *iterator = ix;
-                                if ix == 0 {
-                                    *bail = PIPE_FINISHED;
-                                } else {
-                                    *bail = last_iter_next;
-                                }
-                            }
-                            pipe.push(neue);
-                        }
-                    }
-                }
-
-                last_iter_next -= 1;
-                let iter_bail = if ix == 0 { PIPE_FINISHED } else { last_iter_next };
-                pipe.push(Instruction::IteratorNext { bail: iter_bail, iterator: ix, finished_mask: (2u64.pow(registers as u32) - 1) });
-                last_iter_next = 0;
-
-                for accept in accepts.iter() {
-                    if let &Instruction::Accept { constraint, ..} = accept {
-                        if constraint != *scan_ix {
-                            last_iter_next -= 1;
-                            let mut neue = accept.clone();
-                            if let Instruction::Accept { ref mut bail, ref mut iterator, .. } = neue {
-                                *iterator = ix + 1;
-                                *bail = last_iter_next;
-                            }
-                            pipe.push(neue);
-                        }
-                    }
-                }
-            }
-
-            pipe.push(Instruction::ClearRounds);
-            last_iter_next -= 1;
-
-            if outputs_len > 0 || watch_constraints.len() > 0 {
-                for inst in get_rounds.iter() {
-                    match inst {
-                        &Instruction::GetRounds { constraint, .. } |
-                        &Instruction::GetIntermediateRounds { constraint, .. } => {
-                            if constraint != *scan_ix {
-                                last_iter_next -= 1;
-                                let mut neue = inst.clone();
-                                match neue {
-                                    Instruction::GetRounds { ref mut bail, .. } |
-                                    Instruction::GetIntermediateRounds { ref mut bail, .. } => {
-                                        *bail = if to_solve > 0 {
-                                            last_iter_next
-                                        } else {
-                                            PIPE_FINISHED
-                                        }
-                                    }
-                                    _ => panic!()
-                                }
-                                pipe.push(neue);
-                            }
-                        }
-                        _ => { panic!("Invalid instruction in rounds: {:?}", inst) }
-                    }
-                }
-            }
-
-            for (ix, output) in outputs.iter().enumerate() {
-                last_iter_next -= 1;
-                if ix < outputs_len - 1 {
-                    pipe.push(output.clone());
-                } else {
-                    let mut neue = output.clone();
-                    match neue {
-                        Instruction::Bind {ref mut next, ..} |
-                            Instruction::Commit { ref mut next, ..} |
-                            Instruction::InsertIntermediate { ref mut next, ..} => {
-                                *next = if to_solve > 0 {
-                                    last_iter_next
-                                } else {
-                                    PIPE_FINISHED
-                                }
-                            }
-                        _ => { panic!("Invalid output instruction"); }
-                    };
-                    pipe.push(neue);
-                }
-            }
-
-            for constraint in project_constraints.iter() {
-                if let &&Constraint::Project {ref registers} = constraint {
-                    let registers_len = registers.len();
-                    for (ix, reg) in registers.iter().enumerate() {
-                        last_iter_next -= 1;
-                        if ix < registers_len - 1 {
-                            pipe.push(Instruction::Project { next:1, from: *reg });
-                        } else {
-                            let mut neue = Instruction::Project {next: 1, from: *reg };
-                            if let Instruction::Project {ref mut next, ..} = neue {
-                                *next = if to_solve > 0 {
-                                    last_iter_next
-                                } else {
-                                    PIPE_FINISHED
-                                }
-                            }
-                            pipe.push(neue);
-                        }
-                    }
-                }
-            }
-
-            for (watch_ix, &(ix, constraint)) in watch_constraints.iter().enumerate() {
-                if let &Constraint::Watch {ref name, ..} = constraint {
-                    last_iter_next -= 1;
-                    let next = if watch_ix as usize != watch_constraints.len() - 1 {
-                        1
-                    } else if to_solve > 0 {
-                        last_iter_next
-                    } else {
-                        PIPE_FINISHED
-                    };
-                    pipe.push(Instruction::Watch {next, name:name.to_string(), constraint:ix as usize});
-                }
-            }
-
-            pipes.push(pipe);
-        };
-
-        for pipe in pipes.iter() {
-            self.pipes.push(pipe.clone());
-            // println!("\npipe: [");
-            // for inst in pipe {
-            //     println!("  {:?}", inst);
-            // }
-            // println!("]");
-        }
-
-        let shapes_per_pipe = self.to_shapes(scans.iter().skip(1).map(|scan_ix| &self.constraints[*scan_ix as usize]).collect::<Vec<&Constraint>>());
-        self.shapes.push(vec![]);
-        for shape in shapes_per_pipe {
-            self.shapes.push(shape);
-        }
+        }).collect()
     }
 
-    pub fn to_shapes(&self, scans: Vec<&Constraint>) -> Vec<Vec<PipeShape>> {
+    pub fn gen_pipes(&mut self) -> Vec<Solver> {
+        let scans = self.get_block_scans();
+        self.solver = Some(Solver::new(self.block_id, 0, None, &self.constraints));
+        let solvers = scans.iter().enumerate().map(|(ix, scan)| Solver::new(self.block_id, ix + 1, Some(*scan), &self.constraints)).collect();
+        solvers
+    }
+
+    pub fn to_shapes(&self) -> Vec<Vec<PipeShape>> {
+        let scans = self.get_block_scans();
         let mut shapes = vec![];
         let tag = TAG_INTERNED_ID;
         let mut tag_mappings:HashMap<Field, Vec<Interned>> = HashMap::new();
@@ -2754,8 +2456,8 @@ pub struct RuntimeState {
 }
 
 pub struct BlockInfo {
-    pub pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Vec<Instruction>>>,
-    pub intermediate_pipe_lookup: HashMap<Interned, Vec<Vec<Instruction>>>,
+    pub pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Solver>>,
+    pub intermediate_pipe_lookup: HashMap<Interned, Vec<Solver>>,
     pub block_names: HashMap<String, usize>,
     pub blocks: Vec<Block>,
 }
@@ -2832,19 +2534,17 @@ impl Program {
 
     pub fn register_block(&mut self, mut block:Block) {
         let ix = self.block_info.blocks.len();
-        for (pipe_ix, ref mut pipe) in block.pipes.iter_mut().enumerate() {
-            if let Some(&mut Instruction::StartBlock {ref mut block}) = pipe.get_mut(0) {
-                *block = ix;
-            } else { panic!("Block where the first instruction is not a start block.") }
-            for shape in block.shapes[pipe_ix].iter() {
+        let pipes = block.gen_pipes();
+        for (pipe, shapes) in pipes.drain(..).zip(block.shapes) {
+            for shape in shapes {
                 match shape {
-                    &PipeShape::Scan(e,a,v) => {
+                    PipeShape::Scan(e,a,v) => {
                         let cur = self.block_info.pipe_lookup.entry((e,a,v)).or_insert_with(|| vec![]);
-                        cur.push(pipe.clone());
+                        cur.push(pipe);
                     }
-                    &PipeShape::Intermediate(id) => {
+                    PipeShape::Intermediate(id) => {
                         let cur = self.block_info.intermediate_pipe_lookup.entry(id).or_insert_with(|| vec![]);
-                        cur.push(pipe.clone());
+                        cur.push(pipe);
                     }
                 }
             }
@@ -2895,7 +2595,7 @@ impl Program {
         self.watchers.insert(name, watcher);
     }
 
-    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Vec<Instruction>>) {
+    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Solver>) {
         let ref pipe_lookup = block_info.pipe_lookup;
         let mut tuple = (0,0,0);
         // look for (0,0,0), (0, a, 0) and (0, a, v) pipes
@@ -2983,7 +2683,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
                     for pipe in actives.iter() {
                         // print_pipe(pipe, block_info, state);
                         frame.row.reset();
-                        interpret(state, block_info, iter_pool, frame, pipe);
+                        pipe.run_intermediate(state, iter_pool, frame);
                         // if state.debug {
                         //     state.debug = false;
                         //     println!("\n---------------------------------\n");
@@ -3031,7 +2731,7 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     for pipe in pipes.iter() {
                         // print_pipe(pipe, &program.block_info, &mut program.state);
                         frame.row.reset();
-                        interpret(&mut program.state, &program.block_info, iter_pool, frame, pipe);
+                        pipe.run_intermediate(&mut program.state, iter_pool, frame);
                         // if program.state.debug {
                         //     program.state.debug = false;
                         //     println!("\n---------------------------------\n");
@@ -3149,7 +2849,7 @@ impl CodeTransaction {
                 let remove = &program.block_info.blocks[block_ix];
                 frame.reset();
                 frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:-1 });
-                interpret(&mut program.state, &program.block_info, iter_pool, frame, &remove.pipes[0]);
+                remove.solver.unwrap().run(&mut program.state, iter_pool, frame);
             }
             program.unregister_block(name);
         }
@@ -3158,7 +2858,7 @@ impl CodeTransaction {
             frame.reset();
             frame.input = Some(Change { e:0,a:0,v:0,n: 0, transaction:0, round:0, count:1 });
             program.register_block(add);
-            interpret(&mut program.state, &program.block_info, iter_pool, frame, &program.block_info.blocks.last().unwrap().pipes[0]);
+            program.block_info.blocks.last().unwrap().solver.unwrap().run(&mut program.state, iter_pool, frame);
         }
 
         let mut max_round = 0;

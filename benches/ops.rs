@@ -78,13 +78,7 @@ pub fn ops_bind_pipe(b:&mut Bencher) {
     "#, r#"
         commit
             foo = [#foo bar: 3 baz: 4]
-            [#foo bar: 3 baz: 0]
-            [#foo bar: 4 baz: 0]
-            [#foo bar: 9 baz: 0]
-            [#foo bar: 0 baz: 0]
             [#meep foo woah:"yeah"]
-            [#meep foo woah:"leep"]
-            [#meep foo woah:"seep"]
         end
     "#);
 }
@@ -101,13 +95,7 @@ pub fn ops_bind_solver(b:&mut Bencher) {
     "#, r#"
         commit
             foo = [#foo bar: 3 baz: 4]
-            [#foo bar: 3 baz: 0]
-            [#foo bar: 4 baz: 0]
-            [#foo bar: 9 baz: 0]
-            [#foo bar: 0 baz: 0]
             [#meep foo woah:"yeah"]
-            [#meep foo woah:"leep"]
-            [#meep foo woah:"seep"]
         end
     "#);
 }
