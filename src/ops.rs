@@ -1604,11 +1604,12 @@ fn collapse_rounds(results:&Vec<RoundCount>, collapsed: &mut Vec<RoundCount>) {
 pub struct OutputRounds {
     pub output_rounds: Vec<RoundCount>,
     prev_output_rounds: Vec<RoundCount>,
+    temp_results: Vec<RoundCount>,
 }
 
 impl OutputRounds {
     pub fn new() -> OutputRounds {
-        OutputRounds { output_rounds:vec![], prev_output_rounds:vec![] }
+        OutputRounds { output_rounds:vec![], prev_output_rounds:vec![], temp_results:vec![] }
     }
 
     pub fn get_output_rounds(&self) -> &Vec<RoundCount> {
@@ -1619,17 +1620,18 @@ impl OutputRounds {
         }
     }
 
-    fn fetch_neue_current(&mut self) -> (&mut Vec<RoundCount>, &mut Vec<RoundCount>) {
+    fn fetch_neue_current(&mut self) -> (&mut Vec<RoundCount>, &mut Vec<RoundCount>, &mut Vec<RoundCount>) {
         match (self.output_rounds.len(), self.prev_output_rounds.len()) {
-            (0, _) => (&mut self.output_rounds, &mut self.prev_output_rounds),
-            (_, 0) => (&mut self.prev_output_rounds, &mut self.output_rounds),
+            (0, _) => (&mut self.output_rounds, &mut self.prev_output_rounds, &mut self.temp_results),
+            (_, 0) => (&mut self.prev_output_rounds, &mut self.output_rounds, &mut self.temp_results),
             (_, _) => panic!("neither round array is empty"),
         }
     }
 
     pub fn compute_anti_output_rounds(&mut self, right_iter: DistinctIter) {
-        let (neue, current) = self.fetch_neue_current();
-        let mut result = vec![];
+        let (neue, current, result) = self.fetch_neue_current();
+        result.clear();
+
         for x in current.drain(..) {
             for y in right_iter.clone() {
                 let round = cmp::max(x.0, y.0);
@@ -1644,8 +1646,8 @@ impl OutputRounds {
     }
 
     pub fn compute_output_rounds(&mut self, right_iter: DistinctIter) {
-        let (neue, current) = self.fetch_neue_current();
-        let mut result = vec![];
+        let (neue, current, result) = self.fetch_neue_current();
+        result.clear();
 
         for x in current.drain(..) {
             for y in right_iter.clone() {
