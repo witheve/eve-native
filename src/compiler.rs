@@ -1534,12 +1534,11 @@ pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path
     compilation_blocks
 }
 
-pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block> {
+pub fn parse_string(interner:&mut Interner, content:&str, path:&str) -> Vec<Block> {
     let mut state = ParseState::new(content);
     let res = embedded_blocks(&mut state, path);
     if let ParseResult::Ok(mut cur) = res {
         if let Node::Doc { ref mut blocks, .. } = cur {
-            let interner = &mut program.state.interner;
             let mut program_blocks = vec![];
             let mut ix = 0;
             for block in blocks {
@@ -1569,7 +1568,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
     }
 }
 
-pub fn parse_file(program:&mut Program, path:&str, report: bool) -> Vec<Block> {
+pub fn parse_file(interner:&mut Interner, path:&str, report: bool) -> Vec<Block> {
     let metadata = fs::metadata(path).expect(&format!("Invalid path: {:?}", path));
     let mut paths = vec![];
     if metadata.is_file() {
@@ -1595,7 +1594,7 @@ pub fn parse_file(program:&mut Program, path:&str, report: bool) -> Vec<Block> {
         let mut file = File::open(&cur_path).expect("Unable to open the file");
         let mut contents = String::new();
         file.read_to_string(&mut contents).expect("Unable to read the file");
-        blocks.extend(parse_string(program, &contents, &cur_path).into_iter());
+        blocks.extend(parse_string(interner, &contents, &cur_path).into_iter());
     }
     blocks
 }
