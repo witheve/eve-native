@@ -23,6 +23,8 @@ use eve::indexes::{WatchDiff};
 use eve::watchers::{Watcher};
 use eve::watchers::system::{SystemTimerWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
+use eve::watchers::http::{HttpWatcher};
+use eve::watchers::json::JsonWatcher;
 
 extern crate iron;
 extern crate staticfile;
@@ -61,8 +63,10 @@ impl ClientHandler {
         let outgoing = runner.program.outgoing.clone();
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(CompilerWatcher::new(outgoing)));
+            runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
+            runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(HttpWatcher::new(outgoing.clone())));
         }
         
         if let Some(persist_file) = persist {
