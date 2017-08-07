@@ -1,0 +1,12 @@
+# Warning
+
+Report warnings to the user.
+
+~~~ eve
+search
+  [#eve/warning message]
+bind
+  [#console/warn text: message]
+  [#html/div text: "AGH"]
+end
+~~~
