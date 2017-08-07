@@ -83,6 +83,14 @@ pub fn print_pipe(pipe: &Pipe, block_info:&BlockInfo, state:&mut RuntimeState) {
     println!("");
 }
 
+pub fn print_block_constraints(block:&Block) {
+    println!("\n----------- Constraints ------------[{}] \n", block.name);
+    for constraint in block.constraints.iter() {
+        println!("  {:?}", constraint);
+    }
+    println!("");
+}
+
 //-------------------------------------------------------------------------
 // Change
 //-------------------------------------------------------------------------
@@ -3340,7 +3348,19 @@ impl ProgramRunner {
                     }
                     Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
                         let mut tx = CodeTransaction::new();
-                        println!("Got Code Transaction! {:?} {:?}", adds, removes);
+                        println!("------ Got Code Transaction! ------");
+                        if adds.len() > 0 {
+                            println!("### ADDS: ###");
+                            for block in adds.iter() {
+                                print_block_constraints(&block);
+                            }
+                        }
+                        if removes.len() > 0 {
+                            println!("### REMOVES: ###");
+                            for block in removes.iter() {
+                                println!("  - {:?}", block);
+                            }
+                        }
                         tx.exec(&mut program, adds, removes);
                     }
                     Err(_) => { break; }
