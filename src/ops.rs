@@ -10,7 +10,7 @@ extern crate term_painter;
 use unicode_segmentation::UnicodeSegmentation;
 
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
-use instructions::Solver;
+use solver::Solver;
 use compiler::{make_block, parse_file};
 use std::collections::HashMap;
 use std::mem::transmute;

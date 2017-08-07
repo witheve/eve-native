@@ -4,7 +4,7 @@ extern crate test;
 extern crate eve;
 
 use eve::ops::*;
-use eve::instructions::*;
+use eve::solver::{Solver};
 use eve::compiler::{parse_string};
 use eve::indexes::{DistinctIter};
 use test::Bencher;

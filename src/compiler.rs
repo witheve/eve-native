@@ -4,7 +4,7 @@ extern crate term_painter;
 
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan,
+use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
           make_multi_function, make_aggregate, Block};
 use std::io::prelude::*;

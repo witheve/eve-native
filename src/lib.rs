@@ -28,7 +28,7 @@ pub mod indexes;
 pub mod compiler;
 pub mod parser;
 pub mod error;
-pub mod instructions;
+pub mod solver;
 
 pub mod numerics;
 
