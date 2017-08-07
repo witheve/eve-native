@@ -127,7 +127,7 @@ impl Watcher for CompilerWatcher {
                 let constraints = self.blocks_to_constraints.get(block).unwrap();
                 comp.constraints.extend(constraints.iter().map(|&id| self.constraints.get(&id).unwrap()).cloned());
                 comp.finalize();
-                added_blocks.extend(compilation_to_blocks(comp, "compiler_watcher", ""));
+                added_blocks.extend(compilation_to_blocks(comp, interner, "compiler_watcher", ""));
             }
         }
 

@@ -14,7 +14,7 @@ fn make_program(paths:Vec<&str>) -> Program {
 
     let mut blocks = vec![];
     for path in paths {
-        blocks.extend(parse_file(&mut program, &path, false));
+        blocks.extend(parse_file(&mut program.state.interner, &path, false));
     }
 
     let mut txn = CodeTransaction::new();
