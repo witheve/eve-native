@@ -1,40 +1,49 @@
 # UI
 
-~~~ eve
-commit
-  [#ui/shortcut-tagname | tagname: (
-    "row"
-    "column"
-    "spacer"
-    "text"
-    "div"
-    "span"
-    "button"
-    "link"
-    "input"
-    "a"
-    "style"
-    )]
-end
-~~~
+## Deprecation Warnings
 
 ~~~ eve
 search
-  [#ui/shortcut-tagname tagname]
+  [#html/shortcut-tag shortcut tagname]
+  not([#ui/shortcut-tag tagname])
 bind
-  [#ui/shortcut-tag tag-text: "ui/{{tagname}}" tagname]
+  [#ui/deprecated-shortcut-tag shortcut: "ui/{{tagname}}" new-shortcut: shortcut tagname]
+end
+~~~
+
+Report deprecated shortcuts as warnings.
+~~~ eve
+search
+  [#ui/deprecated-shortcut-tag shortcut: tag new-shortcut tagname]
+  element = [tag]
+bind
+  [#eve/warning #ui/warning #eve/deprecated message: "The shortcut tag '#{{tag}}' for creating basic HTML elements has been deprecated. Instead, use '#{{new-shortcut}}'."]
+  element <- [#html/element tagname]
+end
+~~~
+
+## Shortcut Tags
+
+~~~ eve
+commit
+  [#ui/shortcut-tag shortcut: "ui/row" tagname: "row"]
+  [#ui/shortcut-tag shortcut: "ui/column" tagname: "column"]
+  [#ui/shortcut-tag shortcut: "ui/spacer" tagname: "spacer"]
+  [#ui/shortcut-tag shortcut: "ui/text" tagname: "text"]
+  [#ui/shortcut-tag shortcut: "ui/button" tagname: "button"]
 end
 ~~~
 
 Decorate shortcut elements as html.
 ~~~ eve
 search
-  [#ui/shortcut-tag tag-text: tag tagname]
+  [#ui/shortcut-tag shortcut: tag tagname]
   element = [tag]
 bind
   element <- [#html/element tagname]
 end
 ~~~
+
 
 ## Buttons
 

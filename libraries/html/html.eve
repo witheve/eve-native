@@ -1,5 +1,41 @@
 # HTML
 
+## Shortcut Tags
+
+~~~ eve
+commit
+  [#html/shortcut-tagname | tagname: (
+    "div"
+    "span"
+    "button"
+    "link"
+    "input"
+    "img"
+    "a"
+    "style"
+    )]
+end
+~~~
+
+~~~ eve
+search
+  [#html/shortcut-tagname tagname]
+bind
+  [#html/shortcut-tag shortcut: "html/{{tagname}}" tagname]
+end
+~~~
+
+Decorate shortcut elements as html.
+~~~ eve
+search
+  [#html/shortcut-tag shortcut: tag tagname]
+  element = [tag]
+bind
+  element <- [#html/element tagname]
+end
+~~~
+
+
 ## Setup
 
 Create a list of trigger and listener tags to send to the client if present.
