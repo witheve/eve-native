@@ -4,8 +4,16 @@ use indexes::{WatchDiff};
 use std::sync::mpsc::{Sender};
 use super::Watcher;
 use compiler::{Compilation, compilation_to_blocks};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::collections::hash_map::{Entry};
+
+pub enum ConstraintParams {
+    Scan(Interned, Interned, Interned),
+    Output(Interned, Interned, Interned),
+    Function(Interned, Interned, HashMap<String, Interned>),
+    Variadic(Interned, Interned, Vec<Interned>),
+    GenId(Interned, BTreeMap<Interned, Interned>)
+}
 
 //-------------------------------------------------------------------------
 // Compiler Watcher
@@ -18,10 +26,8 @@ pub struct CompilerWatcher {
     variables: HashMap<Interned, Field>,
     block_types: HashMap<Interned, Interned>,
     block_to_constraints: HashMap<Interned, Vec<Interned>>,
+    constraint_to_params: HashMap<Interned, ConstraintParams>,
     constraints: HashMap<Interned, Constraint>,
-    constraint_to_args: HashMap<Interned, HashMap<String, Interned>>,
-    constraint_to_varargs: HashMap<Interned, Vec<Interned>>,
-    variable_to_identity_attrs: HashMap<Interned, HashMap<Interned, Interned>>
 }
 
 impl CompilerWatcher {
@@ -32,10 +38,24 @@ impl CompilerWatcher {
                         variables: HashMap::new(),
                         block_types: HashMap::new(),
                         block_to_constraints: HashMap::new(),
-                        constraints: HashMap::new(),
-                        constraint_to_args: HashMap::new(),
-                        constraint_to_varargs: HashMap::new(),
-                        variable_to_identity_attrs: HashMap::new()}
+                        constraint_to_params: HashMap::new(),
+                        constraints: HashMap::new()}
+    }
+
+    pub fn block_type(&self, block:Interned, interner:&mut Interner) -> Option<String> {
+        if let Some(&kind) = self.block_types.get(&block) {
+            if let &Internable::String(ref string) = interner.get_value(kind) {
+                return Some(string.to_string());
+            }
+        }
+        None
+    }
+
+    pub fn add_constraint(&mut self, id:Interned, block:Interned, damaged_constraints:&mut HashSet<Interned>, damaged_blocks:&mut HashSet<Interned>) {
+        let constraints = self.block_to_constraints.entry(block).or_insert_with(|| vec![]);
+        constraints.push(id);
+        damaged_blocks.insert(block);
+        damaged_constraints.insert(id);
     }
 
     pub fn get_field(&self, value:Interned) -> Field {
@@ -56,65 +76,32 @@ impl CompilerWatcher {
         }
     }
 
-    pub fn update_arguments(&mut self, interner:&mut Interner, diff:&WatchDiff) {
-        let kind = interner.string_id("argument");
-        for arg in diff.adds.iter().filter(|v| kind == v[0]) {
-            if let &[id, attr, val] = &arg[1..] {
-                let mut args = self.constraint_to_args.entry(id).or_insert_with(|| HashMap::new());
-                match interner.get_value(attr) {
-                    &Internable::String(ref a) => { args.insert(a.to_string(), val); },
-                    _ => unimplemented!()
-                }
-            }
-        }
-    }
-
-    pub fn update_varargs(&mut self, interner:&mut Interner, diff:&WatchDiff) {
-        let kind = interner.string_id("variadic-argument");
-        for arg in diff.adds.iter().filter(|v| kind == v[0]) {
-            if let &[id, interned_ix, val] = &arg[1..] {
-                let mut args = self.constraint_to_varargs.entry(id).or_insert_with(|| vec![]);
-                let ix = Internable::to_number(interner.get_value(interned_ix)) as usize;
-                args.insert(ix, val);
-            }
-        }
-    }
-
-    pub fn update_identity_attrs(&mut self, interner:&mut Interner, diff:&WatchDiff) {
-        let kind = interner.string_id("identity-attribute");
-        for arg in diff.adds.iter().filter(|v| kind == v[0]) {
-            if let &[id, attribute, value] = &arg[1..] {
-                let mut identity_attrs = self.variable_to_identity_attrs.entry(id).or_insert_with(|| HashMap::new());
-                identity_attrs.insert(attribute, value);
-            }
-        }
-    }
-
-
-    pub fn args_to_vec(&mut self, id:Interned, op:&str) -> Option<Vec<Field>> {
+    pub fn args_to_vec(&self, op:&str, args:&HashMap<String, Interned>) -> Option<Vec<Field>> {
         if let Some(info) = get_function_info(op) {
-            if let Some(args) = self.constraint_to_args.get(&id) {
-                let mut params:Vec<Field> = vec![];
-                for param in info.get_params() {
-                    if let Some(&val) = args.get(param) {
+            let mut params:Vec<Field> = vec![];
+            for param in info.get_params() {
+                if let Some(&val) = args.get(param) {
+                    if val != 0 {
                         params.push(self.get_field(val));
                     } else {
                         return None;
                     }
+                } else {
+                    return None;
                 }
-                return Some(params);
             }
+            return Some(params);
         }
         None
     }
 
-    pub fn varargs_to_vec(&mut self, id:Interned) -> Option<Vec<Field>> {
-        if let Some(args) = self.constraint_to_varargs.get(&id) {
-            Some(args.iter().map(|&arg| self.get_field(arg)).collect())
-        } else {
-            None
-        }
+    pub fn varargs_to_vec(&self, args:&Vec<Interned>) -> Option<Vec<Field>> {
+        Some(args.iter().map(|&arg| self.get_field(arg)).collect())
+    }
 
+    pub fn identity_to_vec(&self, args:&BTreeMap<Interned, Interned>) -> Option<Vec<Field>> {
+        // @FIXME: needs attr to soon.
+        Some(args.iter().map(|(&attr, &val)| self.get_field(val)).collect())
     }
 }
 
@@ -127,13 +114,11 @@ impl Watcher for CompilerWatcher {
     }
 
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        self.update_variables(interner, &diff);
-        self.update_arguments(interner, &diff);
-        self.update_varargs(interner, &diff);
-
         let mut existing_blocks:HashSet<Interned> = HashSet::new();
         existing_blocks.extend(self.block_types.keys());
+
         let mut damaged_blocks:HashSet<Interned> = HashSet::new();
+        let mut damaged_constraints:HashSet<Interned> = HashSet::new();
 
         for remove in diff.removes {
             if let &Internable::String(ref kind) = interner.get_value(remove[0]) {
@@ -142,21 +127,51 @@ impl Watcher for CompilerWatcher {
                         self.block_types.remove(&block);
                         damaged_blocks.insert(block);
                     },
+                    ("variable", _) => {},
+                    ("argument", &[constraint, attribute, _]) => {
+                        if let Some(constraint_params) = self.constraint_to_params.get_mut(&constraint) {
+                            match constraint_params {
+                                &mut ConstraintParams::Function(_, _, ref mut params) => {
+                                    if let &Internable::String(ref string) = interner.get_value(attribute) {
+                                        params.remove(string);
+                                    }
+                                },
+                                &mut ConstraintParams::Variadic(_, _, ref mut params) => {
+                                    let ix = Internable::to_number(interner.get_value(attribute)) as usize;
+                                    params[ix] = 0;
+                                },
+                                _ => unreachable!()
+                            }
+                            damaged_constraints.insert(constraint);
+                        }
+                    },
+                    ("identity", &[constraint, attribute, ..]) => {
+                        if let Some(&mut ConstraintParams::GenId(_, ref mut identity)) = self.constraint_to_params.get_mut(&constraint) {
+                            identity.remove(&attribute);
+                            damaged_constraints.insert(constraint);
+                        }
+                    },
+
+
+                    // Constraints
                     ("scan", &[id, block, ..]) |
                     ("output", &[id, block, ..]) |
                     ("function", &[id, block, ..]) |
-                    ("variadic", &[id, block, ..]) => {
+                    ("variadic", &[id, block, ..]) |
+                    ("gen-id", &[id, block, ..])=> {
                         self.constraints.remove(&id).unwrap();
+                        self.constraint_to_params.remove(&id).unwrap();
                         self.block_to_constraints.get_mut(&block).unwrap().remove_item(&id);
                         damaged_blocks.insert(block);
+                        damaged_constraints.insert(id);
                     },
-                    ("argument", ..) | ("variable", _) => {},
-                    _ => println!("Found other removal '{:?}'", remove)
+
+                    _ => println!("Found other remove '{}' {:?}", kind, remove)
                 }
             }
         }
 
-        for add in diff.adds {
+        for add in diff.adds.iter() {
             if let &Internable::String(ref kind) = interner.get_value(add[0]) {
                 match (kind.as_ref(), &add[1..]) {
                     ("block", &[block, kind]) => {
@@ -166,52 +181,74 @@ impl Watcher for CompilerWatcher {
                         }
                         damaged_blocks.insert(block);
                     },
+                    ("variable", &[id, _]) => {
+                        // @FIXME: This should probably damage blocks that use the id of this var as a value, but that's a weird lookup...
+                        let ix = self.variable_ix;
+                        self.variable_ix += 1;
+                        self.variables.insert(id, Field::Register(ix));
+                    },
+                    ("argument", ..) => {},
+                    ("identity", ..) => {},
+
+                    // Constraints
                     ("scan", &[id, block, e, a, v]) => {
-                        let scan = make_scan(self.get_field(e), self.get_field(a), self.get_field(v));
-                        let constraints = self.block_to_constraints.entry(block).or_insert_with(|| vec![]);
-                        constraints.push(id);
-                        self.constraints.insert(id, scan);
-                        damaged_blocks.insert(block);
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
+                        self.constraint_to_params.insert(id, ConstraintParams::Scan(e, a, v));
                     },
                     ("output", &[id, block, e, a, v]) => {
-                        let output = Constraint::Insert{e: self.get_field(e), a: self.get_field(a), v: self.get_field(v), commit: false};
-                        let constraints = self.block_to_constraints.entry(block).or_insert_with(|| vec![]);
-                        constraints.push(id);
-                        self.constraints.insert(id, output);
-                        damaged_blocks.insert(block);
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
+                        self.constraint_to_params.insert(id, ConstraintParams::Output(e, a, v));
                     },
-                    ("function", &[id, block, name, output]) => {
-                        if let &Internable::String(ref op) = interner.get_value(name) {
-                            if let Some(params) = self.args_to_vec(id, op) {
-                                let function = make_function(op, params, self.get_field(output));
-                                let constraints = self.block_to_constraints.entry(block).or_insert_with(|| vec![]);
-                                constraints.push(id);
-                                self.constraints.insert(id, function);
-                                damaged_blocks.insert(block);
-                            }
-                        }
+                    ("function", &[id, block, op, output]) => {
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
+                        self.constraint_to_params.insert(id, ConstraintParams::Function(op, output, HashMap::new()));
                     },
-                    ("variadic", &[id, block, name, output]) => {
-                        if let &Internable::String(ref op) = interner.get_value(name) {
-                            if let Some(params) = self.varargs_to_vec(id) {
-                                // @FIXME: Just actually rename it gen-id.
-                                let real_op = match op.as_str() {
-                                    "gen-id" => "gen_id",
-                                    _ => op
-                                };
-                                let function = make_function(real_op, params, self.get_field(output));
-                                let constraints = self.block_to_constraints.entry(block).or_insert_with(|| vec![]);
-                                constraints.push(id);
-                                self.constraints.insert(id, function);
-                                damaged_blocks.insert(block);
-                            }
-                        }
+                    ("variadic", &[id, block, op, output]) => {
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
+                        self.constraint_to_params.insert(id, ConstraintParams::Variadic(op, output, vec![]));
                     },
-                    ("argument", ..) | ("variable", _) => {},
-                    _ => println!("Found other '{:?}'", add)
+                    ("gen-id", &[id, block, variable]) => {
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
+                        self.constraint_to_params.insert(id, ConstraintParams::GenId(variable, BTreeMap::new()));
+                    },
+
+                    _ => println!("Found other add '{}' {:?}", kind, add)
                 }
             }
         }
+
+        // Fill in function and variadic parameters.
+        for add in diff.adds {
+            if let &Internable::String(ref kind) = interner.get_value(add[0]) {
+                match (kind.as_ref(), &add[1..]) {
+                    ("argument", &[constraint, attribute, value]) => {
+                        match self.constraint_to_params.get_mut(&constraint).unwrap() {
+                            &mut ConstraintParams::Function(_, _, ref mut params) => {
+                                if let &Internable::String(ref string) = interner.get_value(attribute) {
+                                    params.insert(string.to_string(), value);
+                                }
+                            },
+                            &mut ConstraintParams::Variadic(_, _, ref mut params) => {
+                                let ix = Internable::to_number(interner.get_value(attribute)) as usize;
+                                params[ix] = value;
+                            },
+                            _ => panic!("Invalid constraint type to receive arguments")
+                        }
+                        damaged_constraints.insert(constraint);
+                    },
+                    ("identity", &[constraint, attribute, value]) => {
+                        if let &mut ConstraintParams::GenId(_, ref mut identity) = self.constraint_to_params.get_mut(&constraint).unwrap() {
+                            identity.insert(attribute, value);
+                            damaged_constraints.insert(constraint);
+                        } else {
+                            unreachable!();
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
+
 
 
         let mut removed_blocks = vec![];
@@ -225,6 +262,47 @@ impl Watcher for CompilerWatcher {
             if self.block_types.contains_key(block) {
                 let mut comp = Compilation::new(format!("dynamic block {}", block));
                 let constraints = self.block_to_constraints.get(block).unwrap();
+
+                for id in constraints.iter() {
+                    if !damaged_constraints.contains(&id) { continue; }
+                    if let Some(params) = self.constraint_to_params.get(&id) {
+                        match params {
+                            &ConstraintParams::Scan(e, a, v) => {
+                                let scan = make_scan(self.get_field(e), self.get_field(a), self.get_field(v));
+                                self.constraints.insert(*id, scan);
+                            },
+                            &ConstraintParams::Output(e, a, v) => {
+                                let is_commit = self.block_type(*block, interner).unwrap() == "commit";
+                                let output = Constraint::Insert{e: self.get_field(e), a: self.get_field(a), v: self.get_field(v), commit: is_commit};
+                                self.constraints.insert(*id, output);
+                            },
+                            &ConstraintParams::Function(op_interned, output, ref params_interned) => {
+                                if let &Internable::String(ref op) = interner.get_value(op_interned) {
+                                    if let Some(params) = self.args_to_vec(op, &params_interned) {
+                                        let function = make_function(op, params, self.get_field(output));
+                                        self.constraints.insert(*id, function);
+                                    }
+                                }
+                            },
+                            &ConstraintParams::Variadic(op_interned, output, ref params_interned) => {
+                                if let &Internable::String(ref op) = interner.get_value(op_interned) {
+                                    if let Some(params) = self.varargs_to_vec(&params_interned) {
+                                        let function = make_function(op, params, self.get_field(output));
+                                        self.constraints.insert(*id, function);
+                                    }
+                                }
+                            },
+                            &ConstraintParams::GenId(var, ref identity_attrs) => {
+                                if let Some(params) = self.identity_to_vec(identity_attrs) {
+                                    println!("GEN ID VAR: {:?} ARGS {:?}", self.get_field(var), params);
+                                    let function = make_function("gen_id", params, self.get_field(var));
+                                    self.constraints.insert(*id, function);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 comp.constraints.extend(constraints.iter().map(|&id| self.constraints.get(&id).unwrap()).cloned());
                 comp.finalize();
                 added_blocks.extend(compilation_to_blocks(comp, "compiler_watcher", ""));

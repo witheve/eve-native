@@ -62,21 +62,46 @@ search
   index = if s = argument.sort then s else argument.eve-auto-index
 
 watch eve/compiler
-  ("variadic-argument" constraint index argument.value)
+  ("argument" constraint index argument.value)
+end
+~~~
+
+~~~ eve
+// search
+//   variable = [#eve/compiler/variable]
+//   block = [#eve/compiler/block constraint:
+//     [#eve/compiler/gen-id entity: variable]]
+//   output = [#eve/compiler/output entity: variable attribute value]
+//   not(output = [#eve/compiler/non-identity])
+//   block = [#eve/compiler/block constraint: output]
+
+// watch eve/compiler
+//   ("identity-attribute" block variable attribute value)
+// end
+~~~
+
+~~~ eve
+search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/gen-id entity]
+
+watch eve/compiler
+  ("gen-id" constraint block entity)
 end
 ~~~
 
 ~~~ eve
 search
-  variable = [#eve/compiler/variable]
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/gen-id entity attribute]
   block = [#eve/compiler/block constraint:
-    [#eve/compiler/output not(#eve/compiler/non-identity) entity: variable attribute value]
-    [#eve/compiler/gen-id entity: variable]]
+    [#eve/compiler/output entity attribute value]]
 
 watch eve/compiler
-  ("identity-attribute" block variable attribute value)
+  ("identity" constraint attribute value)
 end
 ~~~
+
 
 
 ~~~ eve
