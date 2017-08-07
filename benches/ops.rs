@@ -23,12 +23,12 @@ pub fn round_holder_compute_output_rounds_bench(b:&mut Bencher) {
 fn test_solver(b: &mut Bencher, code: &str, setup:&str) {
     let mut program = Program::new();
 
-    let to_test = parse_string(&mut program, code, "test").pop().unwrap();
+    let to_test = parse_string(&mut program.state.interner, code, "test").pop().unwrap();
     let solver = Solver::new(0, 0, None, &to_test.constraints);
     program.block_info.blocks.push(to_test);
 
     let mut blocks = vec![];
-    blocks.extend(parse_string(&mut program, setup, "test"));
+    blocks.extend(parse_string(&mut program.state.interner, setup, "test"));
 
     let mut txn = CodeTransaction::new();
     txn.exec(&mut program, blocks, vec![]);

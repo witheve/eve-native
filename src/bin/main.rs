@@ -1,8 +1,6 @@
 extern {}
 
 extern crate eve;
-extern crate tokio_timer;
-extern crate futures;
 extern crate time;
 
 extern crate clap;
@@ -34,7 +32,7 @@ fn main() {
                           .arg(Arg::with_name("clean")
                                .short("C")
                                .long("Clean")
-                               .help("Starts Eve with a clean database and no watchers (false)"))   
+                               .help("Starts Eve with a clean database and no watchers (false)"))
                           .get_matches();
 
     let files = match matches.values_of("EVE_FILES") {

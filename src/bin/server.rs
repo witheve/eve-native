@@ -1,6 +1,4 @@
 extern {}
-extern crate tokio_timer;
-extern crate futures;
 
 extern crate clap;
 use clap::{Arg, App};
