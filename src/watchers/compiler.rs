@@ -4,7 +4,7 @@ use indexes::{WatchDiff};
 use std::sync::mpsc::{Sender};
 use super::Watcher;
 use compiler::{Compilation, compilation_to_blocks};
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::{Entry};
 
 pub enum ConstraintParams {
@@ -12,7 +12,7 @@ pub enum ConstraintParams {
     Output(Interned, Interned, Interned),
     Function(Interned, Interned, HashMap<String, Interned>),
     Variadic(Interned, Interned, Vec<Interned>),
-    GenId(Interned, BTreeMap<Interned, Interned>)
+    GenId(Interned, HashMap<Interned, Interned>)
 }
 
 //-------------------------------------------------------------------------
@@ -99,9 +99,12 @@ impl CompilerWatcher {
         Some(args.iter().map(|&arg| self.get_field(arg)).collect())
     }
 
-    pub fn identity_to_vec(&self, args:&BTreeMap<Interned, Interned>) -> Option<Vec<Field>> {
+    pub fn identity_to_vec(&self, args:&HashMap<Interned, Interned>) -> Option<Vec<Field>> {
         // @FIXME: needs attr to soon.
-        Some(args.iter().map(|(&attr, &val)| self.get_field(val)).collect())
+        let mut keys:Vec<Interned> = vec![];
+        keys.extend(args.keys());
+        keys.sort();
+        Some(keys.iter().map(|attr| self.get_field(*args.get(attr).unwrap())).collect())
     }
 }
 
@@ -209,7 +212,7 @@ impl Watcher for CompilerWatcher {
                     },
                     ("gen-id", &[id, block, variable]) => {
                         self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
-                        self.constraint_to_params.insert(id, ConstraintParams::GenId(variable, BTreeMap::new()));
+                        self.constraint_to_params.insert(id, ConstraintParams::GenId(variable, HashMap::new()));
                     },
 
                     _ => println!("Found other add '{}' {:?}", kind, add)
@@ -294,7 +297,6 @@ impl Watcher for CompilerWatcher {
                             },
                             &ConstraintParams::GenId(var, ref identity_attrs) => {
                                 if let Some(params) = self.identity_to_vec(identity_attrs) {
-                                    println!("GEN ID VAR: {:?} ARGS {:?}", self.get_field(var), params);
                                     let function = make_function("gen_id", params, self.get_field(var));
                                     self.constraints.insert(*id, function);
                                 }
