@@ -32,9 +32,16 @@ macro_rules! get_provided (
     });
 );
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum FunctionKind {
+    Multi,
+    Scalar,
+    Sum,
+    Sort,
+}
+
 struct FunctionInfo {
-    is_multi: bool,
-    is_aggregate: bool,
+    kind: FunctionKind,
     params: Vec<String>,
     outputs: Vec<String>,
 }
@@ -48,18 +55,18 @@ enum ParamType {
 impl FunctionInfo {
     pub fn new(raw_params:Vec<&str>) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:false, is_aggregate:false, params, outputs: vec![] }
+        FunctionInfo { kind: FunctionKind::Scalar, params, outputs: vec![] }
     }
 
     pub fn multi(raw_params:Vec<&str>, raw_outputs:Vec<&str>) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
         let outputs = raw_outputs.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:true, is_aggregate:false, params, outputs }
+        FunctionInfo { kind: FunctionKind::Multi, params, outputs }
     }
 
-    pub fn aggregate(raw_params:Vec<&str>) -> FunctionInfo {
+    pub fn aggregate(raw_params:Vec<&str>, kind: FunctionKind) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:false, is_aggregate:true, params, outputs: vec![] }
+        FunctionInfo { kind, params, outputs: vec![] }
     }
 
 
@@ -97,9 +104,9 @@ lazy_static! {
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("eve-internal/string/split-reverse".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));
-        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"]));
-        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"]));
-        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![]));
+        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
+        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
+        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], FunctionKind::Sum));
         m
     };
 }
@@ -664,9 +671,9 @@ impl<'a> Node<'a> {
                             ParamType::Param(ix) => { cur_params[ix] = v; }
                             ParamType::Output(ix) => { cur_outputs[ix] = v; }
                             ParamType::Invalid => {
-                                match (info.is_aggregate, a) {
-                                    (true, "per") => { group.push(v) }
-                                    (true, "for") => { projection.push(v) }
+                                match (info.kind, a) {
+                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") => { group.push(v) }
+                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") => { projection.push(v) }
                                     _ => {
                                         cur_block.error(span, error::Error::UnknownFunctionParam(op.to_string(), a.to_string()));
                                     }
@@ -721,15 +728,19 @@ impl<'a> Node<'a> {
                     }
                 }
                 let final_result = Some(cur_outputs[0].clone());
-                if info.is_multi {
-                    cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
-                } else if info.is_aggregate {
-                    let mut sub_block = Compilation::new_child(cur_block);
-                    let unified_output = cur_block.get_unified(&cur_outputs[0]);
-                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output));
-                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output));
-                } else {
-                    cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
+                match info.kind {
+                    FunctionKind::Multi => {
+                        cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
+                    },
+                    FunctionKind::Sort | FunctionKind::Sum => {
+                        let mut sub_block = Compilation::new_child(cur_block);
+                        let unified_output = cur_block.get_unified(&cur_outputs[0]);
+                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output, info.kind));
+                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output));
+                    },
+                    FunctionKind::Scalar => {
+                        cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
+                    }
                 }
                 final_result
             },

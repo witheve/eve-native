@@ -12,7 +12,8 @@ use std::hash::{BuildHasherDefault};
 use std::collections::hash_map::{Entry};
 use std::collections::btree_map;
 use std::iter::{Iterator, self};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, BTreeSet};
+use compiler::{FunctionKind};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -643,13 +644,23 @@ pub enum AggregateEntry {
     Empty,
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
+    Sorted { items: BTreeSet<Vec<Interned>>, bound: Interned, count: usize, limit: usize },
 }
 
 impl AggregateEntry {
-    pub fn get_result(&self) -> f32 {
+    pub fn get_result(&self, interner:&mut Interner) -> Vec<Interned> {
         match self {
-            &AggregateEntry::Result(res) => res,
-            &AggregateEntry::Counted { result, .. } => result,
+            &AggregateEntry::Result(res) => vec![interner.number_id(res)],
+            &AggregateEntry::Counted { result, .. } => vec![interner.number_id(result)],
+            &AggregateEntry::Sorted { bound, count, limit, .. } => {
+                if count < limit {
+                    // We won't end up needing to remove anything since we haven't reached our
+                    // limit yet
+                    vec![0]
+                } else {
+                    vec![bound]
+                }
+            },
             &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
         }
     }
@@ -733,22 +744,21 @@ pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, Intermed
 
 type AggregateChange = (Vec<Interned>, Vec<Interned>, Vec<Interned>, Round, Count, bool);
 
-pub fn make_aggregate_change(interner:&mut Interner, out:&Vec<Interned>, value:f32, round:Round, count:Count) -> AggregateChange {
+pub fn make_aggregate_change(out:&Vec<Interned>, value:Vec<Interned>, round:Round, count:Count) -> AggregateChange {
     let mut to_change = out.clone();
-    let value_interned = interner.number_id(value);
-    to_change.push(value_interned);
-    (to_change, out.clone(), vec![value_interned], round, count, false)
+    to_change.extend(value.iter());
+    (to_change, out.clone(), value, round, count, false)
 }
 
 pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, value:&Vec<Internable>, round:Round) {
-    let prev = cur_aggregate.get_result();
+    let prev = cur_aggregate.get_result(interner);
     action(cur_aggregate, value.clone());
-    let neue = cur_aggregate.get_result();
+    let neue = cur_aggregate.get_result(interner);
     if neue != prev {
         // add a remove for the previous value
-        changes.push(make_aggregate_change(interner, &out, prev, round, -1));
+        changes.push(make_aggregate_change(&out, prev, round, -1));
         // add an add for the new value
-        changes.push(make_aggregate_change(interner, &out, neue, round, 1));
+        changes.push(make_aggregate_change(&out, neue, round, 1));
     }
 }
 
@@ -798,26 +808,30 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, value:Vec<Internable>, round:Round, action:AggregateFunction, out:Vec<Interned>) {
+    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, value:Vec<Internable>, round:Round, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
         let mut changes = vec![];
         {
             let cur = self.index.entry(group).or_insert_with(|| IntermediateLevel::SumAggregate(BTreeMap::new()));
             if let &mut IntermediateLevel::SumAggregate(ref mut rounds) = cur {
-                match rounds.entry(round) {
-                    btree_map::Entry::Occupied(mut ent) => {
-                        let cur_aggregate = ent.get_mut();
-                        update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &value, round);
+                if kind == FunctionKind::Sum {
+                    match rounds.entry(round) {
+                        btree_map::Entry::Occupied(mut ent) => {
+                            let cur_aggregate = ent.get_mut();
+                            update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &value, round);
+                        }
+                        btree_map::Entry::Vacant(ent) => {
+                            let mut cur_aggregate = AggregateEntry::Empty;
+                            action(&mut cur_aggregate, value.clone());
+                            // add an add for the new value
+                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), round, 1));
+                            ent.insert(cur_aggregate);
+                        }
                     }
-                    btree_map::Entry::Vacant(ent) => {
-                        let mut cur_aggregate = AggregateEntry::Empty;
-                        action(&mut cur_aggregate, value.clone());
-                        // add an add for the new value
-                        changes.push(make_aggregate_change(interner, &out, cur_aggregate.get_result(), round, 1));
-                        ent.insert(cur_aggregate);
+                    for (k, v) in rounds.range_mut(round+1..) {
+                        update_aggregate(interner, &mut changes, &out, action, v, &value, *k);
                     }
-                }
-                for (k, v) in rounds.range_mut(round+1..) {
-                    update_aggregate(interner, &mut changes, &out, action, v, &value, *k);
+                } else {
+                    unimplemented!();
                 }
             }
         }

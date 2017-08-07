@@ -1,4 +1,5 @@
 use ops::*;
+use compiler::{FunctionKind};
 use indexes::{WatchIndex};
 use std::collections::{HashSet};
 use std::usize;
@@ -44,7 +45,7 @@ pub struct Solver {
     project_fields: Vec<usize>,
     intermediates: Vec<(Vec<Field>, Vec<Field>, bool)>,
     intermediate_accepts: Vec<(usize, Interned)>,
-    aggregates: Vec<(Vec<Field>, Vec<Field>, Vec<Field>, AggregateFunction, AggregateFunction)>,
+    aggregates: Vec<(Vec<Field>, Vec<Field>, Vec<Field>, AggregateFunction, AggregateFunction, FunctionKind)>,
 }
 
 impl PartialEq for Solver {
@@ -70,7 +71,7 @@ impl Clone for Solver {
             outputs: self.outputs.iter().map(|x| *x).collect(),
             watch_registers: self.watch_registers.clone(),
             project_fields: self.project_fields.clone(),
-            aggregates: self.aggregates.iter().map(|&(ref a, ref b, ref c, d,e)| (a.clone(), b.clone(), c.clone(), d, e)).collect(),
+            aggregates: self.aggregates.iter().map(|&(ref a, ref b, ref c, d,e,f)| (a.clone(), b.clone(), c.clone(), d, e, f)).collect(),
             finished_mask: self.finished_mask,
         }
     }
@@ -148,8 +149,8 @@ impl Solver {
                 &Constraint::MultiFunction {..} => {
                     get_iters.push(make_multi_get_iterator(constraint, ix));
                 }
-                &Constraint::Aggregate {ref output_key, ref group, ref params, add, remove, ..} => {
-                    aggregates.push((group.clone(), params.clone(), output_key.clone(), add, remove));
+                &Constraint::Aggregate {ref output_key, ref group, ref params, add, remove, kind, ..} => {
+                    aggregates.push((group.clone(), params.clone(), output_key.clone(), add, remove, kind));
                     output_funcs.insert(OutputFuncs::Aggregate);
                 }
                 &Constraint::Filter {..} => {
@@ -672,14 +673,14 @@ pub fn do_intermediate_insert(me: &Solver, state: &mut RuntimeState, frame: &mut
 }
 
 pub fn do_aggregate(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
-    for &(ref group, ref params, ref output_key, add, remove) in me.aggregates.iter() {
+    for &(ref group, ref params, ref output_key, add, remove, kind) in me.aggregates.iter() {
         let resolved_group:Vec<Interned> = group.iter().map(|v| frame.resolve(v)).collect();
         let resolved_params:Vec<Internable> = { params.iter().map(|v| state.interner.get_value(frame.resolve(v)).clone()).collect() };
         let resolved_output:Vec<Interned> = output_key.iter().map(|v| frame.resolve(v)).collect();
         for &(round, count) in state.output_rounds.get_output_rounds().iter() {
             let action = if count < 0 { remove } else { add };
             frame.counters.inserts += 1;
-            state.intermediates.aggregate(&mut state.interner, resolved_group.clone(), resolved_params.clone(), round, action, resolved_output.clone());
+            state.intermediates.aggregate(&mut state.interner, resolved_group.clone(), resolved_params.clone(), round, action, resolved_output.clone(), kind);
         }
     }
 }
