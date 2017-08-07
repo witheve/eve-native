@@ -4,7 +4,7 @@ extern crate term_painter;
 
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan,
+use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
           make_multi_function, make_aggregate, Block};
 use std::io::prelude::*;
@@ -1507,10 +1507,10 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     // for c in comp.constraints.iter() {
     //     println!("{:?}", c);
     // }
-    compilation_to_blocks(comp, name, content)
+    compilation_to_blocks(comp, interner, name, content)
 }
 
-pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> Vec<Block> {
+pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path:&str, source: &str) -> Vec<Block> {
     let mut compilation_blocks = vec![];
     if comp.errors.len() > 0 {
         report_errors(&comp.errors, path, source);
@@ -1531,22 +1531,21 @@ pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> V
             // for c in sub_comp.constraints.iter() {
             //     println!("            {:?}", c);
             // }
-            compilation_blocks.push(Block::new(&sub_name, sub_comp.constraints.clone()));
+            compilation_blocks.push(Block::new(&sub_name, interner.string_id(&sub_name), sub_comp.constraints.clone()));
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
     // println!("");
-    compilation_blocks.push(Block::new(&block_name, comp.constraints));
+    compilation_blocks.push(Block::new(&block_name, interner.string_id(&block_name), comp.constraints));
     compilation_blocks
 }
 
-pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block> {
+pub fn parse_string(interner:&mut Interner, content:&str, path:&str) -> Vec<Block> {
     let mut state = ParseState::new(content);
     let res = embedded_blocks(&mut state, path);
     if let ParseResult::Ok(mut cur) = res {
         if let Node::Doc { ref mut blocks, .. } = cur {
-            let interner = &mut program.state.interner;
             let mut program_blocks = vec![];
             let mut ix = 0;
             for block in blocks {
@@ -1565,7 +1564,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 // for c in comp.constraints.iter() {
                 //     println!("   {:?}", c);
                 // }
-                program_blocks.extend(compilation_to_blocks(comp, &block_name[..], content));
+                program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content));
             }
             program_blocks
         } else {
@@ -1576,7 +1575,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
     }
 }
 
-pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
+pub fn parse_file(interner:&mut Interner, path:&str, report: bool) -> Vec<Block> {
     let metadata = fs::metadata(path).expect(&format!("Invalid path: {:?}", path));
     let mut paths = vec![];
     if metadata.is_file() {
@@ -1596,11 +1595,13 @@ pub fn parse_file(program:&mut Program, path:&str) -> Vec<Block> {
     }
     let mut blocks = vec![];
     for cur_path in paths {
-        println!("{} {}", BrightCyan.paint("Compiling:"), cur_path.replace("\\","/"));
+        if report {
+            println!("{} {}", BrightCyan.paint("Compiling:"), cur_path.replace("\\","/"));
+        }
         let mut file = File::open(&cur_path).expect("Unable to open the file");
         let mut contents = String::new();
         file.read_to_string(&mut contents).expect("Unable to read the file");
-        blocks.extend(parse_string(program, &contents, &cur_path).into_iter());
+        blocks.extend(parse_string(interner, &contents, &cur_path).into_iter());
     }
     blocks
 }

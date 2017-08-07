@@ -1,6 +1,8 @@
 #![feature(slice_patterns)]
 #![feature(box_patterns)]
 #![feature(vec_remove_item)]
+#![feature(conservative_impl_trait)]
+
 
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 extern {}
@@ -12,9 +14,6 @@ extern crate serde;
 
 #[macro_use]
 extern crate serde_derive;
-
-extern crate tokio_timer;
-extern crate futures;
 
 extern crate rand;
 
@@ -29,6 +28,7 @@ pub mod indexes;
 pub mod compiler;
 pub mod parser;
 pub mod error;
+pub mod solver;
 
 pub mod numerics;
 

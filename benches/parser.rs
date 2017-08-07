@@ -4,14 +4,14 @@ extern crate test;
 extern crate eve;
 
 use eve::compiler::*;
-use eve::ops::{Program, Transaction, CodeTransaction};
+use eve::ops::{Program};
 use test::Bencher;
 
 #[bench]
 pub fn parse_clock(b:&mut Bencher) {
     b.iter(|| {
         let mut program = Program::new();
-        let blocks = parse_file(&mut program, "/users/ibdknox/scratch/eve-starter/programs/test.eve");
+        let blocks = parse_file(&mut program.state.interner, "/users/ibdknox/scratch/eve-starter/programs/test.eve", false);
     });
 }
 
