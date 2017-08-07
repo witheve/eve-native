@@ -1,15 +1,3 @@
 commit
-  [#file/read #sudoku path: "person.json"]
-end
-
-search
-  [#sudoku contents]
-commit
-  [#json/decode json: contents]
-end
-
-search
-  [#json/decode json-object]
-commit
-  [#console/log text: json-object.Time.Total]
+  [#http/send address: "http://jsonplaceholder.typicode.com/posts/1/comments"]
 end
