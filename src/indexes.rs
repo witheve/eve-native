@@ -731,6 +731,27 @@ pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, Intermed
     }
 }
 
+type AggregateChange = (Vec<Interned>, Vec<Interned>, Vec<Interned>, Round, Count, bool);
+
+pub fn make_aggregate_change(interner:&mut Interner, out:&Vec<Interned>, value:f32, round:Round, count:Count) -> AggregateChange {
+    let mut to_change = out.clone();
+    let value_interned = interner.number_id(value);
+    to_change.push(value_interned);
+    (to_change, out.clone(), vec![value_interned], round, count, false)
+}
+
+pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, value:&Vec<Internable>, round:Round) {
+    let prev = cur_aggregate.get_result();
+    action(cur_aggregate, value.clone());
+    let neue = cur_aggregate.get_result();
+    if neue != prev {
+        // add a remove for the previous value
+        changes.push(make_aggregate_change(interner, &out, prev, round, -1));
+        // add an add for the new value
+        changes.push(make_aggregate_change(interner, &out, neue, round, 1));
+    }
+}
+
 impl IntermediateIndex {
 
     pub fn new() -> IntermediateIndex {
@@ -785,49 +806,18 @@ impl IntermediateIndex {
                 match rounds.entry(round) {
                     btree_map::Entry::Occupied(mut ent) => {
                         let cur_aggregate = ent.get_mut();
-                        let prev = cur_aggregate.get_result();
-                        action(cur_aggregate, value.clone());
-                        let neue = cur_aggregate.get_result();
-                        if neue != prev {
-                            // add a remove for the previous value
-                            let mut to_remove = out.clone();
-                            let prev_interned = interner.number_id(prev);
-                            to_remove.push(prev_interned);
-                            changes.push((to_remove, out.clone(), vec![prev_interned], round, -1, false));
-                            // add an add for the new value
-                            let mut to_add = out.clone();
-                            let cur_interned = interner.number_id(neue);
-                            to_add.push(cur_interned);
-                            changes.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
-                        }
+                        update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &value, round);
                     }
                     btree_map::Entry::Vacant(ent) => {
                         let mut cur_aggregate = AggregateEntry::Empty;
                         action(&mut cur_aggregate, value.clone());
                         // add an add for the new value
-                        let mut to_add = out.clone();
-                        let cur_interned = interner.number_id(cur_aggregate.get_result());
-                        to_add.push(cur_interned);
-                        changes.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
+                        changes.push(make_aggregate_change(interner, &out, cur_aggregate.get_result(), round, 1));
                         ent.insert(cur_aggregate);
                     }
                 }
                 for (k, v) in rounds.range_mut(round+1..) {
-                    let prev = v.get_result();
-                    action(v, value.clone());
-                    let neue = v.get_result();
-                    if neue != prev {
-                        // add a remove for the previous value
-                        let mut to_remove = out.clone();
-                        let prev_interned = interner.number_id(prev);
-                        to_remove.push(prev_interned);
-                        changes.push((to_remove, out.clone(), vec![prev_interned], *k, -1, false));
-                        // add an add for the new value
-                        let mut to_add = out.clone();
-                        let cur_interned = interner.number_id(neue);
-                        to_add.push(cur_interned);
-                        changes.push((to_add, out.clone(), vec![cur_interned], *k, 1, false));
-                    }
+                    update_aggregate(interner, &mut changes, &out, action, v, &value, *k);
                 }
             }
         }
