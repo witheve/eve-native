@@ -159,8 +159,10 @@ export class HTML extends Library {
     let current;
     for(let curIx = 0; curIx < parent.childNodes.length; curIx++) {
       let cur = parent.childNodes[curIx] as Instance;
+      let curSort = cur.__sort;
+      if(curSort === undefined) curSort = cur.__autoSort;
       if(cur === child) continue;
-      if(cur.__sort === undefined || naturalComparator(""+cur.__sort, ""+at) > 0) {
+      if(curSort === undefined || naturalComparator(""+curSort, ""+at) > 0) {
         current = cur;
         break;
       }
@@ -177,7 +179,7 @@ export class HTML extends Library {
 
   protected insertAutoSortedChild(parent:Element|null, child:Instance, autoSort?:RawValue) {
     child.__autoSort = autoSort;
-    if(!child.__sort) this.insertChild(parent, child, autoSort);
+    if(child.__sort === undefined) this.insertChild(parent, child, autoSort);
   }
 
     protected addStyle(id:RawValue, attribute:RawValue, value:RawValue) {
@@ -272,7 +274,7 @@ export class HTML extends Library {
           if(!parent) msg = "could not find parent";
           throw new Error(`Unable to reparent instance '${instanceId}' to '${parentId}', ${msg}.`);
         }
-        this.insertChild(parent, instance, instance.__sort || instance.__autoSort);
+        this.insertChild(parent, instance, (instance.__sort !== undefined) ? instance.__sort : instance.__autoSort);
       }
     }),
     "export styles": handleTuples(({adds, removes}) => {
@@ -293,19 +295,23 @@ export class HTML extends Library {
     "export attributes": handleTuples(({adds, removes}) => {
       for(let [e, a, v] of removes || EMPTY) {
         let instance = this._instances[e];
+
         if(!instance || a === "tagname" || a === "children" || a === "tag" || a === "ns" || a === "sort" || a === "eve-auto-index") continue;
         else if(a === "text") instance.textContent = null
         else if(a === "style") instance.classList.remove(this.styleToClass(v));
         else if(a === "class") instance.classList.remove(""+v);
+        // else if(a === "value") (instance as any).value = ""; // @FIXME: This would be flicker-y if we then add something. :(
         else instance.removeAttribute(""+a);
       }
       for(let [e, a, v] of adds || EMPTY) {
         let instance = this._instances[e];
-        if(!instance) throw new Error(`Unable to add attribute to nonexistent instance '${e}'`);
+        if(!instance) throw new Error(`Unable to add attribute to nonexistent instance '${e}' '${a}' '${v}'`);
+
         if(a === "tagname" || a === "children" || a === "tag" || a === "ns") continue;
         else if(a === "text") instance.textContent = ""+v;
         else if(a === "style") instance.classList.add(this.styleToClass(v));
         else if(a === "class") instance.classList.add(""+v);
+        else if(a === "value") (instance as any).value = ""+v;
         else if(a === "sort") this.insertSortedChild(instance.parentElement, instance, v);
         else if(a === "eve-auto-index") this.insertAutoSortedChild(instance.parentElement, instance, v);
         else instance.setAttribute(""+a, ""+v);
@@ -343,7 +349,7 @@ export class HTML extends Library {
     _mouseEventHandler(tagname:string) {
     return (event:MouseEvent) => {
       let {target} = event;
-      if(!this.isInstance(target)) return;
+      // if(!this.isInstance(target)) return;
 
       let eventId = createId();
       let eavs:RawEAV[] = [
@@ -352,9 +358,7 @@ export class HTML extends Library {
         [eventId, "page-x", event.pageX],
         [eventId, "page-y", event.pageY],
         [eventId, "window-x", event.clientX],
-        [eventId, "window-y", event.clientY],
-
-        [eventId, "target", target.__element!]
+        [eventId, "window-y", event.clientY]
       ];
       let button = event.button;
 
@@ -363,16 +367,22 @@ export class HTML extends Library {
       else if(button === 1) eavs.push([eventId, "button", "middle"]);
       else if(button) eavs.push([eventId, "button", button]);
 
-      let current:Element|null = target;
-      let elemIds = [];
       let capturesContextMenu = false;
-      while(current && this.isInstance(current)) {
-        eavs.push([eventId, "element", current.__element!]);
-        if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
-          capturesContextMenu = true;
+      if(this.isInstance(target)) {
+        eavs.push([eventId, "target", target.__element]);
+
+        let current:Element|null = target;
+        while(current && current != this._container) {
+          if(this.isInstance(current)) {
+            eavs.push([eventId, "element", current.__element]);
+            if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
+              capturesContextMenu = true;
+            }
+          }
+          current = current.parentElement;
         }
-        current = current.parentElement;
       }
+
       // @NOTE: You'll get a mousedown but no mouseup for a right click if you don't capture the context menu,
       //   so we throw out the mousedown entirely in that case. :(
       if(button === 2 && !capturesContextMenu) return;
@@ -433,7 +443,7 @@ export class HTML extends Library {
   _keyEventHandler(tagname:string) {
     return (event:KeyboardEvent) => {
       if(event.repeat) return;
-      let current:Element|null = event.target as Element;
+      let target:Element|null = event.target as Element;
 
       let code = event.keyCode;
       let key = this._keyMap[code];
@@ -446,12 +456,18 @@ export class HTML extends Library {
       ];
       if(key) eavs.push([eventId, "key", key]);
 
-      while(current && this.isInstance(current)) {
-        let elemId = current.__element!;
-        eavs.push([eventId, "element", elemId]);
-        current = current.parentElement;
-      };
-      if(eavs.length)this._sendEvent(eavs);
+      if(this.isInstance(target)) {
+        eavs.push([eventId, "target", target.__element]);
+        let current:Element|Instance|null = target;
+        while(current && current != this._container) {
+          if(this.isInstance(current)) {
+            eavs.push([eventId, "element", current.__element]);
+          }
+          current = current.parentElement;
+        };
+      }
+
+      if(eavs.length) this._sendEvent(eavs);
     };
   }
 

@@ -5,6 +5,27 @@ use eve::ops::{Program, CodeTransaction};
 use eve::compiler::{parse_string};
 
 //--------------------------------------------------------------------
+// math
+//--------------------------------------------------------------------
+
+test!(stdlib_math_range, {
+    search
+        value = math!/range![from:1 to:3]
+    bind
+        [#thing value]
+    end
+
+    search
+        [#thing value:1]
+        [#thing value:2]
+        [#thing value:3]
+        not([#thing value:4])
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
 // string
 //--------------------------------------------------------------------
 

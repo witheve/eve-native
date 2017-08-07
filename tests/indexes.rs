@@ -1,15 +1,15 @@
 extern crate eve;
 use eve::indexes::*;
-use eve::ops::{EstimateIterPool, RoundHolder, Change};
+use eve::ops::{EstimateIter, RoundHolder, Change};
 use std::collections::HashMap;
 
 #[test]
 fn index_insert_check() {
     let mut index = HashIndex::new();
-    index.insert(1,1,1,0);
-    index.insert(1,2,1,0);
-    index.insert(2,3,1,0);
-    index.insert(1,3,100,0);
+    index.insert(1,1,1);
+    index.insert(1,2,1);
+    index.insert(2,3,1);
+    index.insert(1,3,100);
     assert!(index.check(1,1,1));
     assert!(index.check(1,2,1));
     assert!(index.check(2,3,1));
@@ -20,8 +20,8 @@ fn index_insert_check() {
 #[test]
 fn index_insert_check2() {
     let mut index = HashIndex::new();
-    index.insert(5,3,8,0);
-    index.insert(9,3,8,0);
+    index.insert(5,3,8);
+    index.insert(9,3,8);
     assert!(index.check(5,3,8));
     assert!(index.check(9,3,8));
     assert!(!index.check(100,300,100));
@@ -57,14 +57,14 @@ fn index_level_remove() {
 #[test]
 fn index_remove() {
     let mut index = HashIndex::new();
-    index.insert(1,1,1,0);
-    index.insert(2,1,1,0);
+    index.insert(1,1,1);
+    index.insert(2,1,1);
     assert!(index.check(1,1,1));
     assert!(index.check(2,1,1));
     assert!(!index.check(3,3,3));
-    index.remove(1,1,1,0);
+    index.remove(1,1,1);
     assert!(!index.check(1,1,1));
-    index.remove(2,1,1,0);
+    index.remove(2,1,1);
     assert!(!index.check(2,1,1));
 }
 
@@ -91,19 +91,18 @@ fn index_find_values() {
 #[test]
 fn index_propose() {
     let mut index = HashIndex::new();
-    let mut pool = EstimateIterPool::new();
-    index.insert(1,1,1,0);
-    index.insert(2,1,1,0);
-    index.insert(2,1,7,0);
-    index.insert(3,1,1,0);
-    index.insert(2,3,1,0);
-    index.insert(1,3,100,0);
-    let mut proposal1 = pool.get();
+    index.insert(1,1,1);
+    index.insert(2,1,1);
+    index.insert(2,1,7);
+    index.insert(3,1,1);
+    index.insert(2,3,1);
+    index.insert(1,3,100);
+    let mut proposal1 = EstimateIter::new();
     index.propose(&mut proposal1, 0,1,1);
-    assert_eq!(proposal1.estimate(), 3);
-    let mut proposal2 = pool.get();
+    assert_eq!(proposal1.estimate, 3);
+    let mut proposal2 = EstimateIter::new();
     index.propose(&mut proposal2, 2,1,0);
-    assert_eq!(proposal2.estimate(), 2);
+    assert_eq!(proposal2.estimate, 2);
 }
 
 
@@ -122,12 +121,13 @@ fn round_counts_to_changes(counts: Vec<(u32, i32)>) -> Vec<Change> {
 
 fn test_distinct(counts: Vec<(u32, i32)>, expected: Vec<(u32, i32)>) {
     let mut index = HashIndex::new();
+    let mut distinct_index = DistinctIndex::new();
     let changes = round_counts_to_changes(counts);
 
     let mut final_results: HashMap<u32, i32> = HashMap::new();
     let mut distinct_changes = RoundHolder::new();
     for change in changes.iter() {
-        index.distinct(change, &mut distinct_changes);
+        distinct_index.distinct(change, &mut distinct_changes);
     }
     let mut iter = distinct_changes.iter();
     while let Some(distinct) = iter.next(&mut distinct_changes) {
@@ -135,13 +135,17 @@ fn test_distinct(counts: Vec<(u32, i32)>, expected: Vec<(u32, i32)>) {
         let cur = if final_results.contains_key(&distinct.round) { final_results[&distinct.round] } else { 0 };
         final_results.insert(distinct.round, cur + distinct.count);
         if distinct.count > 0 {
-            index.insert(distinct.e, distinct.a, distinct.v, distinct.round);
+            if distinct_index.insert_active(distinct.e, distinct.a, distinct.v, distinct.round) {
+                index.insert(distinct.e, distinct.a, distinct.v);
+            }
         } else {
-            index.remove(distinct.e, distinct.a, distinct.v, distinct.round);
+            if distinct_index.remove_active(distinct.e, distinct.a, distinct.v, distinct.round) {
+                index.remove(distinct.e, distinct.a, distinct.v);
+            }
         }
     }
 
-    for (round, count) in index.distinct_iter(changes[0].e, changes[0].a, changes[0].v) {
+    for (round, count) in distinct_index.iter(changes[0].e, changes[0].a, changes[0].v) {
         let valid = match final_results.get(&round) {
             Some(&actual) => actual == count,
             None => count == 0,

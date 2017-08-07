@@ -1,16 +1,6 @@
-#![feature(link_args)]
-#![feature(dropck_eyepatch)]
-#![feature(generic_param_attrs)]
-#![feature(sip_hash_13)]
-#![feature(core_intrinsics)]
-#![feature(shared)]
-#![feature(unique)]
-#![feature(placement_new_protocol)]
-#![feature(fused)]
-#![feature(alloc)]
 #![feature(slice_patterns)]
-#![feature(allocator_api)]
 #![feature(box_patterns)]
+#![feature(vec_remove_item)]
 
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 extern {}
@@ -36,7 +26,6 @@ pub mod ops;
 pub mod combinators;
 
 pub mod indexes;
-pub mod hash;
 pub mod compiler;
 pub mod parser;
 pub mod error;

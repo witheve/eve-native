@@ -98,8 +98,21 @@ search
 
 commit
   element.value := value
+  [#html/client-value element value]
 end
 ~~~
+
+Clear old `#html/client-value`s.
+~~~ eve
+search
+  prev = [#html/client-value element value]
+  element.value != value
+
+commit
+  prev := none
+end
+~~~
+
 
 ## Exports
 
@@ -148,9 +161,22 @@ search
   instance = [#html/instance element]
   lookup[entity: element attribute value]
   attribute != "tag"
+  attribute != "value"
 
 watch client/websocket
   ("html/export attributes" instance attribute value)
+end
+~~~
+
+Export values not from client.
+~~~ eve
+search
+  instance = [#html/instance element]
+  element = [#html/element value]
+  not([#html/client-value element value])
+
+watch client/websocket
+  ("html/export attributes" instance "value" value)
 end
 ~~~
 
