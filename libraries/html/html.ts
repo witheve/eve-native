@@ -255,6 +255,7 @@ export class HTML extends Library {
     }),
     "export roots": handleTuples(({adds}) => {
       for(let [instanceId] of adds || EMPTY) {
+        if(!this._instances[instanceId]) throw new Error(`Instance '${instanceId}' cannot be promoted to root: no longer exists.`);
         this.insertRoot(this._instances[instanceId]);
       }
     }),
