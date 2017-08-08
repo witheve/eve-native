@@ -125,6 +125,7 @@ export class HTML extends Library {
   }
 
   protected addInstance(id:RawValue, elemId:RawValue, tagname:RawValue, ns?:RawValue) {
+    if(id === null || id === "null") throw new Error(`Cannot create instance with null id for element '${elemId}'.`);
     let instance = this._instances[id];
     if(instance) throw new Error(`Recreating existing instance '${id}'`);
     if(ns) instance = this.decorate(document.createElementNS(""+ns, ""+tagname), elemId);

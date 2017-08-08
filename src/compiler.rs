@@ -40,13 +40,13 @@ pub enum FunctionKind {
     Sort,
 }
 
-struct FunctionInfo {
+pub struct FunctionInfo {
     kind: FunctionKind,
     params: Vec<String>,
     outputs: Vec<String>,
 }
 
-enum ParamType {
+pub enum ParamType {
     Param(usize),
     Output(usize),
     Invalid,
@@ -78,6 +78,10 @@ impl FunctionInfo {
         } else {
             ParamType::Invalid
         }
+    }
+
+    pub fn get_params(&self) -> &Vec<String> {
+        &self.params
     }
 }
 
@@ -111,6 +115,9 @@ lazy_static! {
     };
 }
 
+pub fn get_function_info(op:&str) -> Option<&FunctionInfo> {
+    return FUNCTION_INFO.get(op);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputType {
