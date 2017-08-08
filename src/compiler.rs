@@ -94,6 +94,9 @@ lazy_static! {
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/absolute".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/mod".to_string(), FunctionInfo::new(vec!["value", "by"]));
+        m.insert("math/pow".to_string(), FunctionInfo::new(vec!["value", "exponent"]));
+        m.insert("math/to-fixed".to_string(), FunctionInfo::new(vec!["value", "to"]));
+        m.insert("math/to-hex".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/ceiling".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/floor".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/round".to_string(), FunctionInfo::new(vec!["value"]));
@@ -753,7 +756,7 @@ impl<'a> Node<'a> {
                 }
                 final_result
             },
-            &Node::RecordLookup(ref attrs, ..) => {
+            &Node::RecordLookup(ref attrs, output_type) => {
                 let mut entity = None;
                 let mut attribute = None;
                 let mut value = None;
@@ -798,7 +801,7 @@ impl<'a> Node<'a> {
                         "entity" => {}
                         "attribute" => attribute = v,
                         "value" => value = v,
-                        _ => panic!("Lookup supports only entity, attribute, and value lookups.")
+                        _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
 
@@ -816,7 +819,12 @@ impl<'a> Node<'a> {
                     value = Some(reg)
                 }
 
-                cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap()));
+                match output_type {
+                    OutputType::Lookup => cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap())),
+                    OutputType::Commit => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true}),
+                    OutputType::Bind => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false})
+                }
+
                 None
             },
             &Node::Record(ref var, ref attrs) => {
@@ -956,6 +964,11 @@ impl<'a> Node<'a> {
                     (None, &Node::NoneValue) => { avs.push((Field::Value(0), Field::Value(0))) }
                     (Some(attr), &Node::NoneValue) => { avs.push((interner.string(attr), Field::Value(0))) }
                     (Some(attr), &Node::ExprSet(ref nodes)) => {
+                        for node in nodes {
+                            avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
+                        }
+                    },
+                    (Some(attr), &Node::RecordSet(ref nodes)) => {
                         for node in nodes {
                             avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
                         }
