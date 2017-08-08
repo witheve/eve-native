@@ -87,6 +87,9 @@ lazy_static! {
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/absolute".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/mod".to_string(), FunctionInfo::new(vec!["value", "by"]));
+        m.insert("math/pow".to_string(), FunctionInfo::new(vec!["value", "exponent"]));
+        m.insert("math/to-fixed".to_string(), FunctionInfo::new(vec!["value", "to"]));
+        m.insert("math/to-hex".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/ceiling".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/floor".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/round".to_string(), FunctionInfo::new(vec!["value"]));

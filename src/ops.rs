@@ -1124,6 +1124,9 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "math/cos" => math_cos,
         "math/absolute" => math_absolute,
         "math/mod" => math_mod,
+        "math/pow" => math_pow,
+        "math/to-fixed" => math_to_fixed,
+        "math/to-hex" => math_to_hex,
         "math/ceiling" => math_ceiling,
         "math/floor" => math_floor,
         "math/round" => math_round,
@@ -1276,6 +1279,38 @@ pub fn math_mod(params: Vec<&Internable>) -> Option<Internable> {
             let a = Internable::to_number(params[0]);
             let b = Internable::to_number(params[1]);
             Some(Internable::from_number(a % b))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_pow(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let value = Internable::to_number(params[0]);
+            let exp = Internable::to_number(params[1]);
+            Some(Internable::from_number(value.powf(exp)))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_to_fixed(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let value = Internable::to_number(params[0]);
+            let places = Internable::to_number(params[1]);
+            Some(Internable::String(format!("{:.*}", places as usize, value)))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_to_hex(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let value = Internable::to_number(params[0]);
+            Some(Internable::String(format!("{:x}", value as i64)))
         },
         _ => { None }
     }
