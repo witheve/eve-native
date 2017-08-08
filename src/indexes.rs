@@ -540,7 +540,9 @@ impl DistinctIndex {
                 let (should_remove_entry, remove_indexed) = {
                     let info = entry.get_mut();
                     info.update_active(round, -1);
-                    (!info.rounds.iter().any(|x| *x != 0), info.active_rounds.len() == 0)
+                    let active_cleared = info.active_rounds.len() == 0;
+                    if active_cleared { info.inserted = false; }
+                    (!info.rounds.iter().any(|x| *x != 0), active_cleared)
                 };
                 if should_remove_entry && remove_indexed {
                     entry.remove_entry();
