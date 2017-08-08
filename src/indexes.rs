@@ -648,7 +648,7 @@ pub enum AggregateEntry {
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
     SortedSum { items: BTreeSet<Vec<Interned>>, bound: Interned, count: usize, limit: usize },
-    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, rounds: Vec<Round>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
+    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
 }
 
 impl AggregateEntry {
@@ -667,7 +667,7 @@ enum IntermediateLevel {
     Value(HashMap<Vec<Interned>, RoundEntry, MyHasher>),
     KeyOnly(RoundEntry),
     SumAggregate(BTreeMap<Round, AggregateEntry>),
-    SortAggregate(AggregateEntry),
+    SortAggregate(Vec<Round>, AggregateEntry),
 }
 
 pub struct IntermediateIndex {
@@ -810,7 +810,7 @@ impl IntermediateIndex {
                 if kind == FunctionKind::Sum {
                     IntermediateLevel::SumAggregate(BTreeMap::new())
                 } else {
-                    IntermediateLevel::SortAggregate(AggregateEntry::Sorted { items: BTreeMap::new(), current_round: 0, current_params:None, rounds: vec![], changes: vec![], limit: 0 })
+                    IntermediateLevel::SortAggregate(vec![], AggregateEntry::Sorted { items: BTreeMap::new(), current_round: 0, current_params:None, changes: vec![], limit: 0 })
                 }
             });
             match cur {
@@ -832,13 +832,21 @@ impl IntermediateIndex {
                         update_aggregate(interner, &mut changes, &out, action, v, &value, *k);
                     }
                 }
-                &mut IntermediateLevel::SortAggregate(ref mut entry) => {
-                    if let &mut AggregateEntry::Sorted { ref mut current_params, ref mut current_round, .. } = entry {
+                &mut IntermediateLevel::SortAggregate(ref mut rounds, ref mut entry) => {
+                    if let &mut AggregateEntry::Sorted { ref mut current_params, .. } = entry {
                         *current_params = Some(value);
-                        *current_round = round;
                     }
-                    action(entry, &projection);
-                    if let &mut AggregateEntry::Sorted { ref mut items, ref mut rounds, changes:ref mut entry_changes, .. } = entry {
+                    let start = match rounds.binary_search(&round) {
+                        Ok(pos) =>  { pos }
+                        Err(pos) => { rounds.insert(pos, round); pos },
+                    };
+                    for round in rounds[start..].iter().cloned() {
+                        if let &mut AggregateEntry::Sorted { ref mut current_round, .. } = entry {
+                            *current_round = round;
+                        }
+                        action(entry, &projection);
+                    }
+                    if let &mut AggregateEntry::Sorted { ref mut items, changes:ref mut entry_changes, .. } = entry {
                         // Insert it into the items btree
                         match items.entry(projection) {
                             btree_map::Entry::Occupied(ref mut ent) => {
@@ -849,10 +857,6 @@ impl IntermediateIndex {
                             }
                         }
                         // and update the rounds to make sure we include this round in the future
-                        match rounds.binary_search(&round) {
-                            Ok(_) =>  { }
-                            Err(pos) => { rounds.insert(pos, round) },
-                        };
                         changes.extend(entry_changes.drain(..).map(|(mut value, round, count)| make_aggregate_change(&out, value.drain(..).map(|x| interner.internable_to_id(x)).collect(), round, count)));
                     }
 

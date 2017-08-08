@@ -1611,3 +1611,70 @@ test!(base_aggregate_top_remove, {
         [#success]
     end
 });
+
+test!(base_aggregate_top_rounds, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+    end
+
+    search
+        [#foo value]
+        value >= 3
+        value < 6
+    bind
+        [#foo value: value + 1]
+    end
+
+    search
+        [#max foo: [value: 5]]
+        [#max foo: [value: 6]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_top_rounds_removal, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+    end
+
+    search
+        [#foo value]
+        value >= 3
+        value < 6
+    bind
+        [#foo value: value + 1]
+    end
+
+    search
+        foo = [#foo value: 3]
+        [#foo value: 6]
+    commit
+        foo := none
+    end
+
+    search
+        [#max foo: [value: 1]]
+        [#max foo: [value: 2]]
+    bind
+        [#success]
+    end
+});
