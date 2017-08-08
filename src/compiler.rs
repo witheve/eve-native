@@ -785,7 +785,7 @@ impl<'a> Node<'a> {
                         "entity" => {}
                         "attribute" => attribute = v,
                         "value" => value = v,
-                        _ => panic!("Lookup supports only entity, attribute, and value lookups.")
+                        _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
 
