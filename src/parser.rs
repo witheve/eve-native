@@ -366,7 +366,7 @@ parser!(mutating_record_reference(state) -> Node<'a> {
 parser!(update_add(state) -> Node<'a> {
     let left = call!(state, mutating_record_reference);
     tag!(state, "+=");
-    let value = alt!(state, [ record expression expression_set hashtag ]);
+    let value = alt!(state, [ record record_set wrapped_record_set expression expression_set hashtag ]);
     pos_result!(state, Node::RecordUpdate { op: "+=", record:Box::new(left), value:Box::new(value), output_type: state.output_type })
 });
 
@@ -380,7 +380,7 @@ parser!(update_merge(state) -> Node<'a> {
 parser!(update_set(state) -> Node<'a> {
     let left = call!(state, mutating_record_reference);
     tag!(state, ":=");
-    let value = alt!(state, [ none_value record expression expression_set ]);
+    let value = alt!(state, [ none_value record record_set wrapped_record_set expression expression_set ]);
     pos_result!(state, Node::RecordUpdate { op: ":=", record:Box::new(left), value:Box::new(value), output_type: state.output_type })
 });
 

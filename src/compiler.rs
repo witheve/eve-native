@@ -952,6 +952,11 @@ impl<'a> Node<'a> {
                             avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
                         }
                     },
+                    (Some(attr), &Node::RecordSet(ref nodes)) => {
+                        for node in nodes {
+                            avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
+                        }
+                    },
                     (Some(attr), v) => {
                         avs.push((interner.string(attr), v.compile(interner, cur_block, local_span).unwrap()))
                     },
