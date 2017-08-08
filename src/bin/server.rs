@@ -19,7 +19,7 @@ extern crate time;
 use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
 use eve::indexes::{WatchDiff};
 use eve::watchers::{Watcher};
-use eve::watchers::system::{SystemTimerWatcher};
+use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
@@ -65,6 +65,9 @@ impl ClientHandler {
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
             runner.program.attach(Box::new(ConsoleWatcher::new()));
+
+            // DEBUG
+            runner.program.attach(Box::new(PanicWatcher::new()));
         }
 
         if let Some(persist_file) = persist {
