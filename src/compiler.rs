@@ -1192,7 +1192,7 @@ impl<'a> Node<'a> {
                 related.push(make_intermediate_insert(key_attrs, vec![], true));
                 cur_block.constraints = related;
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, kind) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, _) => {
                 let block_name = cur_block.block_name.to_string();
 
                 // generate the scan block
@@ -1213,9 +1213,6 @@ impl<'a> Node<'a> {
                 let result_id = interner.string(&format!("{}|sub_block|aggregate_result|{}", block_name, ix));
                 let mut result_key = vec![result_id];
                 result_key.extend(group.iter());
-                if kind == FunctionKind::Sort {
-                    result_key.extend(projection.iter());
-                }
                 let mut scan_key = vec![scan_id];
                 scan_key.extend(group.iter());
                 scan_key.extend(projection.iter());

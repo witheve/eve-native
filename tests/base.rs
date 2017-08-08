@@ -1557,3 +1557,57 @@ test!(base_aggregate_in_choose_rounds_retraction, {
         [#success]
     end
 });
+
+test!(base_aggregate_top, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#max foo: [value: 4]]
+        [#max foo: [value: 5]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_top_remove, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        foo = [#foo value: 5]
+    commit
+        foo := none
+    end
+
+    search
+        [#max foo: [value: 4]]
+        [#max foo: [value: 3]]
+    bind
+        [#success]
+    end
+});

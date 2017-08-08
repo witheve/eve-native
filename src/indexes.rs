@@ -648,7 +648,7 @@ pub enum AggregateEntry {
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
     SortedSum { items: BTreeSet<Vec<Interned>>, bound: Interned, count: usize, limit: usize },
-    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, rounds: Vec<Round>, changes: Vec<(Vec<Interned>, Round, Count)>, limit: usize },
+    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, rounds: Vec<Round>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
 }
 
 impl AggregateEntry {
@@ -833,10 +833,14 @@ impl IntermediateIndex {
                     }
                 }
                 &mut IntermediateLevel::SortAggregate(ref mut entry) => {
+                    if let &mut AggregateEntry::Sorted { ref mut current_params, ref mut current_round, .. } = entry {
+                        *current_params = Some(value);
+                        *current_round = round;
+                    }
                     action(entry, &projection);
                     if let &mut AggregateEntry::Sorted { ref mut items, ref mut rounds, changes:ref mut entry_changes, .. } = entry {
                         // Insert it into the items btree
-                        match items.entry(value) {
+                        match items.entry(projection) {
                             btree_map::Entry::Occupied(ref mut ent) => {
                                 update_active_rounds_vec(ent.get_mut(), round, count);
                             },
@@ -849,7 +853,7 @@ impl IntermediateIndex {
                             Ok(_) =>  { }
                             Err(pos) => { rounds.insert(pos, round) },
                         };
-                        changes.extend(entry_changes.drain(..).map(|(value, round, count)| make_aggregate_change(&out, value, round, count)));
+                        changes.extend(entry_changes.drain(..).map(|(mut value, round, count)| make_aggregate_change(&out, value.drain(..).map(|x| interner.internable_to_id(x)).collect(), round, count)));
                     }
 
                 }
