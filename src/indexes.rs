@@ -350,17 +350,22 @@ pub struct RoundEntry {
 fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Count) {
         let round_i32 = round as i32;
         if count > 0 {
-            let pos = match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
+            match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
                 Ok(pos) =>  {
-                    if active_rounds[pos] < 0 {
-                        pos
+                    let cur = active_rounds[pos];
+                    if cur < 0 {
+                        let diff = round as i32 * count;
+                        if cur + diff == 0 {
+                            active_rounds.remove(pos);
+                        } else {
+                            active_rounds[pos] = round as i32;
+                        }
                     } else {
                         panic!("Adding a round that is already in the index: {:?}", round)
                     }
                 }
-                Err(pos) => pos,
+                Err(pos) => active_rounds.insert(pos, round as i32),
             };
-            active_rounds.insert(pos, round as i32);
         } else {
             let (pos, remove) = match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
                 Ok(pos) => (pos, true),
