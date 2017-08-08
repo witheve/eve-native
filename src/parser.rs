@@ -52,8 +52,12 @@ whitespace_parser!(integer(state) -> Node<'a> {
     let start = state.pos;
     // -? [0-9]+
     any!(state, "-"); take_while_1!(state, is_digit);
-    let number = i32::from_str(state.capture(start)).unwrap();
-    pos_result!(state, Node::Integer(number))
+    let digits = state.capture(start);
+    if let Ok(number) = i32::from_str(digits) {
+        pos_result!(state, Node::Integer(number))
+    } else {
+        state.error(ParseError::NumberOverflow())
+    }
 });
 
 parser!(number(state) -> Node<'a> {
