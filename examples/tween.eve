@@ -1,0 +1,321 @@
+# Tween
+
+Create a canvas to play with.
+~~~ eve
+commit
+  [#canvas/root width: 900 height: 800]
+end
+~~~
+
+## Draw the paths and balls
+
+Draw paths on the canvas.
+~~~ eve
+search
+  path = [#path origin point sort]
+  canvas = [#canvas/root]
+bind
+  canvas.children += [#canvas/path path | sort children:
+    [path sort: point.sort + 1 type: "lineTo" | x: point.x + origin.x y: point.y + origin.y]]
+end
+~~~
+
+Paths start at the first point.
+~~~ eve
+search
+  path = [#path origin point sort]
+  point.sort = 1
+  canvas = [#canvas/root]
+bind
+  canvas.children += [#canvas/path path | sort children:
+    [path sort: 1 type: "moveTo" | x: origin.x + point.x y: origin.y + point.y]]
+end
+~~~
+
+Copy path styles onto the canvas paths (for now).
+~~~ eve
+search
+  canvas-path = [#canvas/path path: [style]]
+  lookup[entity: style attribute value]
+bind
+  lookup[entity: canvas-path attribute value]
+end
+~~~
+
+Draw the ball.
+~~~ eve
+search
+  ball = [#ball path: [origin] point sort]
+  canvas = [#canvas/root]
+  x = origin.x + point.x
+  y = origin.y + point.y
+bind
+  canvas.children += [#canvas/path ball | sort children:
+    // [ball sort: 1 type: "moveTo" | x y]
+    [ball sort: 1 type: "ellipse" | x y radius: 50]
+  ]
+end
+~~~
+
+DEBUG
+~~~ eve
+search
+  canvas = [#canvas/root]
+  ball = [#ball path percent]
+  path.length
+  not(
+  origin = path.origin
+  point = ball.point
+  x = origin.x + point.x
+  y = origin.y + point.y
+  )
+commit
+  [#html/div sort: "-1" text: "OH GOD EVERYTHING IS BAD"]
+end
+~~~
+
+
+
+## Calculate segments
+
+Segments represent the line segments from one point to the next on a path.
+~~~ eve
+search
+  path = [#path point: p1]
+  path = [#path point: p2]
+  p1.sort + 1 = p2.sort
+  dx2 = math/pow[value: p2.x - p1.x exponent: 2]
+  dy2 = math/pow[value: p2.y - p1.y exponent: 2]
+  length = math/pow[value: dx2 + dy2 exponent: 0.5]
+bind
+  path.segment += [p1 p2 | sort: p1.sort length]
+end
+~~~
+
+A segment's start is the previous segment's start + the previous segments length.
+~~~ eve
+search
+  path = [#path segment: s1]
+  path = [#path segment: s2]
+  s1.sort + 1 = s2.sort
+bind
+  s2.start += s1.start + s1.length
+end
+~~~
+
+The first segment's start is 0.
+~~~ eve
+search
+  path = [#path segment]
+  segment.sort = 1
+bind
+  segment.start += 0
+end
+~~~
+
+
+
+A path's length is the sum of it's segments.
+~~~ eve
+search
+  path = [#path segment]
+  length = gather/sum[value: segment.length for: segment per: path]
+bind
+  path.length += length
+end
+~~~
+
+## Calculate ball point
+
+~~~ eve
+search
+  ball = [#ball path: [length: total segment] percent point]
+  travelled = total * percent / 100
+  segment.start <= travelled
+  travelled <= segment.start + segment.length
+  delta = (travelled - segment.start) / segment.length
+  segment = [p1 p2]
+  x = p1.x + (p2.x - p1.x) * delta
+  y = p1.y + (p2.y - p1.y) * delta
+bind
+  point.x += x
+  point.y += y
+end
+~~~
+
+
+
+## Make some sweet balls
+
+Make a ball for each path
+~~~ eve
+search
+  path = [#path kind sort]
+bind
+  [#ball path | kind sort: sort + 1 point: [#point]]
+end
+~~~
+
+Balls with no tick are at tick 0.
+~~~ eve
+search
+  ball = [#ball]
+  not(ball.tick)
+commit
+  ball.tick := 0
+end
+~~~
+
+
+## Tween
+
+Increment the ball's tick each time the timer ticks.
+~~~ eve
+search
+  ball = [#ball tick]
+  [#system/timer/change]
+commit
+  ball.tick := tick + 1
+end
+~~~
+
+The ball bounces back and forth, so we mod by twice it's range.
+~~~ eve
+// search
+//   ball = [#ball tick]
+//   step = math/mod[value: tick by: 200]
+
+// bind
+//   ball.step += step
+// end
+~~~
+
+We compute the percent from the current step.
+~~~ eve
+// search
+//   ball = [#ball]
+//   percent = if ball.step < 101 then ball.step else 200 - ball.step
+// bind
+//   ball.percent += percent
+// end
+~~~
+
+Simple one way ball.
+~~~ eve
+search
+  ball = [#ball tick]
+  percent = math/mod[value: tick by: 100]
+bind
+  ball.percent += percent
+end
+~~~
+
+Create the tween timer.
+~~~ eve
+commit
+  [#system/timer #tween-timer resolution: 1000 / 60]
+end
+~~~
+
+
+## Test
+
+Create some paths.
+~~~ eve
+commit
+  path = [#path kind: "red" sort: 1 origin: [x: 20 y: 0] point:
+    [x:  50 y: 100 sort: 1]
+    [x: 200 y: 200 sort: 2]
+    [x: 200 y: 400 sort: 3]
+    [x: 400 y: 400 sort: 4]
+    [x: 700 y: 700 sort: 5]]
+end
+~~~
+
+~~~ eve
+search
+  path = [#path kind: "red"]
+bind
+  path.style += [strokeStyle: "#F00" lineWidth: 2 lineCap: "round" lineJoin: "round"]
+end
+~~~
+
+~~~ eve
+search
+  ball = [#ball kind: "blue"]
+bind
+  ball.style += [fillStyle: "#00F"]
+end
+~~~
+
+
+## DEBUG
+Show path operations.
+// ~~~ eve
+// search
+//   [type sort x y]
+// bind
+//   [#html/div sort text: "{{sort}}. {{type}} ({{x}}, {{y}})"]
+// end
+~~~
+
+Show path segments.
+~~~ eve
+search
+  [#path segment: [sort p1 p2 length start]]
+bind
+  [#html/div sort text: "{{sort}}. ({{p1.x}}, {{p1.y}}) -> ({{p2.x}}, {{p2.y}}) = {{math/to-fixed[value: length to: 2]}} @ {{math/to-fixed[value: start to: 2]}}"]
+end
+~~~
+
+Show path length.
+~~~ eve
+// search
+//   [#path length]
+// bind
+//   [#html/div text: "total: {{math/to-fixed[value: length to: 2]}}"]
+// end
+~~~
+
+Show ball position.
+~~~ eve
+// search
+//   [#ball point]
+// bind
+//   [#html/div text: "({{math/to-fixed[value: point.x to: 2]}}, {{math/to-fixed[value: point.y to: 2]}})"]
+// end
+~~~
+
+Show ball segment.
+~~~ eve
+// search
+//   ball = [#ball path: [length: total segment] percent point]
+//   travelled = total * percent / 100
+//   segment.start < travelled
+//   travelled <= segment.start + segment.length
+// bind
+//   [#html/div sort: 0 text: "ball in segment {{segment.sort}}"]
+// end
+~~~
+
+Show ball tick.
+~~~ eve
+// search
+//   ball = [#ball percent]
+// bind
+//   [#html/div text: percent]
+// end
+~~~
+
+Panic if ball goes missing.
+~~~ eve
+search
+  ball = [#ball percent]
+  not(
+  [#canvas/path children:
+    [ball sort: 1 type: "ellipse" x y radius: 50]]
+  )
+watch eve/panic!
+  ("AHHHHHHHHH")
+end
+~~~
