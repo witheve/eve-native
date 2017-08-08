@@ -740,7 +740,7 @@ impl<'a> Node<'a> {
                 }
                 final_result
             },
-            &Node::RecordLookup(ref attrs, ..) => {
+            &Node::RecordLookup(ref attrs, output_type) => {
                 let mut entity = None;
                 let mut attribute = None;
                 let mut value = None;
@@ -803,7 +803,12 @@ impl<'a> Node<'a> {
                     value = Some(reg)
                 }
 
-                cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap()));
+                match output_type {
+                    OutputType::Lookup => cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap())),
+                    OutputType::Commit => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true}),
+                    OutputType::Bind => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false})
+                }
+
                 None
             },
             &Node::Record(ref var, ref attrs) => {

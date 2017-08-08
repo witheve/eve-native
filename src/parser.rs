@@ -508,7 +508,7 @@ parser!(search_section(state) -> Node<'a> {
 });
 
 parser!(bind_section_statement(state) -> Node<'a> {
-    let item = alt!(state, [ output_equality record bind_update ]);
+    let item = alt!(state, [ lookup output_equality record bind_update ]);
     result!(state, item)
 });
 
@@ -520,7 +520,7 @@ parser!(bind_section(state) -> Node<'a> {
 });
 
 parser!(commit_section_statement(state) -> Node<'a> {
-    let item = alt!(state, [ output_equality record commit_update ]);
+    let item = alt!(state, [ lookup output_equality record commit_update ]);
     result!(state, item)
 });
 
