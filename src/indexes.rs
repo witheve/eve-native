@@ -10,9 +10,8 @@ extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault};
 use std::collections::hash_map::{Entry};
-use std::collections::btree_map;
 use std::iter::{Iterator, self};
-use std::collections::{BTreeMap, HashMap, BTreeSet};
+use std::collections::{BTreeMap, HashMap, BTreeSet, btree_map};
 use compiler::{FunctionKind};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
@@ -348,13 +347,12 @@ pub struct RoundEntry {
     active_rounds: Vec<i32>,
 }
 
-impl RoundEntry {
-    pub fn update_active(&mut self, round:Round, count:Count) {
+fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Count) {
         let round_i32 = round as i32;
         if count > 0 {
-            let pos = match self.active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
+            let pos = match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
                 Ok(pos) =>  {
-                    if self.active_rounds[pos] < 0 {
+                    if active_rounds[pos] < 0 {
                         pos
                     } else {
                         panic!("Adding a round that is already in the index: {:?}", round)
@@ -362,23 +360,28 @@ impl RoundEntry {
                 }
                 Err(pos) => pos,
             };
-            self.active_rounds.insert(pos, round as i32);
+            active_rounds.insert(pos, round as i32);
         } else {
-            let (pos, remove) = match self.active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
+            let (pos, remove) = match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
                 Ok(pos) => (pos, true),
                 Err(pos) => (pos, false),
             };
             if remove {
-                self.active_rounds.remove(pos);
+                active_rounds.remove(pos);
                 // we might be doing a swing from positive to negative, which we'd see by getting a
                 // count of -2 instead of -1. If so, we need to insert the negative.
                 if count < -1 {
-                    self.active_rounds.insert(pos, (round as i32) * -1);
+                    active_rounds.insert(pos, (round as i32) * -1);
                 }
             } else {
-                self.active_rounds.insert(pos, (round as i32) * -1);
+                active_rounds.insert(pos, (round as i32) * -1);
             }
         }
+}
+
+impl RoundEntry {
+    pub fn update_active(&mut self, round:Round, count:Count) {
+        update_active_rounds_vec(&mut self.active_rounds, round, count);
     }
 }
 
@@ -644,7 +647,8 @@ pub enum AggregateEntry {
     Empty,
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
-    Sorted { items: BTreeSet<Vec<Interned>>, bound: Interned, count: usize, limit: usize },
+    SortedSum { items: BTreeSet<Vec<Interned>>, bound: Interned, count: usize, limit: usize },
+    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, rounds: Vec<Round>, changes: Vec<(Vec<Interned>, Round, Count)>, limit: usize },
 }
 
 impl AggregateEntry {
@@ -652,15 +656,8 @@ impl AggregateEntry {
         match self {
             &AggregateEntry::Result(res) => vec![interner.number_id(res)],
             &AggregateEntry::Counted { result, .. } => vec![interner.number_id(result)],
-            &AggregateEntry::Sorted { bound, count, limit, .. } => {
-                if count < limit {
-                    // We won't end up needing to remove anything since we haven't reached our
-                    // limit yet
-                    vec![0]
-                } else {
-                    vec![bound]
-                }
-            },
+            &AggregateEntry::SortedSum {..} => { unimplemented!() },
+            &AggregateEntry::Sorted {..} => { unimplemented!() },
             &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
         }
     }
@@ -670,6 +667,7 @@ enum IntermediateLevel {
     Value(HashMap<Vec<Interned>, RoundEntry, MyHasher>),
     KeyOnly(RoundEntry),
     SumAggregate(BTreeMap<Round, AggregateEntry>),
+    SortAggregate(AggregateEntry),
 }
 
 pub struct IntermediateIndex {
@@ -718,9 +716,8 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
             &mut lookup.entry(value.clone())
                 .or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] }).rounds
         }
-        &mut IntermediateLevel::SumAggregate(..) => {
-            unimplemented!();
-        }
+        &mut IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
+        &mut IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
     };
     generic_distinct(counts, count, round, insert, false);
 }
@@ -752,7 +749,7 @@ pub fn make_aggregate_change(out:&Vec<Interned>, value:Vec<Interned>, round:Roun
 
 pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, value:&Vec<Internable>, round:Round) {
     let prev = cur_aggregate.get_result(interner);
-    action(cur_aggregate, value.clone());
+    action(cur_aggregate, &value);
     let neue = cur_aggregate.get_result(interner);
     if neue != prev {
         // add a remove for the previous value
@@ -779,9 +776,8 @@ impl IntermediateIndex {
                             _ => false
                         }
                     },
-                    &IntermediateLevel::SumAggregate(..) => {
-                        unimplemented!();
-                    }
+                    &IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
+                    &IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
                 }
             }
             None => false,
@@ -799,21 +795,26 @@ impl IntermediateIndex {
                             None => DistinctIter::new(&self.empty),
                         }
                     }
-                    &IntermediateLevel::SumAggregate(..) => {
-                        unimplemented!();
-                    }
+                    &IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
+                    &IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
                 }
             }
             None => DistinctIter::new(&self.empty),
         }
     }
 
-    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, value:Vec<Internable>, round:Round, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
+    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, projection:Vec<Internable>, value:Vec<Internable>, round:Round, count:Count, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
         let mut changes = vec![];
         {
-            let cur = self.index.entry(group).or_insert_with(|| IntermediateLevel::SumAggregate(BTreeMap::new()));
-            if let &mut IntermediateLevel::SumAggregate(ref mut rounds) = cur {
+            let cur = self.index.entry(group).or_insert_with(|| {
                 if kind == FunctionKind::Sum {
+                    IntermediateLevel::SumAggregate(BTreeMap::new())
+                } else {
+                    IntermediateLevel::SortAggregate(AggregateEntry::Sorted { items: BTreeMap::new(), current_round: 0, current_params:None, rounds: vec![], changes: vec![], limit: 0 })
+                }
+            });
+            match cur {
+                &mut IntermediateLevel::SumAggregate(ref mut rounds) => {
                     match rounds.entry(round) {
                         btree_map::Entry::Occupied(mut ent) => {
                             let cur_aggregate = ent.get_mut();
@@ -821,7 +822,7 @@ impl IntermediateIndex {
                         }
                         btree_map::Entry::Vacant(ent) => {
                             let mut cur_aggregate = AggregateEntry::Empty;
-                            action(&mut cur_aggregate, value.clone());
+                            action(&mut cur_aggregate, &value);
                             // add an add for the new value
                             changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), round, 1));
                             ent.insert(cur_aggregate);
@@ -830,9 +831,29 @@ impl IntermediateIndex {
                     for (k, v) in rounds.range_mut(round+1..) {
                         update_aggregate(interner, &mut changes, &out, action, v, &value, *k);
                     }
-                } else {
-                    unimplemented!();
                 }
+                &mut IntermediateLevel::SortAggregate(ref mut entry) => {
+                    action(entry, &projection);
+                    if let &mut AggregateEntry::Sorted { ref mut items, ref mut rounds, changes:ref mut entry_changes, .. } = entry {
+                        // Insert it into the items btree
+                        match items.entry(value) {
+                            btree_map::Entry::Occupied(ref mut ent) => {
+                                update_active_rounds_vec(ent.get_mut(), round, count);
+                            },
+                            btree_map::Entry::Vacant(ent) => {
+                                ent.insert(vec![round as i32 * count]);
+                            }
+                        }
+                        // and update the rounds to make sure we include this round in the future
+                        match rounds.binary_search(&round) {
+                            Ok(_) =>  { }
+                            Err(pos) => { rounds.insert(pos, round) },
+                        };
+                        changes.extend(entry_changes.drain(..).map(|(value, round, count)| make_aggregate_change(&out, value, round, count)));
+                    }
+
+                }
+                _ => { unreachable!() }
             }
         }
         for (full_key, key, value, round, count, negate) in changes {
@@ -860,9 +881,8 @@ impl IntermediateIndex {
                 iter.iter = OutputingIter::Empty;
                 true
             },
-            Some(&IntermediateLevel::SumAggregate(_)) => {
-                unimplemented!();
-            },
+            Some(&IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
+            Some(&IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
             None => {
                 iter.iter = OutputingIter::Empty;
                 iter.estimate = 0;
@@ -893,6 +913,7 @@ impl IntermediateIndex {
                 lookup.len() == 0
             }
             Some(&mut IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
+            Some(&mut IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
             None => { panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change) }
         };
         if should_remove {
