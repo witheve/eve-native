@@ -1182,6 +1182,7 @@ pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params
         "gather/count" => (aggregate_count_add, aggregate_count_remove),
         "gather/average" => (aggregate_avg_add, aggregate_avg_remove),
         "gather/top" => (aggregate_top_add, aggregate_top_remove),
+        "gather/bottom" => (aggregate_bottom_add, aggregate_bottom_remove),
         _ => panic!("Unknown function: {:?}", op)
     };
     Constraint::Aggregate {op: op.to_string(), add, remove, group, projection, params, output, param_mask, output_mask, output_key:vec![], kind, }
@@ -1600,8 +1601,8 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
         if let &Some(ref limit_params) = current_params {
             if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut foo = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
-                match foo.next() {
+                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
                     Some((v, _)) => {
                         if params > v {
                             // remove v
@@ -1631,8 +1632,8 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
         if let &Some(ref limit_params) = current_params {
             if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut foo = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
-                match foo.next() {
+                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
                     Some((v, _)) => {
                         if params >= v {
                             // remove v
@@ -1640,7 +1641,71 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
                             old.push(Internable::Number(0));
                             changes.push((old, current_round, -1));
                             // insert params
-                            if let Some((neue_max, _)) = foo.next() {
+                            if let Some((neue_max, _)) = iter.next() {
+                                let mut neue = neue_max.clone();
+                                neue.push(Internable::Number(0));
+                                changes.push((neue, current_round, 1));
+                            }
+                        }
+                    }
+                    _ => {
+                        // remove params
+                        let mut neue = params.clone();
+                        neue.push(Internable::Number(0));
+                        changes.push((neue, current_round, -1));
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(ref limit_params) = current_params {
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+                let limit = Internable::to_number(interned_limit) as usize;
+                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
+                    Some((v, _)) => {
+                        if params < v {
+                            // remove v
+                            let mut neue = v.clone();
+                            neue.push(Internable::Number(0));
+                            changes.push((neue, current_round, -1));
+                            // insert params
+                            let mut neue2 = params.clone();
+                            neue2.push(Internable::Number(0));
+                            changes.push((neue2, current_round, 1));
+                        }
+                    }
+                    _ => {
+                        // insert params
+                        let mut neue = params.clone();
+                        neue.push(Internable::Number(0));
+                        changes.push((neue, current_round, 1));
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(ref limit_params) = current_params {
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+                let limit = Internable::to_number(interned_limit) as usize;
+                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
+                    Some((v, _)) => {
+                        if params <= v {
+                            // remove v
+                            let mut old = params.clone();
+                            old.push(Internable::Number(0));
+                            changes.push((old, current_round, -1));
+                            // insert params
+                            if let Some((neue_max, _)) = iter.next() {
                                 let mut neue = neue_max.clone();
                                 neue.push(Internable::Number(0));
                                 changes.push((neue, current_round, 1));

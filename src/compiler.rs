@@ -108,6 +108,7 @@ lazy_static! {
         m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
         m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], FunctionKind::Sum));
         m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
+        m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
         m
     };
 }
