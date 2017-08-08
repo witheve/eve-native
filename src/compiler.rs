@@ -32,7 +32,7 @@ macro_rules! get_provided (
     });
 );
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum FunctionKind {
     Multi,
     Scalar,
@@ -111,6 +111,8 @@ lazy_static! {
         m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
         m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
         m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], FunctionKind::Sum));
+        m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
+        m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
         m
     };
 }
@@ -170,7 +172,7 @@ pub enum Node<'a> {
 #[derive(Debug, Clone)]
 pub enum SubBlock {
     Not(Compilation),
-    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Field),
+    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Field, FunctionKind),
     AggregateScan(Compilation),
     IfBranch(Compilation, Vec<Field>),
     If(Compilation, Vec<Field>, bool),
@@ -743,7 +745,7 @@ impl<'a> Node<'a> {
                         let mut sub_block = Compilation::new_child(cur_block);
                         let unified_output = cur_block.get_unified(&cur_outputs[0]);
                         sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output, info.kind));
-                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output));
+                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output, info.kind));
                     },
                     FunctionKind::Scalar => {
                         cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
@@ -1160,11 +1162,14 @@ impl<'a> Node<'a> {
                 key_attrs.extend(inputs.iter());
                 make_anti_scan(key_attrs)
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, _, _, ref output) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, _, ref output, kind) => {
                 let block_name = cur_block.block_name.to_string();
                 let result_id = interner.string(&format!("{}|sub_block|aggregate_result|{}", block_name, ix));
                 let mut result_key = vec![result_id];
                 result_key.extend(group.iter());
+                if kind == FunctionKind::Sort {
+                    result_key.extend(projection.iter());
+                }
                 make_intermediate_scan(result_key, vec![output.clone()])
             }
             &mut SubBlock::AggregateScan(..) => { panic!("Tried directly compiling an aggregate scan") }
@@ -1195,7 +1200,7 @@ impl<'a> Node<'a> {
                 related.push(make_intermediate_insert(key_attrs, vec![], true));
                 cur_block.constraints = related;
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, ..) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, _) => {
                 let block_name = cur_block.block_name.to_string();
 
                 // generate the scan block
