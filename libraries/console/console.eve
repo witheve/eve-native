@@ -29,3 +29,24 @@ search
 watch console
   ("error", text)
 end
+
+## For the TS side
+
+The TS watcher interface currently relies on passing messages through the websocket watcher
+
+search
+  [#console/log text]
+watch client/websocket
+  ("console/log", text)
+end
+
+search
+  [#console/warn text]
+watch client/websocket
+  ("console/warn", text)
+end
+
+search
+  [#console/error text]
+watch client/websocket
+  ("console/error", text)
