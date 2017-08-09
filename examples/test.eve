@@ -1,6 +1,5 @@
-search
-  (text, ix) = string/split[text:"f o o" by:" "]
-  ix = 1
-bind
-  [#ui/text text]
+commit
+  [#ui/text text: "It's printing stuff"]
+  [#ui/code-block code: "Hello Foo"]
+  [#console/log text: "Testing"]
 end
