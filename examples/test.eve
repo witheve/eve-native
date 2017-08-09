@@ -1,4 +1,29 @@
 commit
-  [#ui/text text: "It's printing stuff"]
-  [#ui/code-block code: "Hello Foo"]
+  [#snippet id: 1 code: "#foo"]
+  [#snippet id: 2 code: "#bar"]
+  [#snippet id: 3 code: "#baz"]
+end
+
+search
+  [#snippet id code]
+commit
+  [#html/element tagname: "div" #block-container id children:
+    [#ui/text sort: 1 text: "Block {{id}}"]
+    [#ui/code-block sort: 2 id value: code]
+    [#ui/button #clear-block id sort: 4 text: "Clear"]
+  ]
+end
+
+search
+  c = [#block-container id]
+  [#ui/code-block id value]
+bind
+  c.children += [#ui/text sort: 3 text: value]
+end
+
+search
+  [#html/event/click element: [#clear-block id]]
+  block = [#ui/code-block id value]
+commit
+  block.value := "mhgkhgkh"
 end
