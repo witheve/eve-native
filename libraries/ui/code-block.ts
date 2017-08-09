@@ -2,14 +2,14 @@ import {Library, RawValue, handleTuples} from "../../ts";
 import "codemirror/mode/gfm/gfm";
 import "codemirror/addon/mode/simple";
 import "codemirror-mode-eve";
-import * as CodeMirror from "codemirror";
+import CodeMirror from "codemirror";
 
 const EMPTY:never[] = [];
 
 export class CodeBlock extends Library {
   static id = "code-block";
   setup() {
-    console.log("Starting up")
+    console.log("Starting up", CodeMirror);
   }
 
   handlers = {
