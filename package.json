@@ -16,6 +16,9 @@
   "author": "Eve Team",
   "license": "UNLICENSED",
   "dependencies": {
+    "@types/codemirror": "0.0.41",
+    "codemirror": "^5.27.4",
+    "codemirror-mode-eve": "^0.0.1",
     "md5": "^2.2.1",
     "postinstall-build": "^5.0.1",
     "setimmediate": "^1.0.5",
