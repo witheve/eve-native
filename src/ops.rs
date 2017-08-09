@@ -11,14 +11,13 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
 use solver::Solver;
-use compiler::{make_block, parse_file};
+use compiler::{make_block, parse_file, FunctionKind};
 use std::collections::HashMap;
 use std::mem::transmute;
 use std::collections::hash_map::Entry;
-use std::cmp;
+use std::cmp::{self, Eq, PartialOrd};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::cmp::Eq;
 use std::iter::{Iterator};
 use std::fmt;
 use watchers::{Watcher};
@@ -63,6 +62,14 @@ pub fn format_interned(interner:&Interner, v:Interned) -> String {
     } else {
         v_str
     }
+}
+
+pub fn print_block_constraints(block:&Block) {
+    println!("\n----------- Constraints ------------[{}] \n", block.name);
+    for constraint in block.constraints.iter() {
+        println!("  {:?}", constraint);
+    }
+    println!("");
 }
 
 //-------------------------------------------------------------------------
@@ -553,11 +560,32 @@ pub fn is_register(field:&Field) -> bool {
 // Interner
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord)]
 pub enum Internable {
+    Null,
     String(String),
     Number(u32),
-    Null,
+}
+
+impl PartialOrd for Internable {
+    fn partial_cmp(&self, rhs:&Self) -> Option<cmp::Ordering> {
+        let priority = self.to_sort_priority();
+        let right_priority = self.to_sort_priority();
+        if priority != right_priority {
+            return Some(priority.cmp(&right_priority));
+        }
+
+        match (self, rhs) {
+            (&Internable::Null, &Internable::Null) => { Some(cmp::Ordering::Equal) },
+            (&Internable::String(ref s), &Internable::String(ref s2)) => { Some(s.cmp(s2)) },
+            (&Internable::Number(n), &Internable::Number(n2)) => {
+                let value = unsafe {transmute::<u32, f32>(n) };
+                let value2 = unsafe {transmute::<u32, f32>(n2) };
+                value.partial_cmp(&value2)
+            },
+            _ => { unreachable!() }
+        }
+    }
 }
 
 impl Internable {
@@ -600,6 +628,14 @@ impl Internable {
             &Internable::String(ref s) => { JSONInternable::String(s.to_owned()) }
             &Internable::Number(n) => { JSONInternable::Number(n) }
             &Internable::Null => { JSONInternable::Null }
+        }
+    }
+
+    pub fn to_sort_priority(&self) -> usize {
+        match self {
+            &Internable::Null => { 0 }
+            &Internable::Number(_) => { 1 }
+            &Internable::String(_) => { 2 }
         }
     }
 }
@@ -795,7 +831,7 @@ impl Interner {
 type FilterFunction = fn(&Internable, &Internable) -> bool;
 type Function = fn(Vec<&Internable>) -> Option<Internable>;
 type MultiFunction = fn(Vec<&Internable>) -> Option<Vec<Vec<Internable>>>;
-pub type AggregateFunction = fn(&mut AggregateEntry, Vec<Internable>);
+pub type AggregateFunction = fn(&mut AggregateEntry, &Vec<Internable>);
 
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
@@ -803,7 +839,7 @@ pub enum Constraint {
     IntermediateScan {full_key:Vec<Field>, key: Vec<Field>, value: Vec<Field>, register_mask: u64, output_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     MultiFunction {op: String, outputs: Vec<Field>, func: MultiFunction, params: Vec<Field>, param_mask: u64, output_mask: u64},
-    Aggregate {op: String, output: Field, add: AggregateFunction, remove:AggregateFunction, group:Vec<Field>, projection:Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64, output_key:Vec<Field>},
+    Aggregate {op: String, output: Field, add: AggregateFunction, remove:AggregateFunction, group:Vec<Field>, projection:Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64, output_key:Vec<Field>, kind: FunctionKind},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
     InsertIntermediate {key:Vec<Field>, value:Vec<Field>, negate:bool},
@@ -982,8 +1018,8 @@ impl Clone for Constraint {
             &Constraint::MultiFunction {ref op, ref outputs, ref func, ref params, ref param_mask, ref output_mask} => {
                 Constraint::MultiFunction{ op:op.clone(), outputs:outputs.clone(), func:*func, params:params.clone(), param_mask:*param_mask, output_mask:*output_mask }
             }
-            &Constraint::Aggregate {ref op, ref output, ref add, ref remove, ref group, ref projection, ref params, ref param_mask, ref output_mask, ref output_key} => {
-                Constraint::Aggregate { op:op.clone(), output:output.clone(), add:*add, remove:*remove, group:group.clone(), projection:projection.clone(), params:params.clone(), param_mask:*param_mask, output_mask:*output_mask, output_key:output_key.clone() }
+            &Constraint::Aggregate {ref op, ref output, ref add, ref remove, ref group, ref projection, ref params, ref param_mask, ref output_mask, ref output_key, kind} => {
+                Constraint::Aggregate { op:op.clone(), output:output.clone(), add:*add, remove:*remove, group:group.clone(), projection:projection.clone(), params:params.clone(), param_mask:*param_mask, output_mask:*output_mask, output_key:output_key.clone(), kind }
             }
             &Constraint::Filter {ref op, ref func, ref left, ref right, ref param_mask} => {
                 Constraint::Filter{ op:op.clone(), func:*func, left:left.clone(), right:right.clone(), param_mask:*param_mask }
@@ -1116,6 +1152,9 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "math/cos" => math_cos,
         "math/absolute" => math_absolute,
         "math/mod" => math_mod,
+        "math/pow" => math_pow,
+        "math/to-fixed" => math_to_fixed,
+        "math/to-hex" => math_to_hex,
         "math/ceiling" => math_ceiling,
         "math/floor" => math_floor,
         "math/round" => math_round,
@@ -1146,16 +1185,18 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
 }
 
-pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Field) -> Constraint {
+pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Field, kind:FunctionKind) -> Constraint {
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
     let output_mask = make_register_mask(vec![&output]);
     let (add, remove):(AggregateFunction, AggregateFunction) = match op {
         "gather/sum" => (aggregate_sum_add, aggregate_sum_remove),
         "gather/count" => (aggregate_count_add, aggregate_count_remove),
         "gather/average" => (aggregate_avg_add, aggregate_avg_remove),
+        "gather/top" => (aggregate_top_add, aggregate_top_remove),
+        "gather/bottom" => (aggregate_bottom_add, aggregate_bottom_remove),
         _ => panic!("Unknown function: {:?}", op)
     };
-    Constraint::Aggregate {op: op.to_string(), add, remove, group, projection, params, output, param_mask, output_mask, output_key:vec![], }
+    Constraint::Aggregate {op: op.to_string(), add, remove, group, projection, params, output, param_mask, output_mask, output_key:vec![], kind, }
 }
 
 pub fn make_filter(op: &str, left: Field, right:Field) -> Constraint {
@@ -1268,6 +1309,38 @@ pub fn math_mod(params: Vec<&Internable>) -> Option<Internable> {
             let a = Internable::to_number(params[0]);
             let b = Internable::to_number(params[1]);
             Some(Internable::from_number(a % b))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_pow(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let value = Internable::to_number(params[0]);
+            let exp = Internable::to_number(params[1]);
+            Some(Internable::from_number(value.powf(exp)))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_to_fixed(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_), &Internable::Number(_)] => {
+            let value = Internable::to_number(params[0]);
+            let places = Internable::to_number(params[1]);
+            Some(Internable::String(format!("{:.*}", places as usize, value)))
+        },
+        _ => { None }
+    }
+}
+
+pub fn math_to_hex(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::Number(_)] => {
+            let value = Internable::to_number(params[0]);
+            Some(Internable::String(format!("{:x}", value as i64)))
         },
         _ => { None }
     }
@@ -1479,7 +1552,7 @@ pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
 // Aggregates
 //-------------------------------------------------------------------------
 
-pub fn aggregate_sum_add(current: &mut AggregateEntry, params: Vec<Internable>) {
+pub fn aggregate_sum_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1492,7 +1565,7 @@ pub fn aggregate_sum_add(current: &mut AggregateEntry, params: Vec<Internable>) 
     };
 }
 
-pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: Vec<Internable>) {
+pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1505,21 +1578,21 @@ pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: Vec<Internable
     };
 }
 
-pub fn aggregate_count_add(current: &mut AggregateEntry, _: Vec<Internable>) {
+pub fn aggregate_count_add(current: &mut AggregateEntry, _: &Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res + 1.0; }
         _ => { *current = AggregateEntry::Result(1.0); }
     }
 }
 
-pub fn aggregate_count_remove(current: &mut AggregateEntry, _: Vec<Internable>) {
+pub fn aggregate_count_remove(current: &mut AggregateEntry, _: &Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res - 1.0; }
         _ => { *current = AggregateEntry::Result(-1.0); }
     }
 }
 
-pub fn aggregate_avg_add(current: &mut AggregateEntry, params: Vec<Internable>) {
+pub fn aggregate_avg_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1536,7 +1609,7 @@ pub fn aggregate_avg_add(current: &mut AggregateEntry, params: Vec<Internable>) 
     };
 }
 
-pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: Vec<Internable>) {
+pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1555,6 +1628,143 @@ pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: Vec<Internable
         }
         _ => {}
     };
+}
+
+//-------------------------------------------------------------------------
+// Sort Aggregates
+//-------------------------------------------------------------------------
+
+fn is_aggregate_in_round(&(_, v): &(&Vec<Internable>, &Vec<Count>), round:Round) -> bool {
+    let sum:Count = v.iter().filter(|cur| cur.abs() <= round as i32).map(|&cur| if cur < 0 { -1 } else { 1 }).sum();
+    sum > 0
+}
+
+pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(ref limit_params) = current_params {
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+                let limit = Internable::to_number(interned_limit) as usize;
+                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
+                    Some((v, _)) => {
+                        if params > v {
+                            // remove v
+                            let mut neue = v.clone();
+                            neue.push(Internable::Number(0));
+                            changes.push((neue, current_round, -1));
+                            // insert params
+                            let mut neue2 = params.clone();
+                            neue2.push(Internable::Number(0));
+                            changes.push((neue2, current_round, 1));
+                        }
+                    }
+                    _ => {
+                        // insert params
+                        let mut neue = params.clone();
+                        neue.push(Internable::Number(0));
+                        changes.push((neue, current_round, 1));
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(ref limit_params) = current_params {
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+                let limit = Internable::to_number(interned_limit) as usize;
+                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
+                    Some((v, _)) => {
+                        if params >= v {
+                            // remove v
+                            let mut old = params.clone();
+                            old.push(Internable::Number(0));
+                            changes.push((old, current_round, -1));
+                            // insert params
+                            if let Some((neue_max, _)) = iter.next() {
+                                let mut neue = neue_max.clone();
+                                neue.push(Internable::Number(0));
+                                changes.push((neue, current_round, 1));
+                            }
+                        }
+                    }
+                    _ => {
+                        // remove params
+                        let mut neue = params.clone();
+                        neue.push(Internable::Number(0));
+                        changes.push((neue, current_round, -1));
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(ref limit_params) = current_params {
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+                let limit = Internable::to_number(interned_limit) as usize;
+                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
+                    Some((v, _)) => {
+                        if params < v {
+                            // remove v
+                            let mut neue = v.clone();
+                            neue.push(Internable::Number(0));
+                            changes.push((neue, current_round, -1));
+                            // insert params
+                            let mut neue2 = params.clone();
+                            neue2.push(Internable::Number(0));
+                            changes.push((neue2, current_round, 1));
+                        }
+                    }
+                    _ => {
+                        // insert params
+                        let mut neue = params.clone();
+                        neue.push(Internable::Number(0));
+                        changes.push((neue, current_round, 1));
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(ref limit_params) = current_params {
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+                let limit = Internable::to_number(interned_limit) as usize;
+                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                match iter.next() {
+                    Some((v, _)) => {
+                        if params <= v {
+                            // remove v
+                            let mut old = params.clone();
+                            old.push(Internable::Number(0));
+                            changes.push((old, current_round, -1));
+                            // insert params
+                            if let Some((neue_max, _)) = iter.next() {
+                                let mut neue = neue_max.clone();
+                                neue.push(Internable::Number(0));
+                                changes.push((neue, current_round, 1));
+                            }
+                        }
+                    }
+                    _ => {
+                        // remove params
+                        let mut neue = params.clone();
+                        neue.push(Internable::Number(0));
+                        changes.push((neue, current_round, -1));
+                    }
+                }
+            }
+        }
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -2462,7 +2672,19 @@ impl ProgramRunner {
                     }
                     Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
                         let mut tx = CodeTransaction::new();
-                        println!("Got Code Transaction! {:?} {:?}", adds, removes);
+                        println!("------ Got Code Transaction! ------");
+                        if adds.len() > 0 {
+                            println!("### ADDS: ###");
+                            for block in adds.iter() {
+                                print_block_constraints(&block);
+                            }
+                        }
+                        if removes.len() > 0 {
+                            println!("### REMOVES: ###");
+                            for block in removes.iter() {
+                                println!("  - {:?}", block);
+                            }
+                        }
                         tx.exec(&mut program, adds, removes);
                     }
                     Err(_) => { break; }

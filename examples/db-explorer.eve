@@ -96,6 +96,30 @@ bind
 end
 ~~~
 
+Add tags that match possible completions.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  [#db-explorer/completion-record record: [tag]]
+bind
+  query.completion += [text: "#{{tag}}" value: tag]
+end
+~~~
+
+Add tags that match possible completions.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  [#db-explorer/completion-record record]
+  lookup[entity: record attribute]
+bind
+  query.completion += [text: attribute value: attribute]
+end
+~~~
+
+
+### Token Parsing
+
 If multiple tokens exist, assume all but the last are fully formed tags or attributes to filter upon.
 ~~~ eve
 search
@@ -107,8 +131,6 @@ bind
   [#db-explorer/tokens-to-pattern pattern: completion-pattern token]
 end
 ~~~
-
-### Token Parsing
 
 `#db-explorer/tokens-to-pattern` attaches AVs to the records attribute for each token.
 
@@ -129,7 +151,7 @@ search
   [#db-explorer/tokens-to-pattern pattern token]
   not(1 = string/index-of[text: token substring: "#"])
 bind
-  pattern.attributes += [attribute: token]
+  pattern.attribute += [attribute: token]
 end
 ~~~
 
@@ -145,6 +167,7 @@ bind
   output-var = [#eve/compiler/variable name: "completion" completion-pattern]
   record-var = [#eve/compiler/variable name: "record" completion-pattern]
   [#eve/compiler/block #db-explorer/completer type: "bind" | record-var constraint:
+    [#eve/compiler/gen-id entity: output-var | attribute: ("tag" "record")]
     [#eve/compiler/output entity: output-var attribute: "tag" value: "db-explorer/completion-record"]
     [#eve/compiler/output entity: output-var attribute: "record" value: record-var]]
 end
@@ -178,7 +201,7 @@ DEBUG
 search
   [#db-explorer/completion-record record]
 bind
-  [#ui/div text: record]
+  [#ui/text text: record]
 end
 ~~~
 
@@ -190,7 +213,7 @@ search
   [#html/event/click element: [#db-explorer/query-button]]
   query = [#db-explorer/query]
 commit
-  [#ui/div text: "hai '{{query.value}}'"]
+  [#ui/text text: "hai '{{query.value}}'"]
 end
 ~~~
 
@@ -245,8 +268,8 @@ search
   foo = [#person name: "dubdub"]
 commit
   foo <- [pet:
-    [#pet name: "blort" age: 13 | owner: foo]
-    [#pet name: "steve" age: 3 | owner: foo]]
+    [#pet #cat name: "blort" age: 13 | owner: foo]
+    [#pet #dog name: "steve" age: 3 | owner: foo]]
 end
 ~~~
 
@@ -276,7 +299,7 @@ end
 
 ~~~ eve
 commit
-  [#ui/style text: "
+  [#html/style text: "
     .db-explorer-root { max-width: 900px; }
     .db-explorer-card-list { flex-wrap: wrap; }
 "]
