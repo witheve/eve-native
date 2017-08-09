@@ -50,3 +50,4 @@ search
   [#console/error text]
 watch client/websocket
   ("console/error", text)
+end
