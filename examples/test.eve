@@ -1,25 +1,17 @@
 commit
-  [#snippet id: 1 code: "#foo"]
-  [#snippet id: 2 code: "#bar"]
-  [#snippet id: 3 code: "#baz"]
+  [#program id: 1 code: "insert code here"]
 end
 
 search
-  [#snippet id code]
+  [#program id code]
 bind
   [#html/element tagname: "div" #block-container id children:
     [#ui/text sort: 1 text: "Block {{id}}"]
-    [#ui/code-block sort: 2 id value: code]
+    [#ui/code-block id sort: 2 value: code]
     [#ui/button #clear-block id sort: 4 text: "Clear"]
     [#ui/button #delete-block id sort: 5 text: "Delete"]
+    [#ui/button #compile-block id sort: 6 text: "Compile"]
   ]
-end
-
-search
-  c = [#block-container id]
-  [#ui/code-block id value]
-bind
-  c.children += [#ui/text sort: 3 text: value]
 end
 
 search
@@ -37,5 +29,9 @@ commit
   snippet := none
 end
 
-
-  
+search
+  [#html/event/click element: [#compile-block id]]
+  [#ui/code-block id value]
+commit
+  [#eve/text-compiler code: value]
+end
