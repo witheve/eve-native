@@ -4,8 +4,23 @@
         <title>Eve</title>
         <link rel="stylesheet" type="text/css" href="/assets/css/ionicons.min.css">
         <link rel="stylesheet" type="text/css" href="/assets/css/base.css">
+        <link rel="stylesheet" href="/assets/css/codemirror.css">       
+        <style>
+            .CodeMirror { height: auto; border: 1px solid #ddd; }
+            .CodeMirror-scroll { max-height: 200px; }
+            .CodeMirror pre { padding-left: 7px; line-height: 1.25; }
+        </style>
     </head>
     <body>
+
+        <textarea id="demotext" class="language-eve">
+search 
+    p = [#person name age]
+bind
+    p += #invited
+end</textarea>
+
+
       <script src="/dist/eve-native-bundle.js"></script>
     </body>
 </html>
