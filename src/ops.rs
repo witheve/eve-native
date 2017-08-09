@@ -12,11 +12,10 @@ use unicode_segmentation::UnicodeSegmentation;
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
-use std::collections::HashMap;
+use std::collections::{HashMap, Bound};
 use std::mem::transmute;
-use std::collections::hash_map::Entry;
 use std::cmp::{self, Eq, PartialOrd};
-use std::collections::hash_map::DefaultHasher;
+use std::collections::hash_map::{DefaultHasher, Entry};
 use std::hash::{Hash, Hasher};
 use std::iter::{Iterator};
 use std::fmt;
@@ -839,7 +838,7 @@ pub enum Constraint {
     IntermediateScan {full_key:Vec<Field>, key: Vec<Field>, value: Vec<Field>, register_mask: u64, output_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     MultiFunction {op: String, outputs: Vec<Field>, func: MultiFunction, params: Vec<Field>, param_mask: u64, output_mask: u64},
-    Aggregate {op: String, output: Field, add: AggregateFunction, remove:AggregateFunction, group:Vec<Field>, projection:Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64, output_key:Vec<Field>, kind: FunctionKind},
+    Aggregate {op: String, output: Vec<Field>, add: AggregateFunction, remove:AggregateFunction, group:Vec<Field>, projection:Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64, output_key:Vec<Field>, kind: FunctionKind},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
     InsertIntermediate {key:Vec<Field>, value:Vec<Field>, negate:bool},
@@ -910,7 +909,7 @@ impl Constraint {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
             &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
-            &Constraint::Aggregate {ref output, ..} => { filter_registers(&vec![output]) }
+            &Constraint::Aggregate {ref output, ..} => { filter_registers(&output.iter().collect()) }
             &Constraint::IntermediateScan {ref value, ..} => { filter_registers(&value.iter().collect()) }
             _ => { vec![] }
         }
@@ -1185,15 +1184,17 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
 }
 
-pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Field, kind:FunctionKind) -> Constraint {
+pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Vec<Field>, kind:FunctionKind) -> Constraint {
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
-    let output_mask = make_register_mask(vec![&output]);
+    let output_mask = make_register_mask(output.iter().collect::<Vec<&Field>>());
     let (add, remove):(AggregateFunction, AggregateFunction) = match op {
         "gather/sum" => (aggregate_sum_add, aggregate_sum_remove),
         "gather/count" => (aggregate_count_add, aggregate_count_remove),
         "gather/average" => (aggregate_avg_add, aggregate_avg_remove),
         "gather/top" => (aggregate_top_add, aggregate_top_remove),
         "gather/bottom" => (aggregate_bottom_add, aggregate_bottom_remove),
+        "gather/next" => (aggregate_next_add, aggregate_next_remove),
+        "gather/previous" => (aggregate_prev_add, aggregate_prev_remove),
         _ => panic!("Unknown function: {:?}", op)
     };
     Constraint::Aggregate {op: op.to_string(), add, remove, group, projection, params, output, param_mask, output_mask, output_key:vec![], kind, }
@@ -1762,6 +1763,134 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
                         changes.push((neue, current_round, -1));
                     }
                 }
+            }
+        }
+    }
+}
+
+pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let next = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, 1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, -1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, 1));
+            }
+        }
+    }
+}
+
+pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let next = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, -1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, 1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, -1));
+            }
+        }
+    }
+}
+
+pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let prev = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, 1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, -1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, 1));
+            }
+        }
+    }
+}
+
+pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let prev = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, -1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, 1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, -1));
             }
         }
     }
