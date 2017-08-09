@@ -82,7 +82,7 @@ impl Watcher for JsonWatcher {
     }
 }
 
-fn value_to_changes(value: Value, changes: &mut Vec<RawChange>, id: &mut String, attribute: &str) {
+pub fn value_to_changes(value: Value, changes: &mut Vec<RawChange>, id: &String, attribute: &str) {
     match value {
         Value::Number(n) => {
             if n.is_u64() { 

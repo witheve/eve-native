@@ -3,7 +3,7 @@
 ## Send an HTTP Request
 
 search
-  h = [#http/send address]
+  h = [#http/request address]
 watch http
   ("send", h, address)
 end
