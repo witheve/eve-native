@@ -818,7 +818,7 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, projection:Vec<Internable>, value:Vec<Internable>, round:Round, count:Count, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
+    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, mut projection:Vec<Internable>, value:Vec<Internable>, round:Round, count:Count, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
         let projection_len = projection.len();
         let mut changes = vec![];
         {
@@ -862,7 +862,14 @@ impl IntermediateIndex {
                         }
                         action(entry, &projection);
                     }
-                    if let &mut AggregateEntry::Sorted { ref mut items, changes:ref mut entry_changes, .. } = entry {
+                    if let &mut AggregateEntry::Sorted { current_params: Some(ref value), ref mut items, changes:ref mut entry_changes, .. } = entry {
+                        // we have to extend the projection with the params in order to account for
+                        // things like the limit changing. If we didn't store that, we might
+                        // mistakenly remove keys when the param changes. E.g. the projection
+                        // remains the same but the limit changes: [foo, bar] [1] vs [foo, bar]
+                        // [2], depending on the order we receive the adds/removes, we might end up
+                        // with no [foo, bar] key at all.
+                        projection.extend(value.iter().cloned());
                         // Insert it into the items btree
                         match items.entry(projection) {
                             btree_map::Entry::Occupied(ref mut ent) => {

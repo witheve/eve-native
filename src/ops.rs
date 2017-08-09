@@ -1643,9 +1643,13 @@ fn is_aggregate_in_round(&(_, v): &(&Vec<Internable>, &Vec<Count>), round:Round)
 pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().rev().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params > v {
@@ -1674,9 +1678,13 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
 pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().rev().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params >= v {
@@ -1707,9 +1715,13 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
 pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params < v {
@@ -1738,9 +1750,13 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
 pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params <= v {
