@@ -58,6 +58,20 @@ bind
 end
 ~~~
 
+## Toggle
+
+A toggle is a checkbox and a label decorated as a toggle switch..
+~~~ eve
+search
+  element = [#ui/toggle]
+bind
+  element <- [#html/div children:
+    [#html/element tagname: "label" for: "ui-toggle-{{element}}"]
+    [#html/input type: "checkbox" id: "ui-toggle-{{element}}"]]
+end
+~~~
+
+
 ## Autocomplete
 
 ### Setup
