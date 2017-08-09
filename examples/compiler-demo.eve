@@ -1,0 +1,39 @@
+~~~ eve
+commit
+  [#input x: 1]
+  [#input x: 3]
+  [#input x: 5]
+end
+~~~
+
+~~~ eve
+// search
+//   [#input x]
+// commit
+//   [#output result: x]
+// end
+~~~
+
+~~~ eve
+commit
+  input-var = [#eve/compiler/variable name: "input"]
+  output-var = [#eve/compiler/variable name: "output"]
+  x-var = [#eve/compiler/variable name: "x"]
+  [#eve/compiler/block type: "commit" | constraint:
+    [#eve/compiler/scan entity: input-var attribute: "tag" value: "input"]
+    [#eve/compiler/scan entity: input-var attribute: "x" value: x-var]
+    [#eve/compiler/gen-id entity: output-var | attribute: ("result")]
+    [#eve/compiler/output entity: output-var attribute: "tag" value: "output"]
+    [#eve/compiler/output entity: output-var attribute: "result" value: x-var]
+    ]
+end
+~~~
+
+~~~ eve
+search
+  //[#input x]
+  [#output result]
+bind
+  [#ui/div text: "{{result}}"]
+end
+~~~

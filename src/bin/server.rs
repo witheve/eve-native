@@ -22,6 +22,7 @@ use eve::watchers::{Watcher};
 use eve::watchers::system::{SystemTimerWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
+use eve::watchers::console::{ConsoleWatcher};
 
 extern crate iron;
 extern crate staticfile;
@@ -63,6 +64,7 @@ impl ClientHandler {
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
+            runner.program.attach(Box::new(ConsoleWatcher::new()));
         }
 
         if let Some(persist_file) = persist {
