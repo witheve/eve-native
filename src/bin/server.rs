@@ -65,7 +65,7 @@ impl ClientHandler {
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
+            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
             runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(HttpWatcher::new(outgoing.clone())));
