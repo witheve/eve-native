@@ -1,6 +1,4 @@
 extern {}
-extern crate tokio_timer;
-extern crate futures;
 
 extern crate clap;
 use clap::{Arg, App};
@@ -23,6 +21,8 @@ use eve::indexes::{WatchDiff};
 use eve::watchers::{Watcher};
 use eve::watchers::system::{SystemTimerWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
+use eve::watchers::compiler2::{RawTextCompilerWatcher};
+use eve::watchers::console::{ConsoleWatcher};
 
 extern crate iron;
 extern crate staticfile;
@@ -61,10 +61,12 @@ impl ClientHandler {
         let outgoing = runner.program.outgoing.clone();
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(CompilerWatcher::new(outgoing)));
+            runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
+            runner.program.attach(Box::new(ConsoleWatcher::new()));
         }
-        
+
         if let Some(persist_file) = persist {
             let mut persister = Persister::new(persist_file);
             persister.load(persist_file);
@@ -76,7 +78,7 @@ impl ClientHandler {
         }
 
         let running = runner.run();
-        
+
         ClientHandler {out, running}
     }
 }
@@ -179,7 +181,7 @@ fn http_server(address: String) -> std::thread::JoinHandle<()> {
             Ok(_) => {},
             Err(why) => println!("{} Failed to start HTTP Server: {}", BrightRed.paint("Error:"), why),
         };
-        
+
     })
 }
 
@@ -218,13 +220,13 @@ fn main() {
                                .value_name("PORT")
                                .help("Sets the port for the Eve server (3012)")
                                .takes_value(true))
-                          .arg(Arg::with_name("http-port")                            
+                          .arg(Arg::with_name("http-port")
                                .short("t")
                                .long("http-port")
                                .value_name("PORT")
                                .help("Sets the port for the HTTP server (8081)")
-                               .takes_value(true))   
-                          .arg(Arg::with_name("address")                            
+                               .takes_value(true))
+                          .arg(Arg::with_name("address")
                                .short("a")
                                .long("address")
                                .value_name("ADDRESS")
@@ -233,7 +235,7 @@ fn main() {
                           .arg(Arg::with_name("clean")
                                .short("C")
                                .long("Clean")
-                               .help("Starts Eve with a clean database and no watchers (false)"))                         
+                               .help("Starts Eve with a clean database and no watchers (false)"))
                           .get_matches();
 
     println!("");

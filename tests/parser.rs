@@ -21,7 +21,7 @@ macro_rules! parse_blocks (($info:tt) => ({
         .replace(" ! / ", "/")
         .replace(": =", ":=")
         .replace(" . ", ".");
-    let blocks = parse_string(&mut program, &stringy, "test");
+    let blocks = parse_string(&mut program.state.interner, &stringy, "test");
     blocks
 }));
 

@@ -1,6 +1,6 @@
 extern crate eve;
 use eve::indexes::*;
-use eve::ops::{EstimateIter, RoundHolder, Change};
+use eve::ops::{EstimateIter, OutputRounds, RoundHolder, Change};
 use std::collections::HashMap;
 
 #[test]
@@ -562,7 +562,7 @@ fn test_anti_distinct(left: Vec<(usize, i32)>, right: Vec<(usize, i32)>, expecte
     }
     let right_counts = round_counts_to_distinct_counts(&right);
     let right_iter = DistinctIter::new(&right_counts);
-    let mut distinct_changes = RoundHolder::new();
+    let mut distinct_changes = OutputRounds::new();
     distinct_changes.output_rounds.push((0, 1));
     distinct_changes.compute_output_rounds(left_iter);
     distinct_changes.compute_anti_output_rounds(right_iter);

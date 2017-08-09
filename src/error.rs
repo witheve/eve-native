@@ -13,6 +13,7 @@ pub enum ParseError {
     InvalidBlock,
     MissingEnd,
     MissingUpdate,
+    NumberOverflow()
 }
 
 impl fmt::Display for ParseError {
@@ -23,6 +24,7 @@ impl fmt::Display for ParseError {
             &ParseError::InvalidBlock => { write!(f, "This block is invalid, but unfortunately I don't have a lot of information about why.") }
             &ParseError::MissingEnd => { write!(f, "The `end` keyword is missing for this block.") }
             &ParseError::MissingUpdate => { write!(f, "This block is missing either a `bind` or `commit` section.") }
+            &ParseError::NumberOverflow() => { write!(f, "This block contains a number too large or small to represent with the numeric datatype in use.") }
         }
     }
 }

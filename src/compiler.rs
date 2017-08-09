@@ -4,7 +4,7 @@ extern crate term_painter;
 
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
-use ops::{Interner, Field, Constraint, register, Program, make_scan, make_anti_scan,
+use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
           make_multi_function, make_aggregate, Block};
 use std::io::prelude::*;
@@ -32,14 +32,21 @@ macro_rules! get_provided (
     });
 );
 
-struct FunctionInfo {
-    is_multi: bool,
-    is_aggregate: bool,
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum FunctionKind {
+    Multi,
+    Scalar,
+    Sum,
+    Sort,
+}
+
+pub struct FunctionInfo {
+    kind: FunctionKind,
     params: Vec<String>,
     outputs: Vec<String>,
 }
 
-enum ParamType {
+pub enum ParamType {
     Param(usize),
     Output(usize),
     Invalid,
@@ -48,18 +55,19 @@ enum ParamType {
 impl FunctionInfo {
     pub fn new(raw_params:Vec<&str>) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:false, is_aggregate:false, params, outputs: vec![] }
+        FunctionInfo { kind: FunctionKind::Scalar, params, outputs: vec![] }
     }
 
     pub fn multi(raw_params:Vec<&str>, raw_outputs:Vec<&str>) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
         let outputs = raw_outputs.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:true, is_aggregate:false, params, outputs }
+        FunctionInfo { kind: FunctionKind::Multi, params, outputs }
     }
 
-    pub fn aggregate(raw_params:Vec<&str>) -> FunctionInfo {
+    pub fn aggregate(raw_params:Vec<&str>, raw_outputs:Vec<&str>, kind: FunctionKind) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { is_multi:false, is_aggregate:true, params, outputs: vec![] }
+        let outputs = raw_outputs.iter().map(|s| s.to_string()).collect();
+        FunctionInfo { kind, params, outputs }
     }
 
 
@@ -72,6 +80,10 @@ impl FunctionInfo {
             ParamType::Invalid
         }
     }
+
+    pub fn get_params(&self) -> &Vec<String> {
+        &self.params
+    }
 }
 
 lazy_static! {
@@ -83,6 +95,9 @@ lazy_static! {
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/absolute".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/mod".to_string(), FunctionInfo::new(vec!["value", "by"]));
+        m.insert("math/pow".to_string(), FunctionInfo::new(vec!["value", "exponent"]));
+        m.insert("math/to-fixed".to_string(), FunctionInfo::new(vec!["value", "to"]));
+        m.insert("math/to-hex".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/ceiling".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/floor".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("math/round".to_string(), FunctionInfo::new(vec!["value"]));
@@ -97,13 +112,20 @@ lazy_static! {
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("eve-internal/string/split-reverse".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));
-        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"]));
-        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"]));
-        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![]));
+        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["sum"], FunctionKind::Sum));
+        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["average"], FunctionKind::Sum));
+        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], vec!["count"], FunctionKind::Sum));
+        m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["top"], FunctionKind::Sort));
+        m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["bottom"], FunctionKind::Sort));
+        m.insert("gather/next".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
+        m.insert("gather/previous".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
         m
     };
 }
 
+pub fn get_function_info(op:&str) -> Option<&FunctionInfo> {
+    return FUNCTION_INFO.get(op);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputType {
@@ -156,7 +178,7 @@ pub enum Node<'a> {
 #[derive(Debug, Clone)]
 pub enum SubBlock {
     Not(Compilation),
-    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Field),
+    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, FunctionKind),
     AggregateScan(Compilation),
     IfBranch(Compilation, Vec<Field>),
     If(Compilation, Vec<Field>, bool),
@@ -664,9 +686,9 @@ impl<'a> Node<'a> {
                             ParamType::Param(ix) => { cur_params[ix] = v; }
                             ParamType::Output(ix) => { cur_outputs[ix] = v; }
                             ParamType::Invalid => {
-                                match (info.is_aggregate, a) {
-                                    (true, "per") => { group.push(v) }
-                                    (true, "for") => { projection.push(v) }
+                                match (info.kind, a) {
+                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") => { group.push(v) }
+                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") => { projection.push(v) }
                                     _ => {
                                         cur_block.error(span, error::Error::UnknownFunctionParam(op.to_string(), a.to_string()));
                                     }
@@ -721,19 +743,23 @@ impl<'a> Node<'a> {
                     }
                 }
                 let final_result = Some(cur_outputs[0].clone());
-                if info.is_multi {
-                    cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
-                } else if info.is_aggregate {
-                    let mut sub_block = Compilation::new_child(cur_block);
-                    let unified_output = cur_block.get_unified(&cur_outputs[0]);
-                    sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output));
-                    cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output));
-                } else {
-                    cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
+                match info.kind {
+                    FunctionKind::Multi => {
+                        cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
+                    },
+                    FunctionKind::Sort | FunctionKind::Sum => {
+                        let mut sub_block = Compilation::new_child(cur_block);
+                        let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
+                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
+                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output, info.kind));
+                    },
+                    FunctionKind::Scalar => {
+                        cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
+                    }
                 }
                 final_result
             },
-            &Node::RecordLookup(ref attrs, ..) => {
+            &Node::RecordLookup(ref attrs, output_type) => {
                 let mut entity = None;
                 let mut attribute = None;
                 let mut value = None;
@@ -778,7 +804,7 @@ impl<'a> Node<'a> {
                         "entity" => {}
                         "attribute" => attribute = v,
                         "value" => value = v,
-                        _ => panic!("Lookup supports only entity, attribute, and value lookups.")
+                        _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
 
@@ -796,7 +822,12 @@ impl<'a> Node<'a> {
                     value = Some(reg)
                 }
 
-                cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap()));
+                match output_type {
+                    OutputType::Lookup => cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap())),
+                    OutputType::Commit => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true}),
+                    OutputType::Bind => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false})
+                }
+
                 None
             },
             &Node::Record(ref var, ref attrs) => {
@@ -936,6 +967,11 @@ impl<'a> Node<'a> {
                     (None, &Node::NoneValue) => { avs.push((Field::Value(0), Field::Value(0))) }
                     (Some(attr), &Node::NoneValue) => { avs.push((interner.string(attr), Field::Value(0))) }
                     (Some(attr), &Node::ExprSet(ref nodes)) => {
+                        for node in nodes {
+                            avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
+                        }
+                    },
+                    (Some(attr), &Node::RecordSet(ref nodes)) => {
                         for node in nodes {
                             avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
                         }
@@ -1142,12 +1178,15 @@ impl<'a> Node<'a> {
                 key_attrs.extend(inputs.iter());
                 make_anti_scan(key_attrs)
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, _, _, ref output) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, _, ref output, kind) => {
                 let block_name = cur_block.block_name.to_string();
                 let result_id = interner.string(&format!("{}|sub_block|aggregate_result|{}", block_name, ix));
                 let mut result_key = vec![result_id];
                 result_key.extend(group.iter());
-                make_intermediate_scan(result_key, vec![output.clone()])
+                if kind == FunctionKind::Sort {
+                    result_key.extend(projection.iter());
+                }
+                make_intermediate_scan(result_key, output.clone())
             }
             &mut SubBlock::AggregateScan(..) => { panic!("Tried directly compiling an aggregate scan") }
             &mut SubBlock::IfBranch(..) => { panic!("Tried directly compiling an if branch") }
@@ -1177,7 +1216,7 @@ impl<'a> Node<'a> {
                 related.push(make_intermediate_insert(key_attrs, vec![], true));
                 cur_block.constraints = related;
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, ..) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, _) => {
                 let block_name = cur_block.block_name.to_string();
 
                 // generate the scan block
@@ -1500,10 +1539,10 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     // for c in comp.constraints.iter() {
     //     println!("{:?}", c);
     // }
-    compilation_to_blocks(comp, name, content)
+    compilation_to_blocks(comp, interner, name, content)
 }
 
-pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> Vec<Block> {
+pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path:&str, source: &str) -> Vec<Block> {
     let mut compilation_blocks = vec![];
     if comp.errors.len() > 0 {
         report_errors(&comp.errors, path, source);
@@ -1524,22 +1563,21 @@ pub fn compilation_to_blocks(mut comp:Compilation, path:&str, source: &str) -> V
             // for c in sub_comp.constraints.iter() {
             //     println!("            {:?}", c);
             // }
-            compilation_blocks.push(Block::new(&sub_name, sub_comp.constraints.clone()));
+            compilation_blocks.push(Block::new(&sub_name, interner.string_id(&sub_name), sub_comp.constraints.clone()));
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
     // println!("");
-    compilation_blocks.push(Block::new(&block_name, comp.constraints));
+    compilation_blocks.push(Block::new(&block_name, interner.string_id(&block_name), comp.constraints));
     compilation_blocks
 }
 
-pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block> {
+pub fn parse_string(interner:&mut Interner, content:&str, path:&str) -> Vec<Block> {
     let mut state = ParseState::new(content);
     let res = embedded_blocks(&mut state, path);
     if let ParseResult::Ok(mut cur) = res {
         if let Node::Doc { ref mut blocks, .. } = cur {
-            let interner = &mut program.state.interner;
             let mut program_blocks = vec![];
             let mut ix = 0;
             for block in blocks {
@@ -1558,7 +1596,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
                 // for c in comp.constraints.iter() {
                 //     println!("   {:?}", c);
                 // }
-                program_blocks.extend(compilation_to_blocks(comp, &block_name[..], content));
+                program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content));
             }
             program_blocks
         } else {
@@ -1569,7 +1607,7 @@ pub fn parse_string(program:&mut Program, content:&str, path:&str) -> Vec<Block>
     }
 }
 
-pub fn parse_file(program:&mut Program, path:&str, report: bool) -> Vec<Block> {
+pub fn parse_file(interner:&mut Interner, path:&str, report: bool) -> Vec<Block> {
     let metadata = fs::metadata(path).expect(&format!("Invalid path: {:?}", path));
     let mut paths = vec![];
     if metadata.is_file() {
@@ -1595,7 +1633,7 @@ pub fn parse_file(program:&mut Program, path:&str, report: bool) -> Vec<Block> {
         let mut file = File::open(&cur_path).expect("Unable to open the file");
         let mut contents = String::new();
         file.read_to_string(&mut contents).expect("Unable to read the file");
-        blocks.extend(parse_string(program, &contents, &cur_path).into_iter());
+        blocks.extend(parse_string(interner, &contents, &cur_path).into_iter());
     }
     blocks
 }

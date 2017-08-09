@@ -1557,3 +1557,522 @@ test!(base_aggregate_in_choose_rounds_retraction, {
         [#success]
     end
 });
+
+test!(base_aggregate_top, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#max foo: [value: 4]]
+        [#max foo: [value: 5]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_top_remove, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        foo = [#foo value: 5]
+    commit
+        foo := none
+    end
+
+    search
+        [#max foo: [value: 4]]
+        [#max foo: [value: 3]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_top_rounds, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+    end
+
+    search
+        [#foo value]
+        value >= 3
+        value < 6
+    bind
+        [#foo value: value + 1]
+    end
+
+    search
+        [#max foo: [value: 5]]
+        [#max foo: [value: 6]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_top_rounds_removal, {
+    search
+        foo = [#foo value]
+        gather!/top![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+    end
+
+    search
+        [#foo value]
+        value >= 3
+        value < 6
+    bind
+        [#foo value: value + 1]
+    end
+
+    search
+        foo = [#foo value: 3]
+        [#foo value: 6]
+    commit
+        foo := none
+    end
+
+    search
+        [#max foo: [value: 1]]
+        [#max foo: [value: 2]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_bottom, {
+    search
+        foo = [#foo value]
+        gather!/bottom![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#max foo: [value: 1]]
+        [#max foo: [value: 2]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_bottom_remove, {
+    search
+        foo = [#foo value]
+        gather!/bottom![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        foo = [#foo value: 1]
+    commit
+        foo := none
+    end
+
+    search
+        [#max foo: [value: 2]]
+        [#max foo: [value: 3]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_bottom_rounds, {
+    search
+        foo = [#foo value]
+        gather!/bottom![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#foo value]
+        value <= 4
+        value > 1
+    bind
+        [#foo value: value - 1]
+    end
+
+    search
+        [#max foo: [value: 1]]
+        [#max foo: [value: 2]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_bottom_rounds_removal, {
+    search
+        foo = [#foo value]
+        gather!/bottom![for:(value), limit:2]
+    bind
+        [#max foo]
+    end
+
+    commit
+        [#foo value: 4]
+        [#foo value: 5]
+        [#foo value: 6]
+    end
+
+    search
+        [#foo value]
+        value <= 4
+        value > 1
+    bind
+        [#foo value: value - 1]
+    end
+
+    search
+        foo = [#foo value:4]
+        [#foo value:1]
+    commit
+        foo := none
+    end
+
+    search
+        [#max foo: [value: 5]]
+        [#max foo: [value: 6]]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_next, {
+    search
+        foo = [#foo value]
+        v2 = gather!/next![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#next value: 1 v2: 2]
+        [#next value: 2 v2: 3]
+        [#next value: 3 v2: 4]
+        [#next value: 4 v2: 5]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_next_multi, {
+    search
+        foo = [#foo value]
+        (_, foo2) = gather!/next![for:(value, foo)]
+    bind
+        [#next value v2: foo2.value]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#next value: 1 v2: 2]
+        [#next value: 2 v2: 3]
+        [#next value: 3 v2: 4]
+        [#next value: 4 v2: 5]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_next_remove, {
+    search
+        foo = [#foo value]
+        v2 = gather!/next![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        foo = [#foo value: 1]
+    commit
+        foo := none
+    end
+
+    search
+        [#next value: 2 v2: 3]
+        [#next value: 3 v2: 4]
+        [#next value: 4 v2: 5]
+    bind
+        [#success]
+    end
+});
+
+
+test!(base_aggregate_next_rounds, {
+    search
+        foo = [#foo value]
+        v2 = gather!/next![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#foo value]
+        value <= 4
+        value > 1
+    bind
+        [#foo value: value - 1]
+    end
+
+    search
+        [#next value: 1 v2: 2]
+        [#next value: 2 v2: 3]
+        [#next value: 3 v2: 4]
+        [#next value: 4 v2: 5]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_next_rounds_removal, {
+    search
+        foo = [#foo value]
+        v2 = gather!/next![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 4]
+        [#foo value: 5]
+        [#foo value: 6]
+    end
+
+    search
+        [#foo value]
+        value <= 4
+        value > 1
+    bind
+        [#foo value: value - 1]
+    end
+
+    search
+        foo = [#foo value:4]
+        [#foo value:1]
+    commit
+        foo := none
+    end
+
+    search
+        [#next value: 5 v2: 6]
+        not([#next value: 4 v2: 5])
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_prev, {
+    search
+        foo = [#foo value]
+        v2 = gather!/previous![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#next value: 2 v2: 1]
+        [#next value: 3 v2: 2]
+        [#next value: 4 v2: 3]
+        [#next value: 5 v2: 4]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_prev_remove, {
+    search
+        foo = [#foo value]
+        v2 = gather!/previous![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        foo = [#foo value: 1]
+    commit
+        foo := none
+    end
+
+    search
+        [#next value: 3 v2: 2]
+        [#next value: 4 v2: 3]
+        [#next value: 5 v2: 4]
+    bind
+        [#success]
+    end
+});
+
+
+test!(base_aggregate_prev_rounds, {
+    search
+        foo = [#foo value]
+        v2 = gather!/previous![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#foo value]
+        value <= 4
+        value > 1
+    bind
+        [#foo value: value - 1]
+    end
+
+    search
+        [#next value: 2 v2: 1]
+        [#next value: 3 v2: 2]
+        [#next value: 4 v2: 3]
+        [#next value: 5 v2: 4]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_prev_rounds_removal, {
+    search
+        foo = [#foo value]
+        v2 = gather!/previous![for:(value)]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 4]
+        [#foo value: 5]
+        [#foo value: 6]
+    end
+
+    search
+        [#foo value]
+        value <= 4
+        value > 1
+    bind
+        [#foo value: value - 1]
+    end
+
+    search
+        foo = [#foo value:4]
+        [#foo value:1]
+    commit
+        foo := none
+    end
+
+    search
+        [#next value: 6 v2: 5]
+        not([#next value: 5 v2: 4])
+    bind
+        [#success]
+    end
+});

@@ -10,9 +10,9 @@ extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault};
 use std::collections::hash_map::{Entry};
-use std::collections::btree_map;
 use std::iter::{Iterator, self};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, BTreeSet, btree_map};
+use compiler::{FunctionKind};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -347,37 +347,46 @@ pub struct RoundEntry {
     active_rounds: Vec<i32>,
 }
 
-impl RoundEntry {
-    pub fn update_active(&mut self, round:Round, count:Count) {
+fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Count) {
         let round_i32 = round as i32;
         if count > 0 {
-            let pos = match self.active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
+            match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
                 Ok(pos) =>  {
-                    if self.active_rounds[pos] < 0 {
-                        pos
+                    let cur = active_rounds[pos];
+                    if cur < 0 {
+                        let diff = round as i32 * count;
+                        if cur + diff == 0 {
+                            active_rounds.remove(pos);
+                        } else {
+                            active_rounds[pos] = round as i32;
+                        }
                     } else {
                         panic!("Adding a round that is already in the index: {:?}", round)
                     }
                 }
-                Err(pos) => pos,
+                Err(pos) => active_rounds.insert(pos, round as i32),
             };
-            self.active_rounds.insert(pos, round as i32);
         } else {
-            let (pos, remove) = match self.active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
+            let (pos, remove) = match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
                 Ok(pos) => (pos, true),
                 Err(pos) => (pos, false),
             };
             if remove {
-                self.active_rounds.remove(pos);
+                active_rounds.remove(pos);
                 // we might be doing a swing from positive to negative, which we'd see by getting a
                 // count of -2 instead of -1. If so, we need to insert the negative.
                 if count < -1 {
-                    self.active_rounds.insert(pos, (round as i32) * -1);
+                    active_rounds.insert(pos, (round as i32) * -1);
                 }
             } else {
-                self.active_rounds.insert(pos, (round as i32) * -1);
+                active_rounds.insert(pos, (round as i32) * -1);
             }
         }
+}
+
+impl RoundEntry {
+    pub fn update_active(&mut self, round:Round, count:Count) {
+        update_active_rounds_vec(&mut self.active_rounds, round, count);
     }
 }
 
@@ -531,7 +540,9 @@ impl DistinctIndex {
                 let (should_remove_entry, remove_indexed) = {
                     let info = entry.get_mut();
                     info.update_active(round, -1);
-                    (!info.rounds.iter().any(|x| *x != 0), info.active_rounds.len() == 0)
+                    let active_cleared = info.active_rounds.len() == 0;
+                    if active_cleared { info.inserted = false; }
+                    (!info.rounds.iter().any(|x| *x != 0), active_cleared)
                 };
                 if should_remove_entry && remove_indexed {
                     entry.remove_entry();
@@ -643,13 +654,17 @@ pub enum AggregateEntry {
     Empty,
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
+    SortedSum { items: BTreeSet<Vec<Interned>>, bound: Interned, count: usize, limit: usize },
+    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
 }
 
 impl AggregateEntry {
-    pub fn get_result(&self) -> f32 {
+    pub fn get_result(&self, interner:&mut Interner) -> Vec<Interned> {
         match self {
-            &AggregateEntry::Result(res) => res,
-            &AggregateEntry::Counted { result, .. } => result,
+            &AggregateEntry::Result(res) => vec![interner.number_id(res)],
+            &AggregateEntry::Counted { result, .. } => vec![interner.number_id(result)],
+            &AggregateEntry::SortedSum {..} => { unimplemented!() },
+            &AggregateEntry::Sorted {..} => { unimplemented!() },
             &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
         }
     }
@@ -659,6 +674,7 @@ enum IntermediateLevel {
     Value(HashMap<Vec<Interned>, RoundEntry, MyHasher>),
     KeyOnly(RoundEntry),
     SumAggregate(BTreeMap<Round, AggregateEntry>),
+    SortAggregate(Vec<Round>, AggregateEntry),
 }
 
 pub struct IntermediateIndex {
@@ -707,9 +723,8 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
             &mut lookup.entry(value.clone())
                 .or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] }).rounds
         }
-        &mut IntermediateLevel::SumAggregate(..) => {
-            unimplemented!();
-        }
+        &mut IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
+        &mut IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
     };
     generic_distinct(counts, count, round, insert, false);
 }
@@ -731,6 +746,34 @@ pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, Intermed
     }
 }
 
+type AggregateChange = (Vec<Interned>, Vec<Interned>, Vec<Interned>, Round, Count, bool);
+
+pub fn make_aggregate_change(out:&Vec<Interned>, mut value:Vec<Interned>, extra_key:usize, round:Round, count:Count) -> AggregateChange {
+    let mut to_change = out.clone();
+    to_change.extend(value.iter());
+    let (key, final_value) = if extra_key > 0 {
+        let mut key = out.clone();
+        let real_value = value.split_off(extra_key);
+        key.extend(value);
+        (key, real_value)
+    } else {
+        (out.clone(), value)
+    };
+    (to_change, key, final_value, round, count, false)
+}
+
+pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, value:&Vec<Internable>, round:Round) {
+    let prev = cur_aggregate.get_result(interner);
+    action(cur_aggregate, &value);
+    let neue = cur_aggregate.get_result(interner);
+    if neue != prev {
+        // add a remove for the previous value
+        changes.push(make_aggregate_change(&out, prev, 0, round, -1));
+        // add an add for the new value
+        changes.push(make_aggregate_change(&out, neue, 0, round, 1));
+    }
+}
+
 impl IntermediateIndex {
 
     pub fn new() -> IntermediateIndex {
@@ -748,9 +791,8 @@ impl IntermediateIndex {
                             _ => false
                         }
                     },
-                    &IntermediateLevel::SumAggregate(..) => {
-                        unimplemented!();
-                    }
+                    &IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
+                    &IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
                 }
             }
             None => false,
@@ -768,67 +810,84 @@ impl IntermediateIndex {
                             None => DistinctIter::new(&self.empty),
                         }
                     }
-                    &IntermediateLevel::SumAggregate(..) => {
-                        unimplemented!();
-                    }
+                    &IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
+                    &IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
                 }
             }
             None => DistinctIter::new(&self.empty),
         }
     }
 
-    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, value:Vec<Internable>, round:Round, action:AggregateFunction, out:Vec<Interned>) {
+    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, mut projection:Vec<Internable>, value:Vec<Internable>, round:Round, count:Count, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
+        let projection_len = projection.len();
         let mut changes = vec![];
         {
-            let cur = self.index.entry(group).or_insert_with(|| IntermediateLevel::SumAggregate(BTreeMap::new()));
-            if let &mut IntermediateLevel::SumAggregate(ref mut rounds) = cur {
-                match rounds.entry(round) {
-                    btree_map::Entry::Occupied(mut ent) => {
-                        let cur_aggregate = ent.get_mut();
-                        let prev = cur_aggregate.get_result();
-                        action(cur_aggregate, value.clone());
-                        let neue = cur_aggregate.get_result();
-                        if neue != prev {
-                            // add a remove for the previous value
-                            let mut to_remove = out.clone();
-                            let prev_interned = interner.number_id(prev);
-                            to_remove.push(prev_interned);
-                            changes.push((to_remove, out.clone(), vec![prev_interned], round, -1, false));
+            let cur = self.index.entry(group).or_insert_with(|| {
+                if kind == FunctionKind::Sum {
+                    IntermediateLevel::SumAggregate(BTreeMap::new())
+                } else {
+                    IntermediateLevel::SortAggregate(vec![], AggregateEntry::Sorted { items: BTreeMap::new(), current_round: 0, current_params:None, changes: vec![], limit: 0 })
+                }
+            });
+            match cur {
+                &mut IntermediateLevel::SumAggregate(ref mut rounds) => {
+                    match rounds.entry(round) {
+                        btree_map::Entry::Occupied(mut ent) => {
+                            let cur_aggregate = ent.get_mut();
+                            update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &value, round);
+                        }
+                        btree_map::Entry::Vacant(ent) => {
+                            let mut cur_aggregate = AggregateEntry::Empty;
+                            action(&mut cur_aggregate, &value);
                             // add an add for the new value
-                            let mut to_add = out.clone();
-                            let cur_interned = interner.number_id(neue);
-                            to_add.push(cur_interned);
-                            changes.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
+                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), projection_len, round, 1));
+                            ent.insert(cur_aggregate);
                         }
                     }
-                    btree_map::Entry::Vacant(ent) => {
-                        let mut cur_aggregate = AggregateEntry::Empty;
-                        action(&mut cur_aggregate, value.clone());
-                        // add an add for the new value
-                        let mut to_add = out.clone();
-                        let cur_interned = interner.number_id(cur_aggregate.get_result());
-                        to_add.push(cur_interned);
-                        changes.push((to_add, out.clone(), vec![cur_interned], round, 1, false));
-                        ent.insert(cur_aggregate);
+                    for (k, v) in rounds.range_mut(round+1..) {
+                        update_aggregate(interner, &mut changes, &out, action, v, &value, *k);
                     }
                 }
-                for (k, v) in rounds.range_mut(round+1..) {
-                    let prev = v.get_result();
-                    action(v, value.clone());
-                    let neue = v.get_result();
-                    if neue != prev {
-                        // add a remove for the previous value
-                        let mut to_remove = out.clone();
-                        let prev_interned = interner.number_id(prev);
-                        to_remove.push(prev_interned);
-                        changes.push((to_remove, out.clone(), vec![prev_interned], *k, -1, false));
-                        // add an add for the new value
-                        let mut to_add = out.clone();
-                        let cur_interned = interner.number_id(neue);
-                        to_add.push(cur_interned);
-                        changes.push((to_add, out.clone(), vec![cur_interned], *k, 1, false));
+                &mut IntermediateLevel::SortAggregate(ref mut rounds, ref mut entry) => {
+                    if let &mut AggregateEntry::Sorted { ref mut current_params, .. } = entry {
+                        *current_params = Some(value);
                     }
+                    let start = match rounds.binary_search(&round) {
+                        Ok(pos) =>  { pos }
+                        Err(pos) => { rounds.insert(pos, round); pos },
+                    };
+                    for round in rounds[start..].iter().cloned() {
+                        if let &mut AggregateEntry::Sorted { ref mut current_round, .. } = entry {
+                            *current_round = round;
+                        }
+                        action(entry, &projection);
+                    }
+                    if let &mut AggregateEntry::Sorted { current_params: Some(ref value), ref mut items, changes:ref mut entry_changes, .. } = entry {
+                        // we have to extend the projection with the params in order to account for
+                        // things like the limit changing. If we didn't store that, we might
+                        // mistakenly remove keys when the param changes. E.g. the projection
+                        // remains the same but the limit changes: [foo, bar] [1] vs [foo, bar]
+                        // [2], depending on the order we receive the adds/removes, we might end up
+                        // with no [foo, bar] key at all.
+                        projection.extend(value.iter().cloned());
+                        // Insert it into the items btree
+                        match items.entry(projection) {
+                            btree_map::Entry::Occupied(ref mut ent) => {
+                                update_active_rounds_vec(ent.get_mut(), round, count);
+                            },
+                            btree_map::Entry::Vacant(ent) => {
+                                ent.insert(vec![round as i32 * count]);
+                            }
+                        }
+                        // and update the rounds to make sure we include this round in the future
+                        changes.extend(entry_changes.drain(..).map(|(mut value, round, count)| {
+                            let result = value.drain(..).map(|x| interner.internable_to_id(x)).collect();
+                            make_aggregate_change(&out, result, projection_len, round, count)
+                        }));
+                    }
+
                 }
+                _ => { unreachable!() }
             }
         }
         for (full_key, key, value, round, count, negate) in changes {
@@ -856,9 +915,8 @@ impl IntermediateIndex {
                 iter.iter = OutputingIter::Empty;
                 true
             },
-            Some(&IntermediateLevel::SumAggregate(_)) => {
-                unimplemented!();
-            },
+            Some(&IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
+            Some(&IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
             None => {
                 iter.iter = OutputingIter::Empty;
                 iter.estimate = 0;
@@ -889,6 +947,7 @@ impl IntermediateIndex {
                 lookup.len() == 0
             }
             Some(&mut IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
+            Some(&mut IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
             None => { panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change) }
         };
         if should_remove {
