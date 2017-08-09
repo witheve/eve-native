@@ -64,9 +64,10 @@ impl FunctionInfo {
         FunctionInfo { kind: FunctionKind::Multi, params, outputs }
     }
 
-    pub fn aggregate(raw_params:Vec<&str>, kind: FunctionKind) -> FunctionInfo {
+    pub fn aggregate(raw_params:Vec<&str>, raw_outputs:Vec<&str>, kind: FunctionKind) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { kind, params, outputs: vec![] }
+        let outputs = raw_outputs.iter().map(|s| s.to_string()).collect();
+        FunctionInfo { kind, params, outputs }
     }
 
 
@@ -111,11 +112,13 @@ lazy_static! {
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("eve-internal/string/split-reverse".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));
-        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
-        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
-        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], FunctionKind::Sum));
-        m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
-        m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
+        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["sum"], FunctionKind::Sum));
+        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["average"], FunctionKind::Sum));
+        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], vec!["count"], FunctionKind::Sum));
+        m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["top"], FunctionKind::Sort));
+        m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["bottom"], FunctionKind::Sort));
+        m.insert("gather/next".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
+        m.insert("gather/previous".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
         m
     };
 }
@@ -175,7 +178,7 @@ pub enum Node<'a> {
 #[derive(Debug, Clone)]
 pub enum SubBlock {
     Not(Compilation),
-    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Field, FunctionKind),
+    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, FunctionKind),
     AggregateScan(Compilation),
     IfBranch(Compilation, Vec<Field>),
     If(Compilation, Vec<Field>, bool),
@@ -746,8 +749,8 @@ impl<'a> Node<'a> {
                     },
                     FunctionKind::Sort | FunctionKind::Sum => {
                         let mut sub_block = Compilation::new_child(cur_block);
-                        let unified_output = cur_block.get_unified(&cur_outputs[0]);
-                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output, info.kind));
+                        let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
+                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
                         cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output, info.kind));
                     },
                     FunctionKind::Scalar => {
@@ -1183,7 +1186,7 @@ impl<'a> Node<'a> {
                 if kind == FunctionKind::Sort {
                     result_key.extend(projection.iter());
                 }
-                make_intermediate_scan(result_key, vec![output.clone()])
+                make_intermediate_scan(result_key, output.clone())
             }
             &mut SubBlock::AggregateScan(..) => { panic!("Tried directly compiling an aggregate scan") }
             &mut SubBlock::IfBranch(..) => { panic!("Tried directly compiling an if branch") }
