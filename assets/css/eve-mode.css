@@ -1,0 +1,15 @@
+/*.CodeMirror span:not([class]) { color: #747474; }
+.CodeMirror span[class] { color: black; }*/
+
+.CodeMirror.cm-s-default span.cm-syntax { color: #747474; }
+.CodeMirror.cm-s-default span.cm-comment { color: #747474; font-style: italic; }
+.CodeMirror.cm-s-default span.cm-literal,
+.CodeMirror.cm-s-default span.cm-string,
+.CodeMirror.cm-s-default span.cm-number,
+.CodeMirror.cm-s-default span.cm-atom { color: #00a588; }
+.CodeMirror.cm-s-default span.cm-operator { font-weight: bold; }
+.CodeMirror.cm-s-default span.cm-keyword { font-weight: bold; color: rgb(74, 64, 136); }
+.CodeMirror.cm-s-default span.cm-section { color: black; }
+.CodeMirror.cm-s-default span.cm-tag,
+.CodeMirror.cm-s-default span.cm-def { color: #0076ce; }
+.CodeMirror.cm-s-default span.cm-function { color: #0076ce; }
