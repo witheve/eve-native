@@ -1,39 +1,10 @@
-<<<<<<< HEAD
 commit
-  [#http/send address: "http://jsonplaceholder.typicode.com/posts/1/comments"]
+  [#http/request #req address: "http://echo.jsontest.com/key/value/one/two"]
 end
-=======
- search
-        foo = [#foo value]
-        gather/bottom[for:(value), limit:2]
-    bind
-        [#max foo]
-    end
 
-    commit
-        [#foo value: 4]
-        [#foo value: 5]
-        [#foo value: 6]
-    end
 
-    search
-        [#foo value]
-        value <= 4
-        value > 1
-    bind
-        [#foo value: value - 1]
-    end
-
-    search
-        foo = [#foo value:4]
-        [#foo value:1]
-    commit
-        foo := none
-    end
-
-    search
-        [#max foo: [value]]
-    bind
-        [#ui/text text: "max: {{value}}"]
-    end
->>>>>>> refs/remotes/origin/master
+search
+  [#req http-response: [one key]]
+commit
+  [#ui/text text: "{{one}} {{key}}"]
+end
