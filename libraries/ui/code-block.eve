@@ -1,0 +1,14 @@
+# Code Blocks
+
+Code blocks are intances of CodeMirror editors that can be used to
+display and edit Eve code.
+
+We create a code-block with a default value and id.
+
+search
+  block = [#ui/code-block]
+  value = if block.value then block.value else ""
+  id = if block.id then block.id else block
+watch client/websocket
+  ("code-block/create" id value)
+end
