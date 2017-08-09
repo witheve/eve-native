@@ -6,11 +6,12 @@ end
 
 search
   [#snippet id code]
-commit
+bind
   [#html/element tagname: "div" #block-container id children:
     [#ui/text sort: 1 text: "Block {{id}}"]
     [#ui/code-block sort: 2 id value: code]
     [#ui/button #clear-block id sort: 4 text: "Clear"]
+    [#ui/button #delete-block id sort: 5 text: "Delete"]
   ]
 end
 
@@ -25,5 +26,16 @@ search
   [#html/event/click element: [#clear-block id]]
   block = [#ui/code-block id value]
 commit
-  block.value := "mhgkhgkh"
+  block.value := ""
 end
+
+
+search
+  [#html/event/click element: [#delete-block id]]
+  snippet = [#snippet id]
+commit
+  snippet := none
+end
+
+
+  

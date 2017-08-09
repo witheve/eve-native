@@ -39,7 +39,6 @@ If `value` changes in Eve, we need to sync that in the rendered version
 
 search
   block = [#ui/code-block value]
-  not([#ui/code-block/change new-value: value])
 watch client/websocket
   ("code-block/update", block, value)
 end
