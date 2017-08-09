@@ -21,12 +21,11 @@ use eve::indexes::{WatchDiff};
 use eve::watchers::{Watcher};
 use eve::watchers::system::{SystemTimerWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
-<<<<<<< HEAD
 use eve::watchers::http::{HttpWatcher};
 use eve::watchers::json::JsonWatcher;
-=======
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
->>>>>>> refs/remotes/origin/master
+use eve::watchers::console::{ConsoleWatcher};
+
 
 extern crate iron;
 extern crate staticfile;
@@ -70,6 +69,7 @@ impl ClientHandler {
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
             runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(HttpWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(ConsoleWatcher::new()));
         }
 
         if let Some(persist_file) = persist {

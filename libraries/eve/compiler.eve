@@ -26,6 +26,86 @@ end
 
 ~~~ eve
 search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/function name output]
+watch eve/compiler
+  ("function" constraint block name output)
+end
+~~~
+
+~~~ eve
+search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/function]
+  lookup[entity: constraint attribute value]
+  attribute != "name"
+  attribute != "tag"
+
+watch eve/compiler
+  ("argument" constraint attribute value)
+end
+~~~
+
+~~~ eve
+search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/variadic name output]
+watch eve/compiler
+  ("variadic" constraint block name output)
+end
+~~~
+
+~~~ eve
+search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/variadic argument]
+  index = if s = argument.sort then s else argument.eve-auto-index
+
+watch eve/compiler
+  ("argument" constraint index argument.value)
+end
+~~~
+
+~~~ eve
+// search
+//   variable = [#eve/compiler/variable]
+//   block = [#eve/compiler/block constraint:
+//     [#eve/compiler/gen-id entity: variable]]
+//   output = [#eve/compiler/output entity: variable attribute value]
+//   not(output = [#eve/compiler/non-identity])
+//   block = [#eve/compiler/block constraint: output]
+
+// watch eve/compiler
+//   ("identity-attribute" block variable attribute value)
+// end
+~~~
+
+~~~ eve
+search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/gen-id entity]
+
+watch eve/compiler
+  ("gen-id" constraint block entity)
+end
+~~~
+
+~~~ eve
+search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/gen-id entity attribute]
+  block = [#eve/compiler/block constraint:
+    [#eve/compiler/output entity attribute value]]
+
+watch eve/compiler
+  ("identity" constraint attribute value)
+end
+~~~
+
+
+
+~~~ eve
+search
   var = [#eve/compiler/variable]
   name = if n = var.name then n else var
 
