@@ -1,0 +1,9 @@
+## Compiler 2
+
+Should be merged with the compiler library
+
+search
+  block = [#eve/text-compiler code]
+watch eve/text-compiler
+  ("code", block, code)
+end
