@@ -70,10 +70,13 @@ impl Watcher for HttpWatcher {
 }*/
 
 fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) {
+    println!("HERE0");
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
     let client = Client::new(&handle);
+    println!("HERE1");
     let url = address.parse::<hyper::Uri>().unwrap();
+    println!("HERE2");
     //let mut vec = Vec::new();
     let work = client.get(url).and_then(|res| {
         let status = res.status().as_u16();
@@ -94,5 +97,16 @@ fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) 
             Ok(())
         })
     });
-    core.run(work).unwrap();
+    match core.run(work) {
+        Ok(_) => println!("OK"),
+        Err(e) => {
+            // Form an HTTP Error
+            //let error_id = format!("http/request/error|{:?}|{:?}",&id,address);
+            //changes.push(new_change(&error_id, "tag", Internable::from_str("http/request/error"), "http/request"));
+            //changes.push(new_change(&error_id, "request", Internable::String(id), "http/request"));
+            //changes.push(new_change(&error_id, "error", Internable::String(format!("{:?}",e)), "http/request"));
+            println!("Not OK {:?}",e)
+        },
+    }
+    println!("HERE3");
 }
