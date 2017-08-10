@@ -656,6 +656,43 @@ impl<'a> Iterator for DistinctIter<'a> {
 }
 
 //-------------------------------------------------------------------------
+// RemoteIndex
+//-------------------------------------------------------------------------
+
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RemoteChange {
+    e: Internable,
+    a: Internable,
+    v: Internable,
+    _for: String,
+    _type: String,
+    from: String,
+    to: String,
+}
+
+pub struct RemoteIndex {
+    index: Vec<RemoteChange>,
+}
+
+impl RemoteIndex {
+    pub fn new() -> RemoteIndex {
+        RemoteIndex { index: vec![] }
+    }
+
+    pub fn insert(&mut self, change: RemoteChange) {
+        self.index.push(change);
+    }
+
+    pub fn prepare(&mut self) {
+        self.index.sort();
+    }
+
+    pub fn clear(&mut self) {
+        self.index.clear();
+    }
+}
+
+//-------------------------------------------------------------------------
 // Intermediate Index
 //-------------------------------------------------------------------------
 
