@@ -1,17 +1,21 @@
 use super::super::indexes::{WatchDiff};
 use super::super::ops::{Internable, Interner, RawChange, RunLoopMessage};
 use std::sync::mpsc::{Sender};
+use std::io::{self};
+use watchers::json::{value_to_changes, new_change};
 use super::Watcher;
+
 extern crate futures;
 extern crate hyper;
 extern crate tokio_core;
 extern crate serde_json;
 extern crate serde;
 use self::serde_json::{Value};
-use std::io::{self};
 use self::futures::{Future, Stream};
 use self::hyper::Client;
-use watchers::json::{value_to_changes, new_change};
+//use self::hyper::header::ContentLength;
+//use self::hyper::server::{Http, Request, Response, Service};
+//use std::thread;
 
 pub struct HttpWatcher {
     name: String,
@@ -42,7 +46,9 @@ impl Watcher for HttpWatcher {
                     send_http_request(address, id, &mut changes);
                 },
                 "server" => {
-
+                    println!("Starting HTTP Server");
+                    //http_server(address);
+                    println!("HTTP Server started");
                 },
                 _ => {},
             }           
@@ -53,6 +59,15 @@ impl Watcher for HttpWatcher {
         }
     }
 }
+
+/*fn http_server(address: String, service: str) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        println!("Starting HTTP Server at {}... ", address);
+        let addr = address.parse().unwrap();
+        let server = Http::new().bind(&addr, || Ok(service)).unwrap();
+        server.run().unwrap();
+    })
+}*/
 
 fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) {
     let mut core = tokio_core::reactor::Core::new().unwrap();

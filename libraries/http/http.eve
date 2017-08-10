@@ -18,7 +18,7 @@ end
 ## Process HTTP Requests
 
 search
-  [#http/serve address]
-watch HTTP
+  h = [#http/server address]
+watch http
   ("server", h, address)
 end
