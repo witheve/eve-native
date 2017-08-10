@@ -5,12 +5,17 @@ use std::collections::hash_map::{Entry};
 use std::collections::HashMap;
 use super::Watcher;
 use std::ops::{Neg, AddAssign, MulAssign};
-use serde::de::{self, Deserialize, DeserializeSeed, Visitor, SeqAccess,
+use serde::de::{self, Deserialize, Deserializer, DeserializeSeed, Visitor, SeqAccess,
                 MapAccess, EnumAccess, VariantAccess, IntoDeserializer};
+use serde::ser::{Serialize, Serializer};
 
 extern crate serde_json;
 extern crate serde;
-use self::serde_json::{Map, Value, Error};
+use self::serde_json::{Map, Value};
+use std::fmt;
+use std::error::Error;
+use std::mem::transmute;
+use std::marker::PhantomData;
 
 pub struct JsonWatcher {
     name: String,
@@ -39,13 +44,8 @@ impl Watcher for JsonWatcher {
             let record_id = Internable::to_string(interner.get_value(add[1]));
             let j_arg = Internable::to_string(interner.get_value(add[2]));
             id = j_arg.clone();
-            let mut changes = vec![];
+            let mut changes: Vec<RawChange> = vec![];
             match (&kind[..], j_arg) {
-                ("decode", j_arg) => {
-                    let v: Value = serde_json::from_str(&j_arg).unwrap();
-                    //println!("{:?}",v);
-                    value_to_changes(v, &mut changes, &mut record_id.to_string(), "json-object");
-                },
                 ("encode", j_arg) => {
                     let e = j_arg;
                     let a = Internable::to_string(interner.get_value(add[3]));
@@ -60,7 +60,11 @@ impl Watcher for JsonWatcher {
                         new_record.insert(a, Value::String(v));
                         record_map.insert(e, Value::Object(new_record));
                     }
-                }
+                },
+                ("decode", j_arg) => {
+                    let v: Value = serde_json::from_str(&j_arg).unwrap();
+                    value_to_changes(&mut record_id.to_string(), "json-object", v, &mut changes);
+                },
                 _ => {},
             }           
             match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
@@ -70,10 +74,9 @@ impl Watcher for JsonWatcher {
         }
         //let json = serde_json::to_string(&record_map).unwrap();
         
-        let target_record = record_map.get_mut(&id);
+        //let target_record = record_map.get_mut(&id);
 
-
-        println!("{:?}",target_record);
+        //println!("{:?}",target_record);
         //chchanges.push(RawChange {e: Internable::String(id.clone().to_string()), a: Internable::String("json-string".to_string()), v: Internable::String(json.clone()), n: Internable::String("json/encode".to_string()), count: 1});
         //match self.outgoing.send(RunLoopMessage::Transaction(chchanges)) {
         //    Err(_) => (),
@@ -82,34 +85,99 @@ impl Watcher for JsonWatcher {
     }
 }
 
-fn value_to_changes(value: Value, changes: &mut Vec<RawChange>, id: &mut String, attribute: &str) {
+fn newChange(e: &str, a: &str, v: Internable, n: &str) -> RawChange {
+    RawChange {e: Internable::String(e.to_string()), a: Internable::String(a.to_string()), v: v.clone(), n: Internable::String(n.to_string()), count: 1}
+}
+
+fn value_to_changes(id: &str, attribute: &str, value: Value, changes: &mut Vec<RawChange>) {
+    let node = "json/decode";
     match value {
-        Value::Number(n) => {
+        Value::Number(n) => {    
             if n.is_u64() { 
                 let v = Internable::Number(n.as_u64().unwrap() as u32); 
-                changes.push(RawChange {e: Internable::String(id.clone()), a: Internable::String(attribute.to_string()), v, n: Internable::String("json/decode".to_string()), count: 1});
+                changes.push(newChange(id,attribute,v,node));
+            } else if n.is_i64() {
+                let v = Internable::Number(n.as_i64().unwrap() as u32); 
+                changes.push(newChange(id,attribute,v,node));
             } else if n.is_f64() { 
                 let v = Internable::from_number(n.as_f64().unwrap() as f32); 
-                changes.push(RawChange {e: Internable::String(id.clone()), a: Internable::String(attribute.to_string()), v, n: Internable::String("json/decode".to_string()), count: 1});
+                changes.push(newChange(id,attribute,v,node));
             };
         },
         Value::String(ref n) => {
-            changes.push(RawChange {e: Internable::String(id.clone()), a: Internable::String(attribute.to_string()), v: Internable::String(n.clone()), n: Internable::String("json/decode".to_string()), count: 1});
+            changes.push(newChange(id,attribute,Internable::String(n.clone()),node));
         },
         Value::Bool(ref n) => println!("Bool: {}",n),
         Value::Array(ref n) => {
-            for v in n {
-                value_to_changes(v.clone(), changes, id, attribute);
+            for (ix, value) in n.iter().enumerate() {
+                let ix = ix + 1;
+                let array_id = format!("array|{:?}|{:?}",ix,value);
+                let array_id = &array_id[..];
+                changes.push(newChange(id,attribute,Internable::String(array_id.to_string()),node));
+                changes.push(newChange(array_id,"tag",Internable::String("array".to_string()),node));
+                changes.push(newChange(array_id,"index",Internable::String(ix.to_string()),node));
+                value_to_changes(array_id, "value", value.clone(), changes);
             }
         },
         Value::Object(ref n) => {
             let idq = format!("{:?}",n);
-            changes.push(RawChange {e: Internable::String(id.clone()), a: Internable::String(attribute.to_string()), v: Internable::String(idq.clone()), n: Internable::String("json/decode".to_string()), count: 1});
-            changes.push(RawChange {e: Internable::String(id.clone()), a: Internable::String("tag".to_string()), v: Internable::String("json-object".to_string()), n: Internable::String("json/decode".to_string()), count: 1});
+            changes.push(newChange(id,attribute,Internable::String(idq.clone()),node));
+            changes.push(newChange(id,"tag",Internable::String("json-object".to_string()),node));
             for key in n.keys() {
-                value_to_changes(n[key].clone(), changes, &mut idq.clone(), key);
+                value_to_changes(&mut idq.clone(), key, n[key].clone(), changes);
             }
         },
     _ => {},
     }  
 }   
+
+/*
+#[derive(Debug)]
+pub enum ChangeVec {
+    Changes(Vec<RawChange>)
+}
+
+impl ChangeVec {
+    pub fn new() -> ChangeVec {
+        ChangeVec::Changes(Vec::new())
+    }
+}
+
+impl<'de> Deserialize<'de> for ChangeVec {
+
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct ChangeVecVisitor {
+            marker: PhantomData<ChangeVec>
+        }
+
+        impl ChangeVecVisitor {
+            fn new() -> Self {
+                ChangeVecVisitor {
+                    marker: PhantomData
+                }
+            }
+        }
+
+        impl<'de> Visitor<'de> for ChangeVecVisitor {
+            type Value = ChangeVec;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("expecting a thing")
+            }
+
+            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+                where M: MapAccess<'de>
+            {
+                let mut vec = Vec::new();
+                while let Some(kv) = try!(access.next_entry()) {
+                    vec.push(kv);
+                }
+                Ok(ChangeVec::new())
+            }
+        }
+
+        deserializer.deserialize_any(ChangeVecVisitor::new())
+    }
+}*/
