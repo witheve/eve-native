@@ -12,11 +12,10 @@ use unicode_segmentation::UnicodeSegmentation;
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
-use std::collections::HashMap;
+use std::collections::{HashMap, Bound};
 use std::mem::transmute;
-use std::collections::hash_map::Entry;
 use std::cmp::{self, Eq, PartialOrd};
-use std::collections::hash_map::DefaultHasher;
+use std::collections::hash_map::{DefaultHasher, Entry};
 use std::hash::{Hash, Hasher};
 use std::iter::{Iterator};
 use std::fmt;
@@ -168,11 +167,11 @@ pub struct Block {
 
 impl Block {
 
-    pub fn new(name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
+    pub fn new(interner:&mut Interner, name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
        let mut me = Block { name:name.to_string(), block_id, constraints, solver:None, shapes: vec![] };
        let shapes = me.to_shapes();
        me.shapes.extend(shapes);
-       me.solver = Some(Solver::new(block_id, 0, None, &me.constraints));
+       me.solver = Some(Solver::new(interner, block_id, 0, None, &me.constraints));
        me
     }
 
@@ -180,6 +179,8 @@ impl Block {
         self.constraints.iter().filter(|constraint| {
             match constraint {
                 &&Constraint::Scan {..} => true,
+                &&Constraint::LookupCommit {..} => true,
+                &&Constraint::LookupRemote {..} => true,
                 &&Constraint::AntiScan {..} => true,
                 &&Constraint::IntermediateScan {..} => true,
                 _ => false
@@ -194,9 +195,9 @@ impl Block {
         }
     }
 
-    pub fn gen_pipes(&mut self) -> Vec<Solver> {
+    pub fn gen_pipes(&mut self, interner: &mut Interner) -> Vec<Solver> {
         let scans = self.get_block_scans();
-        let solvers = scans.iter().enumerate().map(|(ix, scan)| Solver::new(self.block_id, ix + 1, Some(*scan), &self.constraints)).collect();
+        let solvers = scans.iter().enumerate().map(|(ix, scan)| Solver::new(interner, self.block_id, ix + 1, Some(*scan), &self.constraints)).collect();
         solvers
     }
 
@@ -207,20 +208,26 @@ impl Block {
         let mut tag_mappings:HashMap<Field, Vec<Interned>> = HashMap::new();
         // find all the e -> tag mappings
         for scan in scans.iter() {
-            if let &&Constraint::Scan {ref e, ref a, ref v, ..} = scan {
-                let actual_a = if let &Field::Value(val) = a { val } else { 0 };
-                let actual_v = if let &Field::Value(val) = v { val } else { 0 };
-                if actual_a == tag && actual_v != 0 {
-                    let mut tags = tag_mappings.entry(e.clone()).or_insert_with(|| vec![]);
-                    tags.push(actual_v);
+            match scan {
+                &&Constraint::Scan {ref e, ref a, ref v, ..} |
+                &&Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                    if actual_a == tag && actual_v != 0 {
+                        let mut tags = tag_mappings.entry(e.clone()).or_insert_with(|| vec![]);
+                        tags.push(actual_v);
+                    }
                 }
+                _ => (),
+
             }
         }
         // go through each scan and create tag, a, v pairs where 0 is wildcard
         for scan in scans.iter() {
             let mut scan_shapes = vec![];
             match scan {
-                &&Constraint::Scan {ref e, ref a, ref v, ..} => {
+                &&Constraint::Scan {ref e, ref a, ref v, ..} |
+                &&Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
                     let actual_e = if let &Field::Value(val) = e { val } else { 0 };
                     let actual_a = if let &Field::Value(val) = a { val } else { 0 };
                     let actual_v = if let &Field::Value(val) = v { val } else { 0 };
@@ -835,11 +842,13 @@ pub type AggregateFunction = fn(&mut AggregateEntry, &Vec<Internable>);
 
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
+    LookupCommit {e: Field, a: Field, v: Field, register_mask: u64},
+    LookupRemote {e: Field, a: Field, v: Field, _for: Field, _type: Field, from: Field, to: Field, register_mask: u64},
     AntiScan {key: Vec<Field>, register_mask: u64},
     IntermediateScan {full_key:Vec<Field>, key: Vec<Field>, value: Vec<Field>, register_mask: u64, output_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
     MultiFunction {op: String, outputs: Vec<Field>, func: MultiFunction, params: Vec<Field>, param_mask: u64, output_mask: u64},
-    Aggregate {op: String, output: Field, add: AggregateFunction, remove:AggregateFunction, group:Vec<Field>, projection:Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64, output_key:Vec<Field>, kind: FunctionKind},
+    Aggregate {op: String, output: Vec<Field>, add: AggregateFunction, remove:AggregateFunction, group:Vec<Field>, projection:Vec<Field>, params: Vec<Field>, param_mask: u64, output_mask: u64, output_key:Vec<Field>, kind: FunctionKind},
     Filter {op: String, func: FilterFunction, left: Field, right: Field, param_mask: u64},
     Insert {e: Field, a: Field, v:Field, commit:bool},
     InsertIntermediate {key:Vec<Field>, value:Vec<Field>, negate:bool},
@@ -866,6 +875,8 @@ impl Constraint {
     pub fn get_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupCommit { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupRemote { ref e, ref a, ref v, ref _for, ref _type, ref from, ref to, ..} => { filter_registers(&vec![e,a,v, _for, _type, from, to]) }
             &Constraint::AntiScan { ref key, ..} => { filter_registers(&key.iter().collect()) }
             &Constraint::IntermediateScan { ref full_key, ..} => {
                 filter_registers(&full_key.iter().collect())
@@ -908,9 +919,11 @@ impl Constraint {
     pub fn get_output_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupCommit { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupRemote { ref e, ref a, ref v, ref _for, ref _type, ref from, ref to, ..} => { filter_registers(&vec![e,a,v, _for, _type, from, to]) }
             &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
-            &Constraint::Aggregate {ref output, ..} => { filter_registers(&vec![output]) }
+            &Constraint::Aggregate {ref output, ..} => { filter_registers(&output.iter().collect()) }
             &Constraint::IntermediateScan {ref value, ..} => { filter_registers(&value.iter().collect()) }
             _ => { vec![] }
         }
@@ -919,6 +932,8 @@ impl Constraint {
     pub fn get_filtering_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupCommit { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupRemote { ref e, ref a, ref v, ref _for, ref _type, ref from, ref to, ..} => { filter_registers(&vec![e,a,v, _for, _type, from, to]) }
             &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::Filter {ref left, ref right, ..} => { filter_registers(&vec![left, right]) }
@@ -932,6 +947,14 @@ impl Constraint {
         match self {
             &mut Constraint::Scan { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
                 replace_registers(&mut vec![e,a,v], lookup);
+                *register_mask = make_register_mask(vec![e,a,v]);
+            }
+            &mut Constraint::LookupCommit { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
+                replace_registers(&mut vec![e,a,v], lookup);
+                *register_mask = make_register_mask(vec![e,a,v]);
+            }
+            &mut Constraint::LookupRemote { ref mut e, ref mut a, ref mut v, ref mut _type, ref mut _for, ref mut to, ref mut from, ref mut register_mask} => {
+                replace_registers(&mut vec![e,a,v,_for,_type,from,to], lookup);
                 *register_mask = make_register_mask(vec![e,a,v]);
             }
             &mut Constraint::AntiScan { ref mut key, ref mut register_mask} => {
@@ -1008,6 +1031,8 @@ impl Clone for Constraint {
     fn clone(&self) -> Self {
         match self {
             &Constraint::Scan { e, a, v, register_mask } => { Constraint::Scan {e,a,v,register_mask} }
+            &Constraint::LookupCommit { e, a, v, register_mask } => { Constraint::LookupCommit {e,a,v,register_mask} }
+            &Constraint::LookupRemote { e, a, v, _for, _type, from, to, register_mask } => { Constraint::LookupRemote { e,a,v,_for,_type,from,to,register_mask } }
             &Constraint::AntiScan { ref key, register_mask } => { Constraint::AntiScan {key:key.clone(),register_mask} }
             &Constraint::IntermediateScan { ref full_key, ref key, ref value, register_mask, output_mask } => {
                 Constraint::IntermediateScan {full_key:full_key.clone(), key:key.clone(), value:value.clone(), register_mask, output_mask}
@@ -1042,6 +1067,8 @@ impl PartialEq for Constraint {
     fn eq(&self, other:&Constraint) -> bool {
         match (self, other) {
             (&Constraint::Scan { e, a, v, ..}, &Constraint::Scan {e:e2, a:a2, v:v2, ..} ) => { e == e2 && a == a2 && v == v2 },
+            (&Constraint::LookupCommit { e, a, v, ..}, &Constraint::LookupCommit {e:e2, a:a2, v:v2, ..} ) => { e == e2 && a == a2 && v == v2 },
+            (&Constraint::LookupRemote { e, a, v, _for, _type, from, to, ..}, &Constraint::LookupRemote {e:e2, a:a2, v:v2, _for:for2, _type:type2, from: from2, to:to2, ..} ) => { e == e2 && a == a2 && v == v2 && _for == for2 && _type == type2 && from == from2 && to == to2 },
             (&Constraint::AntiScan { ref key, ..}, &Constraint::AntiScan { key:ref key2, ..})  => { key == key2 }
             (&Constraint::IntermediateScan { ref full_key, ..}, &Constraint::IntermediateScan { full_key:ref full_key2, ..}) => { full_key == full_key2 }
             (&Constraint::Function {ref op, ref output, ref params, ..}, &Constraint::Function {op:ref op2, output:ref output2, params:ref params2, ..}) => { op == op2 && output == output2 && params == params2 }
@@ -1066,6 +1093,8 @@ impl Hash for Constraint {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             &Constraint::Scan { e, a, v, ..} => { e.hash(state); a.hash(state); v.hash(state); },
+            &Constraint::LookupCommit { e, a, v, ..} => { e.hash(state); a.hash(state); v.hash(state); },
+            &Constraint::LookupRemote { e, a, v, _for, _type, from, to, ..} => { e.hash(state); a.hash(state); v.hash(state); _for.hash(state); _type.hash(state); from.hash(state); to.hash(state); },
             &Constraint::AntiScan { ref key, ..}  => { key.hash(state); }
             &Constraint::IntermediateScan { ref full_key, ..} => { full_key.hash(state) }
             &Constraint::Function {ref op, ref output, ref params, ..} => { op.hash(state); output.hash(state); params.hash(state); }
@@ -1089,6 +1118,8 @@ impl fmt::Debug for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::LookupCommit { e, a, v, .. } => { write!(f, "LookupCommit ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::LookupRemote { e, a, v, .. } => { write!(f, "LookupRemote ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::AntiScan { ref key, .. } => { write!(f, "AntiScan ({:?})", key) }
             &Constraint::IntermediateScan { ref key, ref value, .. } => { write!(f, "IntermediateScan ( {:?}, {:?} )", key, value) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
@@ -1121,6 +1152,16 @@ pub fn make_register_mask(fields: Vec<&Field>) -> u64 {
 pub fn make_scan(e:Field, a:Field, v:Field) -> Constraint {
     let register_mask = make_register_mask(vec![&e,&a,&v]);
     Constraint::Scan{e, a, v, register_mask }
+}
+
+pub fn make_commit_lookup(e:Field, a:Field, v:Field) -> Constraint {
+    let register_mask = make_register_mask(vec![&e,&a,&v]);
+    Constraint::LookupCommit{e, a, v, register_mask }
+}
+
+pub fn make_remote_lookup(e:Field, a:Field, v:Field, _for:Field, _type:Field, from:Field, to:Field) -> Constraint {
+    let register_mask = make_register_mask(vec![&e,&a,&v,&_for,&_type,&from,&to]);
+    Constraint::LookupRemote{e, a, v, _for, _type, from, to, register_mask }
 }
 
 pub fn make_anti_scan(key: Vec<Field>) -> Constraint {
@@ -1185,15 +1226,17 @@ pub fn make_multi_function(op: &str, params: Vec<Field>, outputs: Vec<Field>) ->
     Constraint::MultiFunction {op: op.to_string(), func, params, outputs, param_mask, output_mask }
 }
 
-pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Field, kind:FunctionKind) -> Constraint {
+pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params: Vec<Field>, output: Vec<Field>, kind:FunctionKind) -> Constraint {
     let param_mask = make_register_mask(params.iter().collect::<Vec<&Field>>());
-    let output_mask = make_register_mask(vec![&output]);
+    let output_mask = make_register_mask(output.iter().collect::<Vec<&Field>>());
     let (add, remove):(AggregateFunction, AggregateFunction) = match op {
         "gather/sum" => (aggregate_sum_add, aggregate_sum_remove),
         "gather/count" => (aggregate_count_add, aggregate_count_remove),
         "gather/average" => (aggregate_avg_add, aggregate_avg_remove),
         "gather/top" => (aggregate_top_add, aggregate_top_remove),
         "gather/bottom" => (aggregate_bottom_add, aggregate_bottom_remove),
+        "gather/next" => (aggregate_next_add, aggregate_next_remove),
+        "gather/previous" => (aggregate_prev_add, aggregate_prev_remove),
         _ => panic!("Unknown function: {:?}", op)
     };
     Constraint::Aggregate {op: op.to_string(), add, remove, group, projection, params, output, param_mask, output_mask, output_key:vec![], kind, }
@@ -1642,9 +1685,13 @@ fn is_aggregate_in_round(&(_, v): &(&Vec<Internable>, &Vec<Count>), round:Round)
 pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().rev().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params > v {
@@ -1673,9 +1720,13 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
 pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().rev().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().rev().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params >= v {
@@ -1706,9 +1757,13 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
 pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params < v {
@@ -1737,9 +1792,13 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
 pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
-            if let Some(interned_limit @ &Internable::Number(_)) = limit_params.get(0) {
+            let limit_param = limit_params.get(0);
+            if let Some(interned_limit @ &Internable::Number(_)) = limit_param {
                 let limit = Internable::to_number(interned_limit) as usize;
-                let mut iter = items.iter().filter(|entry| is_aggregate_in_round(entry, current_round)).skip(limit - 1);
+                let mut iter = items.iter().filter(|entry| {
+                    entry.0.last() == limit_param &&
+                    is_aggregate_in_round(entry, current_round)
+                }).skip(limit - 1);
                 match iter.next() {
                     Some((v, _)) => {
                         if params <= v {
@@ -1762,6 +1821,134 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
                         changes.push((neue, current_round, -1));
                     }
                 }
+            }
+        }
+    }
+}
+
+pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let next = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, 1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, -1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, 1));
+            }
+        }
+    }
+}
+
+pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let next = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, -1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, 1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, -1));
+            }
+        }
+    }
+}
+
+pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let prev = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, 1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, -1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, 1));
+            }
+        }
+    }
+}
+
+pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+        if let &Some(_) = current_params {
+            let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
+                .rev()
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            let prev = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
+                .filter(|entry| is_aggregate_in_round(entry, current_round))
+                .next();
+            match prev {
+                Some((v, _)) => {
+                    let mut neue = v.clone();
+                    neue.extend(params.iter().cloned());
+                    changes.push((neue, current_round, -1));
+                    if let Some((prev_next, _)) = next {
+                        let mut neue = v.clone();
+                        neue.extend(prev_next.iter().cloned());
+                        changes.push((neue, current_round, 1));
+                    }
+                }
+                _ => { }
+            }
+            if let Some((params_next, _)) = next {
+                let mut neue = params.clone();
+                neue.extend(params_next.iter().cloned());
+                changes.push((neue, current_round, -1));
             }
         }
     }
@@ -2158,7 +2345,7 @@ impl Program {
 
     pub fn register_block(&mut self, mut block:Block) {
         let ix = self.block_info.blocks.len();
-        let mut pipes = block.gen_pipes();
+        let mut pipes = block.gen_pipes(&mut self.state.interner);
         for (pipe, shapes) in pipes.drain(..).zip(block.shapes.iter()) {
             for shape in shapes {
                 match shape {

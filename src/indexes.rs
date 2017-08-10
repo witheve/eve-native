@@ -557,6 +557,16 @@ impl DistinctIndex {
         self.eavs.contains_key(&(e,a,v))
     }
 
+    pub fn is_commit(&self, e:Interned, a:Interned, v:Interned) -> bool {
+        assert!(e > 0 && a > 0 && v > 0, "Can't check availability of an unformed EAV ({}, {}, {})", e,a,v);
+        match self.eavs.get(&(e,a,v)) {
+            Some(rounds) => {
+                rounds.active_rounds.get(0) == Some(&0)
+            }
+            None => false,
+        }
+    }
+
     pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
         if e == 0 || a == 0 || v == 0 {
             panic!("Can't check availability of an unformed EAV ({}, {}, {})", e, a, v);
@@ -748,10 +758,18 @@ pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, Intermed
 
 type AggregateChange = (Vec<Interned>, Vec<Interned>, Vec<Interned>, Round, Count, bool);
 
-pub fn make_aggregate_change(out:&Vec<Interned>, value:Vec<Interned>, round:Round, count:Count) -> AggregateChange {
+pub fn make_aggregate_change(out:&Vec<Interned>, mut value:Vec<Interned>, extra_key:usize, round:Round, count:Count) -> AggregateChange {
     let mut to_change = out.clone();
     to_change.extend(value.iter());
-    (to_change, out.clone(), value, round, count, false)
+    let (key, final_value) = if extra_key > 0 {
+        let mut key = out.clone();
+        let real_value = value.split_off(extra_key);
+        key.extend(value);
+        (key, real_value)
+    } else {
+        (out.clone(), value)
+    };
+    (to_change, key, final_value, round, count, false)
 }
 
 pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, value:&Vec<Internable>, round:Round) {
@@ -760,9 +778,9 @@ pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChan
     let neue = cur_aggregate.get_result(interner);
     if neue != prev {
         // add a remove for the previous value
-        changes.push(make_aggregate_change(&out, prev, round, -1));
+        changes.push(make_aggregate_change(&out, prev, 0, round, -1));
         // add an add for the new value
-        changes.push(make_aggregate_change(&out, neue, round, 1));
+        changes.push(make_aggregate_change(&out, neue, 0, round, 1));
     }
 }
 
@@ -810,7 +828,8 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, projection:Vec<Internable>, value:Vec<Internable>, round:Round, count:Count, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
+    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, mut projection:Vec<Internable>, value:Vec<Internable>, round:Round, count:Count, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
+        let projection_len = projection.len();
         let mut changes = vec![];
         {
             let cur = self.index.entry(group).or_insert_with(|| {
@@ -831,7 +850,7 @@ impl IntermediateIndex {
                             let mut cur_aggregate = AggregateEntry::Empty;
                             action(&mut cur_aggregate, &value);
                             // add an add for the new value
-                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), round, 1));
+                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), projection_len, round, 1));
                             ent.insert(cur_aggregate);
                         }
                     }
@@ -853,7 +872,14 @@ impl IntermediateIndex {
                         }
                         action(entry, &projection);
                     }
-                    if let &mut AggregateEntry::Sorted { ref mut items, changes:ref mut entry_changes, .. } = entry {
+                    if let &mut AggregateEntry::Sorted { current_params: Some(ref value), ref mut items, changes:ref mut entry_changes, .. } = entry {
+                        // we have to extend the projection with the params in order to account for
+                        // things like the limit changing. If we didn't store that, we might
+                        // mistakenly remove keys when the param changes. E.g. the projection
+                        // remains the same but the limit changes: [foo, bar] [1] vs [foo, bar]
+                        // [2], depending on the order we receive the adds/removes, we might end up
+                        // with no [foo, bar] key at all.
+                        projection.extend(value.iter().cloned());
                         // Insert it into the items btree
                         match items.entry(projection) {
                             btree_map::Entry::Occupied(ref mut ent) => {
@@ -864,7 +890,10 @@ impl IntermediateIndex {
                             }
                         }
                         // and update the rounds to make sure we include this round in the future
-                        changes.extend(entry_changes.drain(..).map(|(mut value, round, count)| make_aggregate_change(&out, value.drain(..).map(|x| interner.internable_to_id(x)).collect(), round, count)));
+                        changes.extend(entry_changes.drain(..).map(|(mut value, round, count)| {
+                            let result = value.drain(..).map(|x| interner.internable_to_id(x)).collect();
+                            make_aggregate_change(&out, result, projection_len, round, count)
+                        }));
                     }
 
                 }

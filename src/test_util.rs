@@ -41,15 +41,15 @@ macro_rules! blocks (($info:tt) => ({
     // @FIXME: any occurrence of search/commit/etc. will be replaced here...
     let stringy = stringify!($info).replace("\n", " ")
         .replace("# ", "#")
-        .replace("search", "\nsearch")
-        .replace("commit", "\ncommit")
-        .replace("bind", "\nbind")
-        .replace("watch", "\nwatch")
-        .replace("project", "\nproject")
-        .replace("end", "\nend\n")
         .replace(" ! [", "[")
         .replace(" ! / ", "/")
         .replace(" ! - ", "-")
+        .replace(" search", "\nsearch")
+        .replace(" commit", "\ncommit")
+        .replace(" bind", "\nbind")
+        .replace(" watch", "\nwatch")
+        .replace(" project", "\nproject")
+        .replace(" end", "\nend\n")
         .replace(": =", ":=")
         .replace(" . ", ".");
     println!("{}", stringy);

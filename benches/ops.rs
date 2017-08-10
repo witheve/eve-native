@@ -24,7 +24,7 @@ fn test_solver(b: &mut Bencher, code: &str, setup:&str) {
     let mut program = Program::new();
 
     let to_test = parse_string(&mut program.state.interner, code, "test").pop().unwrap();
-    let solver = Solver::new(0, 0, None, &to_test.constraints);
+    let solver = Solver::new(&mut program.state.interner, 0, 0, None, &to_test.constraints);
     program.block_info.blocks.push(to_test);
 
     let mut blocks = vec![];

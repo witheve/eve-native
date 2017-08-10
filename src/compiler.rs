@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
 use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
-          make_multi_function, make_aggregate, Block};
+          make_multi_function, make_commit_lookup, make_remote_lookup, make_aggregate, Block};
 use std::io::prelude::*;
 use std::fs::{self, File};
 use std::cmp::{self};
@@ -64,9 +64,10 @@ impl FunctionInfo {
         FunctionInfo { kind: FunctionKind::Multi, params, outputs }
     }
 
-    pub fn aggregate(raw_params:Vec<&str>, kind: FunctionKind) -> FunctionInfo {
+    pub fn aggregate(raw_params:Vec<&str>, raw_outputs:Vec<&str>, kind: FunctionKind) -> FunctionInfo {
         let params = raw_params.iter().map(|s| s.to_string()).collect();
-        FunctionInfo { kind, params, outputs: vec![] }
+        let outputs = raw_outputs.iter().map(|s| s.to_string()).collect();
+        FunctionInfo { kind, params, outputs }
     }
 
 
@@ -111,11 +112,13 @@ lazy_static! {
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("eve-internal/string/split-reverse".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));
-        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
-        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], FunctionKind::Sum));
-        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], FunctionKind::Sum));
-        m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
-        m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], FunctionKind::Sort));
+        m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["sum"], FunctionKind::Sum));
+        m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["average"], FunctionKind::Sum));
+        m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], vec!["count"], FunctionKind::Sum));
+        m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["top"], FunctionKind::Sort));
+        m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["bottom"], FunctionKind::Sort));
+        m.insert("gather/next".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
+        m.insert("gather/previous".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
         m
     };
 }
@@ -155,7 +158,9 @@ pub enum Node<'a> {
     Infix {result:Option<String>, left:Box<Node<'a>>, right:Box<Node<'a>>, op:&'a str},
     Record(Option<String>, Vec<Node<'a>>),
     RecordSet(Vec<Node<'a>>),
-    RecordLookup ( Vec<Node<'a>>, OutputType ),
+    Lookup ( Vec<Node<'a>>, OutputType ),
+    LookupCommit ( Vec<Node<'a>> ),
+    LookupRemote ( Vec<Node<'a>>, OutputType ),
     RecordFunction { op:&'a str, params:Vec<Node<'a>>, outputs:Vec<Node<'a>> },
     OutputRecord(Option<String>, Vec<Node<'a>>, OutputType),
     RecordUpdate {record:Box<Node<'a>>, value:Box<Node<'a>>, op:&'a str, output_type:OutputType},
@@ -175,7 +180,7 @@ pub enum Node<'a> {
 #[derive(Debug, Clone)]
 pub enum SubBlock {
     Not(Compilation),
-    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Field, FunctionKind),
+    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, FunctionKind),
     AggregateScan(Compilation),
     IfBranch(Compilation, Vec<Field>),
     If(Compilation, Vec<Field>, bool),
@@ -419,7 +424,13 @@ impl<'a> Node<'a> {
                 }
                 first
             },
-            &mut Node::RecordLookup(ref mut attrs, _) => {
+            &mut Node::Lookup(ref mut attrs, _) => {
+                for attr in attrs {
+                    attr.gather_equalities(interner, cur_block);
+                }
+                None
+            },
+            &mut Node::LookupCommit(ref mut attrs) => {
                 for attr in attrs {
                     attr.gather_equalities(interner, cur_block);
                 }
@@ -746,8 +757,8 @@ impl<'a> Node<'a> {
                     },
                     FunctionKind::Sort | FunctionKind::Sum => {
                         let mut sub_block = Compilation::new_child(cur_block);
-                        let unified_output = cur_block.get_unified(&cur_outputs[0]);
-                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output, info.kind));
+                        let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
+                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
                         cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output, info.kind));
                     },
                     FunctionKind::Scalar => {
@@ -756,7 +767,7 @@ impl<'a> Node<'a> {
                 }
                 final_result
             },
-            &Node::RecordLookup(ref attrs, output_type) => {
+            &Node::Lookup(ref attrs, output_type) => {
                 let mut entity = None;
                 let mut attribute = None;
                 let mut value = None;
@@ -770,12 +781,7 @@ impl<'a> Node<'a> {
                     }
                 }
 
-                if entity == None {
-                    let var_name = format!("__eve_lookup{}", cur_block.id);
-                    cur_block.id += 1;
-                    let reg = cur_block.get_register(&var_name);
-                    entity = Some(reg)
-                }
+                if entity == None { entity = cur_block.gen_var("eve_lookup"); }
 
                 for attr in attrs {
                     let (local_span, unwrapped) = attr.to_pos_ref(span);
@@ -805,19 +811,8 @@ impl<'a> Node<'a> {
                     }
                 }
 
-                if attribute == None {
-                    let var_name = format!("__eve_lookup{}", cur_block.id);
-                    cur_block.id += 1;
-                    let reg = cur_block.get_register(&var_name);
-                    attribute = Some(reg)
-                }
-
-                if value == None {
-                    let var_name = format!("__eve_lookup{}", cur_block.id);
-                    cur_block.id += 1;
-                    let reg = cur_block.get_register(&var_name);
-                    value = Some(reg)
-                }
+                if attribute == None { attribute = cur_block.gen_var("eve_lookup"); }
+                if value == None { value = cur_block.gen_var("eve_lookup"); }
 
                 match output_type {
                     OutputType::Lookup => cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap())),
@@ -825,6 +820,122 @@ impl<'a> Node<'a> {
                     OutputType::Bind => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false})
                 }
 
+                None
+            },
+            &Node::LookupCommit(ref attrs) => {
+                let mut entity = None;
+                let mut attribute = None;
+                let mut value = None;
+
+                for attr in attrs {
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    match unwrapped {
+                        &Node::Attribute("entity") => { entity = Some(get_provided!(cur_block, local_span, "entity")); },
+                        &Node::AttributeEquality("entity", ref v) => { entity = v.compile(interner, cur_block, local_span); }
+                        _ => {}
+                    }
+                }
+
+                if entity == None { entity = cur_block.gen_var("eve_lookup"); }
+
+                for attr in attrs {
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    let (a, v) = match unwrapped {
+                        &Node::Attribute(a) => { (a, Some(get_provided!(cur_block, local_span, a))) },
+                        &Node::AttributeEquality(a, ref v) => {
+                            let (local_span, unwrapped) = v.to_pos_ref(span);
+                            let result = match unwrapped {
+                                &Node::RecordSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
+                                &Node::ExprSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
+                                _ => v.compile(interner, cur_block, local_span)
+                            };
+                            (a, result)
+                        },
+                        _ => {
+                            panic!("Parse Error: Unrecognized node type in lookup attributes.")
+                        }
+                    };
+
+                    // @FIXME: What do we do if there are multiple fields for a given a?
+                    // Seems like that should be handled in gather_equalities, is it?
+                    match a {
+                        "entity" => {}
+                        "attribute" => attribute = v,
+                        "value" => value = v,
+                        _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
+                    }
+                }
+
+                if attribute == None { attribute = cur_block.gen_var("eve_lookup"); }
+                if value == None { value = cur_block.gen_var("eve_lookup"); }
+
+                cur_block.constraints.push(make_commit_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap()));
+                None
+            },
+            &Node::LookupRemote(ref attrs, output_type) => {
+                let mut entity = None;
+                let mut attribute = None;
+                let mut value = None;
+                let mut _for = None;
+                let mut _type = None;
+                let mut to = None;
+                let mut from = None;
+
+                for attr in attrs {
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    match unwrapped {
+                        &Node::Attribute("entity") => { entity = Some(get_provided!(cur_block, local_span, "entity")); },
+                        &Node::AttributeEquality("entity", ref v) => { entity = v.compile(interner, cur_block, local_span); }
+                        _ => {}
+                    }
+                }
+
+                if entity == None { entity = cur_block.gen_var("eve_lookup"); }
+
+                for attr in attrs {
+                    let (local_span, unwrapped) = attr.to_pos_ref(span);
+                    let (a, v) = match unwrapped {
+                        &Node::Attribute(a) => { (a, Some(get_provided!(cur_block, local_span, a))) },
+                        &Node::AttributeEquality(a, ref v) => {
+                            let (local_span, unwrapped) = v.to_pos_ref(span);
+                            let result = match unwrapped {
+                                &Node::RecordSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); },
+                                &Node::ExprSet(..) => { panic!("Parse Error: We don't currently support Record sets as function attributes."); }
+                                _ => v.compile(interner, cur_block, local_span)
+                            };
+                            (a, result)
+                        },
+                        _ => {
+                            panic!("Parse Error: Unrecognized node type in lookup attributes.")
+                        }
+                    };
+
+                    // @FIXME: What do we do if there are multiple fields for a given a?
+                    // Seems like that should be handled in gather_equalities, is it?
+                    match a {
+                        "entity" => {}
+                        "attribute" => attribute = v,
+                        "value" => value = v,
+                        "to" => to = v,
+                        "for" => _for = v,
+                        "type" => _type = v,
+                        "from" => value = v,
+                        _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
+                    }
+                }
+
+                if attribute == None { attribute = cur_block.gen_var("eve_lookup"); }
+                if value == None { value = cur_block.gen_var("eve_lookup"); }
+                if to == None { to = cur_block.gen_var("eve_lookup"); }
+                if from == None { from = cur_block.gen_var("eve_lookup"); }
+                if _for == None { _for = cur_block.gen_var("eve_lookup"); }
+                if _type == None { _type = cur_block.gen_var("eve_lookup"); }
+
+                match output_type {
+                    OutputType::Lookup => cur_block.constraints.push(make_remote_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap(), _for.unwrap(), _type.unwrap(), from.unwrap(), to.unwrap())),
+                    OutputType::Commit => unimplemented!(),
+                    OutputType::Bind => unimplemented!()
+                }
                 None
             },
             &Node::Record(ref var, ref attrs) => {
@@ -1183,7 +1294,7 @@ impl<'a> Node<'a> {
                 if kind == FunctionKind::Sort {
                     result_key.extend(projection.iter());
                 }
-                make_intermediate_scan(result_key, vec![output.clone()])
+                make_intermediate_scan(result_key, output.clone())
             }
             &mut SubBlock::AggregateScan(..) => { panic!("Tried directly compiling an aggregate scan") }
             &mut SubBlock::IfBranch(..) => { panic!("Tried directly compiling an if branch") }
@@ -1407,6 +1518,13 @@ impl Compilation {
         child
     }
 
+    pub fn gen_var(&mut self, prefix: &str) -> Option<Field> {
+        let var_name = format!("__{}{}", prefix, self.id);
+        self.id += 1;
+        let reg = self.get_register(&var_name);
+        Some(reg)
+    }
+
     pub fn error(&mut self, span:&Span, error:error::Error) {
         self.errors.push(CompileError { span:span.clone(), error });
     }
@@ -1560,13 +1678,15 @@ pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path
             // for c in sub_comp.constraints.iter() {
             //     println!("            {:?}", c);
             // }
-            compilation_blocks.push(Block::new(&sub_name, interner.string_id(&sub_name), sub_comp.constraints.clone()));
+            let interned_name = interner.string_id(&sub_name);
+            compilation_blocks.push(Block::new(interner, &sub_name, interned_name, sub_comp.constraints.clone()));
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
     // println!("");
-    compilation_blocks.push(Block::new(&block_name, interner.string_id(&block_name), comp.constraints));
+    let interned_name = interner.string_id(&block_name);
+    compilation_blocks.push(Block::new(interner, &block_name, interned_name, comp.constraints));
     compilation_blocks
 }
 
