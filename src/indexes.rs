@@ -557,6 +557,16 @@ impl DistinctIndex {
         self.eavs.contains_key(&(e,a,v))
     }
 
+    pub fn is_commit(&self, e:Interned, a:Interned, v:Interned) -> bool {
+        assert!(e > 0 && a > 0 && v > 0, "Can't check availability of an unformed EAV ({}, {}, {})", e,a,v);
+        match self.eavs.get(&(e,a,v)) {
+            Some(rounds) => {
+                rounds.active_rounds.get(0) == Some(&0)
+            }
+            None => false,
+        }
+    }
+
     pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
         if e == 0 || a == 0 || v == 0 {
             panic!("Can't check availability of an unformed EAV ({}, {}, {})", e, a, v);

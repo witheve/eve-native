@@ -167,11 +167,11 @@ pub struct Block {
 
 impl Block {
 
-    pub fn new(name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
+    pub fn new(interner:&mut Interner, name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
        let mut me = Block { name:name.to_string(), block_id, constraints, solver:None, shapes: vec![] };
        let shapes = me.to_shapes();
        me.shapes.extend(shapes);
-       me.solver = Some(Solver::new(block_id, 0, None, &me.constraints));
+       me.solver = Some(Solver::new(interner, block_id, 0, None, &me.constraints));
        me
     }
 
@@ -179,6 +179,8 @@ impl Block {
         self.constraints.iter().filter(|constraint| {
             match constraint {
                 &&Constraint::Scan {..} => true,
+                &&Constraint::LookupCommit {..} => true,
+                &&Constraint::LookupRemote {..} => true,
                 &&Constraint::AntiScan {..} => true,
                 &&Constraint::IntermediateScan {..} => true,
                 _ => false
@@ -193,9 +195,9 @@ impl Block {
         }
     }
 
-    pub fn gen_pipes(&mut self) -> Vec<Solver> {
+    pub fn gen_pipes(&mut self, interner: &mut Interner) -> Vec<Solver> {
         let scans = self.get_block_scans();
-        let solvers = scans.iter().enumerate().map(|(ix, scan)| Solver::new(self.block_id, ix + 1, Some(*scan), &self.constraints)).collect();
+        let solvers = scans.iter().enumerate().map(|(ix, scan)| Solver::new(interner, self.block_id, ix + 1, Some(*scan), &self.constraints)).collect();
         solvers
     }
 
@@ -206,20 +208,26 @@ impl Block {
         let mut tag_mappings:HashMap<Field, Vec<Interned>> = HashMap::new();
         // find all the e -> tag mappings
         for scan in scans.iter() {
-            if let &&Constraint::Scan {ref e, ref a, ref v, ..} = scan {
-                let actual_a = if let &Field::Value(val) = a { val } else { 0 };
-                let actual_v = if let &Field::Value(val) = v { val } else { 0 };
-                if actual_a == tag && actual_v != 0 {
-                    let mut tags = tag_mappings.entry(e.clone()).or_insert_with(|| vec![]);
-                    tags.push(actual_v);
+            match scan {
+                &&Constraint::Scan {ref e, ref a, ref v, ..} |
+                &&Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                    if actual_a == tag && actual_v != 0 {
+                        let mut tags = tag_mappings.entry(e.clone()).or_insert_with(|| vec![]);
+                        tags.push(actual_v);
+                    }
                 }
+                _ => (),
+
             }
         }
         // go through each scan and create tag, a, v pairs where 0 is wildcard
         for scan in scans.iter() {
             let mut scan_shapes = vec![];
             match scan {
-                &&Constraint::Scan {ref e, ref a, ref v, ..} => {
+                &&Constraint::Scan {ref e, ref a, ref v, ..} |
+                &&Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
                     let actual_e = if let &Field::Value(val) = e { val } else { 0 };
                     let actual_a = if let &Field::Value(val) = a { val } else { 0 };
                     let actual_v = if let &Field::Value(val) = v { val } else { 0 };
@@ -834,6 +842,8 @@ pub type AggregateFunction = fn(&mut AggregateEntry, &Vec<Internable>);
 
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
+    LookupCommit {e: Field, a: Field, v: Field, register_mask: u64},
+    LookupRemote {e: Field, a: Field, v: Field, _for: Field, _type: Field, from: Field, to: Field, register_mask: u64},
     AntiScan {key: Vec<Field>, register_mask: u64},
     IntermediateScan {full_key:Vec<Field>, key: Vec<Field>, value: Vec<Field>, register_mask: u64, output_mask: u64},
     Function {op: String, output: Field, func: Function, params: Vec<Field>, param_mask: u64, output_mask: u64},
@@ -865,6 +875,8 @@ impl Constraint {
     pub fn get_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupCommit { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupRemote { ref e, ref a, ref v, ref _for, ref _type, ref from, ref to, ..} => { filter_registers(&vec![e,a,v, _for, _type, from, to]) }
             &Constraint::AntiScan { ref key, ..} => { filter_registers(&key.iter().collect()) }
             &Constraint::IntermediateScan { ref full_key, ..} => {
                 filter_registers(&full_key.iter().collect())
@@ -907,6 +919,8 @@ impl Constraint {
     pub fn get_output_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupCommit { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupRemote { ref e, ref a, ref v, ref _for, ref _type, ref from, ref to, ..} => { filter_registers(&vec![e,a,v, _for, _type, from, to]) }
             &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::Aggregate {ref output, ..} => { filter_registers(&output.iter().collect()) }
@@ -918,6 +932,8 @@ impl Constraint {
     pub fn get_filtering_registers(&self) -> Vec<Field> {
         match self {
             &Constraint::Scan { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupCommit { ref e, ref a, ref v, ..} => { filter_registers(&vec![e,a,v]) }
+            &Constraint::LookupRemote { ref e, ref a, ref v, ref _for, ref _type, ref from, ref to, ..} => { filter_registers(&vec![e,a,v, _for, _type, from, to]) }
             &Constraint::Function {ref output, ..} => { filter_registers(&vec![output]) }
             &Constraint::MultiFunction {ref outputs, ..} => { filter_registers(&outputs.iter().collect()) }
             &Constraint::Filter {ref left, ref right, ..} => { filter_registers(&vec![left, right]) }
@@ -931,6 +947,14 @@ impl Constraint {
         match self {
             &mut Constraint::Scan { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
                 replace_registers(&mut vec![e,a,v], lookup);
+                *register_mask = make_register_mask(vec![e,a,v]);
+            }
+            &mut Constraint::LookupCommit { ref mut e, ref mut a, ref mut v, ref mut register_mask} => {
+                replace_registers(&mut vec![e,a,v], lookup);
+                *register_mask = make_register_mask(vec![e,a,v]);
+            }
+            &mut Constraint::LookupRemote { ref mut e, ref mut a, ref mut v, ref mut _type, ref mut _for, ref mut to, ref mut from, ref mut register_mask} => {
+                replace_registers(&mut vec![e,a,v,_for,_type,from,to], lookup);
                 *register_mask = make_register_mask(vec![e,a,v]);
             }
             &mut Constraint::AntiScan { ref mut key, ref mut register_mask} => {
@@ -1007,6 +1031,8 @@ impl Clone for Constraint {
     fn clone(&self) -> Self {
         match self {
             &Constraint::Scan { e, a, v, register_mask } => { Constraint::Scan {e,a,v,register_mask} }
+            &Constraint::LookupCommit { e, a, v, register_mask } => { Constraint::LookupCommit {e,a,v,register_mask} }
+            &Constraint::LookupRemote { e, a, v, _for, _type, from, to, register_mask } => { Constraint::LookupRemote { e,a,v,_for,_type,from,to,register_mask } }
             &Constraint::AntiScan { ref key, register_mask } => { Constraint::AntiScan {key:key.clone(),register_mask} }
             &Constraint::IntermediateScan { ref full_key, ref key, ref value, register_mask, output_mask } => {
                 Constraint::IntermediateScan {full_key:full_key.clone(), key:key.clone(), value:value.clone(), register_mask, output_mask}
@@ -1041,6 +1067,8 @@ impl PartialEq for Constraint {
     fn eq(&self, other:&Constraint) -> bool {
         match (self, other) {
             (&Constraint::Scan { e, a, v, ..}, &Constraint::Scan {e:e2, a:a2, v:v2, ..} ) => { e == e2 && a == a2 && v == v2 },
+            (&Constraint::LookupCommit { e, a, v, ..}, &Constraint::LookupCommit {e:e2, a:a2, v:v2, ..} ) => { e == e2 && a == a2 && v == v2 },
+            (&Constraint::LookupRemote { e, a, v, _for, _type, from, to, ..}, &Constraint::LookupRemote {e:e2, a:a2, v:v2, _for:for2, _type:type2, from: from2, to:to2, ..} ) => { e == e2 && a == a2 && v == v2 && _for == for2 && _type == type2 && from == from2 && to == to2 },
             (&Constraint::AntiScan { ref key, ..}, &Constraint::AntiScan { key:ref key2, ..})  => { key == key2 }
             (&Constraint::IntermediateScan { ref full_key, ..}, &Constraint::IntermediateScan { full_key:ref full_key2, ..}) => { full_key == full_key2 }
             (&Constraint::Function {ref op, ref output, ref params, ..}, &Constraint::Function {op:ref op2, output:ref output2, params:ref params2, ..}) => { op == op2 && output == output2 && params == params2 }
@@ -1065,6 +1093,8 @@ impl Hash for Constraint {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             &Constraint::Scan { e, a, v, ..} => { e.hash(state); a.hash(state); v.hash(state); },
+            &Constraint::LookupCommit { e, a, v, ..} => { e.hash(state); a.hash(state); v.hash(state); },
+            &Constraint::LookupRemote { e, a, v, _for, _type, from, to, ..} => { e.hash(state); a.hash(state); v.hash(state); _for.hash(state); _type.hash(state); from.hash(state); to.hash(state); },
             &Constraint::AntiScan { ref key, ..}  => { key.hash(state); }
             &Constraint::IntermediateScan { ref full_key, ..} => { full_key.hash(state) }
             &Constraint::Function {ref op, ref output, ref params, ..} => { op.hash(state); output.hash(state); params.hash(state); }
@@ -1088,6 +1118,8 @@ impl fmt::Debug for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::LookupCommit { e, a, v, .. } => { write!(f, "LookupCommit ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::LookupRemote { e, a, v, .. } => { write!(f, "LookupRemote ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::AntiScan { ref key, .. } => { write!(f, "AntiScan ({:?})", key) }
             &Constraint::IntermediateScan { ref key, ref value, .. } => { write!(f, "IntermediateScan ( {:?}, {:?} )", key, value) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
@@ -1120,6 +1152,16 @@ pub fn make_register_mask(fields: Vec<&Field>) -> u64 {
 pub fn make_scan(e:Field, a:Field, v:Field) -> Constraint {
     let register_mask = make_register_mask(vec![&e,&a,&v]);
     Constraint::Scan{e, a, v, register_mask }
+}
+
+pub fn make_commit_lookup(e:Field, a:Field, v:Field) -> Constraint {
+    let register_mask = make_register_mask(vec![&e,&a,&v]);
+    Constraint::LookupCommit{e, a, v, register_mask }
+}
+
+pub fn make_remote_lookup(e:Field, a:Field, v:Field, _for:Field, _type:Field, from:Field, to:Field) -> Constraint {
+    let register_mask = make_register_mask(vec![&e,&a,&v,&_for,&_type,&from,&to]);
+    Constraint::LookupRemote{e, a, v, _for, _type, from, to, register_mask }
 }
 
 pub fn make_anti_scan(key: Vec<Field>) -> Constraint {
@@ -2303,7 +2345,7 @@ impl Program {
 
     pub fn register_block(&mut self, mut block:Block) {
         let ix = self.block_info.blocks.len();
-        let mut pipes = block.gen_pipes();
+        let mut pipes = block.gen_pipes(&mut self.state.interner);
         for (pipe, shapes) in pipes.drain(..).zip(block.shapes.iter()) {
             for shape in shapes {
                 match shape {
