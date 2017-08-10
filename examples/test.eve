@@ -1,15 +1,40 @@
+# JSON Testing
+
+## Test Encoding
+
 commit
-  [#file/read #sudoku path: "person.json"]
+  rachel = [#person name: "Rachel" age: 28.0]
+  [#person name: "Corey" age: 30.0 wife: rachel]
 end
 
 search
-  [#sudoku contents]
+  p = [#person name: "Corey"]
 commit
+  [#json/encode record: p]
+end
+
+search
+  [#json/encode json-string]
+commit
+  [#console/log text: "Converted some JSON in Eve: {{json-string}}"]
+end
+
+## Test Decode
+
+commit
+  [#file/read #file path: "person.json"]
+end
+
+search
+  [#file contents]
+commit
+  [#console/log text: contents]
   [#json/decode json: contents]
 end
 
 search
-  [#json/decode json-object]
+  [#json/decode json-object: [Value: [#array index value: [#array index: ix value]]]]
 commit
-  [#console/log text: json-object.Time.Total]
+  [#console/log text: "Got a thing: {{index}} {{value}}"]
 end
+
