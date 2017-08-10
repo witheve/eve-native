@@ -455,6 +455,36 @@ test!(base_eve_auto_index, {
 });
 
 //--------------------------------------------------------------------
+// CommitLookup
+//--------------------------------------------------------------------
+
+test!(base_commit_lookup, {
+    commit
+        [#foo]
+    end
+
+    search
+        foo = [#foo]
+    bind
+        foo.bar += 3
+    end
+
+    search
+        foo = [#foo]
+        lookup!-commit![entity: foo, attribute, value]
+    bind
+        [#committed attribute value]
+    end
+
+    search
+        [#committed attribute: "tag" value: "foo"]
+        not([#committed attribute: "bar"])
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
 // Not
 //--------------------------------------------------------------------
 

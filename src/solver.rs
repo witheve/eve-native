@@ -13,6 +13,18 @@ pub type GetIteratorFunc = Fn(&mut EstimateIter, &mut RuntimeState, &mut Frame) 
 pub type GetRoundsFunc = Fn(&mut RuntimeState, &mut Frame);
 
 //-------------------------------------------------------------------------
+// Input Fields
+//-------------------------------------------------------------------------
+
+#[derive(Eq, Hash, PartialEq, Copy, Clone)]
+pub enum InputField {
+    Transaction,
+    Round,
+    Type,
+    Count,
+}
+
+//-------------------------------------------------------------------------
 // OutputFuncs
 //-------------------------------------------------------------------------
 
@@ -39,6 +51,7 @@ pub struct Solver {
     get_rounds: Vec<Arc<GetRoundsFunc>>,
     finished_mask: u64,
     moves: Vec<(usize, usize)>,
+    input_checks: Vec<(InputField, Interned)>,
     commits: Vec<(Field, Field, Field, ChangeType)>,
     binds: Vec<(Field, Field, Field)>,
     watch_registers: Vec<(String, Vec<Field>)>,
@@ -61,6 +74,7 @@ impl Clone for Solver {
             block: self.block,
             id: self.id,
             moves: self.moves.clone(),
+            input_checks: self.input_checks.clone(),
             get_iters: self.get_iters.iter().cloned().collect(),
             accepts: self.accepts.iter().cloned().collect(),
             get_rounds: self.get_rounds.iter().cloned().collect(),
@@ -85,8 +99,9 @@ impl fmt::Debug for Solver {
 
 impl Solver {
 
-    pub fn new(block:Interned, id:usize, active_scan:Option<&Constraint>, constraints:&Vec<Constraint>) -> Solver {
+    pub fn new(interner:&mut Interner, block:Interned, id:usize, active_scan:Option<&Constraint>, constraints:&Vec<Constraint>) -> Solver {
         let mut moves = vec![];
+        let mut input_checks = vec![];
         let mut get_iters = vec![];
         let mut accepts = vec![];
         let mut get_rounds = vec![];
@@ -107,6 +122,21 @@ impl Solver {
                 if let Field::Register(ix) = e { moves.push((0, ix)); }
                 if let Field::Register(ix) = a { moves.push((1, ix)); }
                 if let Field::Register(ix) = v { moves.push((2, ix)); }
+            },
+            Some(&Constraint::LookupCommit { e, a, v, .. }) => {
+                to_solve.extend(active_scan.unwrap().get_registers());
+                if let Field::Register(ix) = e { moves.push((0, ix)); }
+                if let Field::Register(ix) = a { moves.push((1, ix)); }
+                if let Field::Register(ix) = v { moves.push((2, ix)); }
+                input_checks.push((InputField::Round, interner.number_id(0.0)));
+                get_rounds.push(make_commit_lookup_get_rounds(active_scan.unwrap()));
+            },
+            Some(&Constraint::LookupRemote { e, a, v, .. }) => {
+                to_solve.extend(active_scan.unwrap().get_registers());
+                if let Field::Register(ix) = e { moves.push((0, ix)); }
+                if let Field::Register(ix) = a { moves.push((1, ix)); }
+                if let Field::Register(ix) = v { moves.push((2, ix)); }
+                unimplemented!();
             },
             Some(&Constraint::IntermediateScan { ref full_key, .. }) |
             Some(&Constraint::AntiScan { key: ref full_key, .. }) => {
@@ -133,6 +163,14 @@ impl Solver {
                     get_iters.push(make_scan_get_iterator(constraint, ix));
                     accepts.push(make_scan_accept(constraint, ix));
                     get_rounds.push(make_scan_get_rounds(constraint));
+                },
+                &Constraint::LookupCommit {..} => {
+                    get_iters.push(make_scan_get_iterator(constraint, ix));
+                    accepts.push(make_scan_accept(constraint, ix));
+                    get_rounds.push(make_commit_lookup_get_rounds(constraint));
+                },
+                &Constraint::LookupRemote {..} => {
+                    unimplemented!();
                 },
                 &Constraint::AntiScan {..}  => {
                     get_rounds.push(make_anti_get_rounds(constraint));
@@ -203,7 +241,7 @@ impl Solver {
                 OutputFuncs::Aggregate => do_aggregate as OutputFunc,
             }
         }).collect();
-        Solver { block, id, moves, get_iters, accepts, get_rounds, commits, binds, intermediates, intermediate_accepts, outputs, watch_registers, project_fields, aggregates, finished_mask }
+        Solver { block, id, moves, input_checks, get_iters, accepts, get_rounds, commits, binds, intermediates, intermediate_accepts, outputs, watch_registers, project_fields, aggregates, finished_mask }
     }
 
     pub fn run(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame) {
@@ -239,6 +277,14 @@ impl Solver {
                     1 => { frame.row.set_multi(to, change.a); }
                     2 => { frame.row.set_multi(to, change.v); }
                     _ => { unreachable!() },
+                }
+            }
+            for check in self.input_checks.iter() {
+                match check {
+                    &(InputField::Round, v) => {
+                        if change.round != v { return false }
+                    }
+                    _ => { unimplemented!() },
                 }
             }
             for accept in self.accepts.iter() {
@@ -326,6 +372,7 @@ impl Solver {
 pub fn make_scan_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIteratorFunc> {
     let (e,a,v,register_mask) = match scan {
         &Constraint::Scan { e, a, v, register_mask} => (e,a,v,register_mask),
+        &Constraint::LookupCommit { e, a, v, register_mask} => (e,a,v,register_mask),
         _ => unreachable!()
     };
     Arc::new(move |iter, state, frame| {
@@ -359,6 +406,7 @@ pub fn make_scan_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIteratorFun
 pub fn make_scan_accept(scan:&Constraint, me:usize) -> Arc<AcceptFunc>  {
     let (e,a,v,register_mask) = match scan {
         &Constraint::Scan { e, a, v, register_mask} => (e,a,v,register_mask),
+        &Constraint::LookupCommit { e, a, v, register_mask} => (e,a,v,register_mask),
         _ => unreachable!()
     };
     Arc::new(move |state, frame, cur_constraint| {
@@ -385,6 +433,25 @@ pub fn make_scan_get_rounds(scan:&Constraint) -> Arc<GetRoundsFunc> {
             let resolved_v = frame.resolve(&v);
             let iter = state.distinct_index.iter(resolved_e, resolved_a, resolved_v);
             state.output_rounds.compute_output_rounds(iter);
+    })
+}
+
+//-------------------------------------------------------------------------
+// LookupCommit
+//-------------------------------------------------------------------------
+
+pub fn make_commit_lookup_get_rounds(scan:&Constraint) -> Arc<GetRoundsFunc> {
+    let (e,a,v,_) = match scan {
+        &Constraint::LookupCommit { e, a, v, register_mask} => (e,a,v,register_mask),
+        _ => unreachable!()
+    };
+    Arc::new(move |state, frame| {
+            let resolved_e = frame.resolve(&e);
+            let resolved_a = frame.resolve(&a);
+            let resolved_v = frame.resolve(&v);
+            if !state.distinct_index.is_commit(resolved_e, resolved_a, resolved_v) {
+                state.output_rounds.clear();
+            }
     })
 }
 
