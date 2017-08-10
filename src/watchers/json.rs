@@ -69,18 +69,20 @@ impl Watcher for JsonWatcher {
                 _ => (),
             }
         }
-        let target_record = record_map.get(&id).unwrap();
-        let inner_map = target_record.as_object().unwrap();
-        let qqq = dereference(inner_map, &record_map);
-        let json = serde_json::to_string(&qqq).unwrap();
-        let mut new_changes = Vec::new();
-        let change_id = format!("json/encode/change|{:?}",id);
-        new_changes.push(new_change(&change_id, "tag", Internable::String("json/encode/change".to_string()), "json/encode"));
-        new_changes.push(new_change(&change_id, "json-string", Internable::String(json), "json/encode"));
-        new_changes.push(new_change(&change_id, "record", Internable::String(id), "json/encode"));
-        match self.outgoing.send(RunLoopMessage::Transaction(new_changes)) {
-            Err(_) => (),
-            _ => (),
+        
+        if let Some(target_record) = record_map.get(&id) {
+            let inner_map = target_record.as_object().unwrap();
+            let qqq = dereference(inner_map, &record_map);
+            let json = serde_json::to_string(&qqq).unwrap();
+            let mut new_changes = Vec::new();
+            let change_id = format!("json/encode/change|{:?}",id);
+            new_changes.push(new_change(&change_id, "tag", Internable::String("json/encode/change".to_string()), "json/encode"));
+            new_changes.push(new_change(&change_id, "json-string", Internable::String(json), "json/encode"));
+            new_changes.push(new_change(&change_id, "record", Internable::String(id), "json/encode"));
+            match self.outgoing.send(RunLoopMessage::Transaction(new_changes)) {
+                Err(_) => (),
+                _ => (),
+            }   
         }
     }
 }
