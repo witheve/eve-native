@@ -218,6 +218,7 @@ impl Block {
                         tags.push(actual_v);
                     }
                 }
+                _ => (),
 
             }
         }
