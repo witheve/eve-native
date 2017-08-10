@@ -5,5 +5,20 @@
 search
   h = [#http/request address]
 watch http
-  ("send", h, address)
+  ("request", h, address)
+end
+
+search
+  response = [#http/response request]
+  request = [#http/request]
+commit
+  request.response := response
+end
+
+## Process HTTP Requests
+
+search
+  [#http/serve address]
+watch HTTP
+  ("server", h, address)
 end

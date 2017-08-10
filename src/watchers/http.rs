@@ -1,25 +1,17 @@
 use super::super::indexes::{WatchDiff};
-use super::super::ops::{Interned, Internable, Interner, RawChange, RunLoopMessage, JSONInternable};
-use std::sync::mpsc::{self, Sender};
-use std::collections::hash_map::{Entry};
-use std::collections::HashMap;
+use super::super::ops::{Internable, Interner, RawChange, RunLoopMessage};
+use std::sync::mpsc::{Sender};
 use super::Watcher;
-use std::ops::{Neg, AddAssign, MulAssign};
-
 extern crate futures;
 extern crate hyper;
 extern crate tokio_core;
-
 extern crate serde_json;
 extern crate serde;
-use self::serde_json::{Map, Value, Error};
-
-use std::io::{self, Write, BufReader};
+use self::serde_json::{Value};
+use std::io::{self};
 use self::futures::{Future, Stream};
 use self::hyper::Client;
-use self::tokio_core::reactor::Core;
-
-use watchers::json::{value_to_changes};
+use watchers::json::{value_to_changes, new_change};
 
 pub struct HttpWatcher {
     name: String,
@@ -46,9 +38,11 @@ impl Watcher for HttpWatcher {
             let address = Internable::to_string(interner.get_value(add[2]));
             let mut changes = vec![];
             match &kind[..] {
-                "send" => {
+                "request" => {
                     send_http_request(address, id, &mut changes);
-                    println!("{:?}", &changes);
+                },
+                "server" => {
+
                 },
                 _ => {},
             }           
@@ -67,9 +61,9 @@ fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) 
     let url = address.parse::<hyper::Uri>().unwrap();
     //let mut vec = Vec::new();
     let work = client.get(url).and_then(|res| {
-        //println!("Response: {}", res.status());
-        //println!("Headers: \n{}", res.headers());
-
+        let status = res.status().as_u16();
+        // TODO Ship headers back to Eve
+        //println!("Headers: \n{:?}", res.headers());
         res.body().concat2().and_then(move |body| {
             let v: Value = serde_json::from_slice(&body).map_err(|e| {
                 io::Error::new(
@@ -77,10 +71,13 @@ fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) 
                     e
                 )
             })?;
-            value_to_changes(v, changes, &id, "http-response");
+            let response_id = format!("http/response|{:?}",id);
+            changes.push(new_change(&response_id, "tag", Internable::from_str("http/response"), "http/request"));
+            changes.push(new_change(&response_id, "request", Internable::String(id), "http/request"));
+            changes.push(new_change(&response_id, "status", Internable::String(status.to_string()), "http/request"));
+            value_to_changes(&response_id, "body", v, "http/request", changes);
             Ok(())
         })
     });
-    //println!("{:?}",vec);
     core.run(work).unwrap();
 }
