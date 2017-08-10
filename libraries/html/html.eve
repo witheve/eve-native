@@ -104,6 +104,56 @@ bind
 end
 ~~~
 
+Mark elements with a user-editable value as such.
+~~~ eve
+search
+  elem = if input = [#html/element tagname: "input" type]
+    type != "button"
+    type != "checkbox"
+    type != "submit"
+    type != "radio"
+    then input
+  if input = [#html/element tagname: "input"]
+    not(input.type)
+    then input
+  if textarea = [#html/element tagname: "textarea"] then textarea
+bind
+  elem += #html/editable-value
+end
+~~~
+
+Mark elements with a user-editable checked as such.
+~~~ eve
+search
+  elem = [#html/element tagname: "input" type]
+  checkable = if type = "checkbox" then "true" if type = "radio" then "true"
+bind
+  elem += #html/editable-checked
+end
+~~~
+
+Elements with an editable value and an initial use it as the default value
+~~~ eve
+search
+  input = [#html/editable-value initial]
+  value = if input.value then input.value else initial
+
+bind
+  input.value += value
+end
+~~~
+
+Elements with an editable checked and an initial use it as the default checked
+~~~ eve
+search
+  input = [#html/editable-checked initial]
+  checked = if input.checked then input.checked else initial
+
+bind
+  input.checked += checked
+end
+~~~
+
 
 ## Events
 
@@ -113,17 +163,6 @@ search
   event = [#html/event]
 commit
   event := none
-end
-~~~
-
-Inputs with an initial but no value use the initial.
-~~~ eve
-search
-  input = [#html/element tagname: "input"]
-  value = if input.value then input.value else input.initial
-
-bind
-  input.value += value
 end
 ~~~
 
@@ -138,11 +177,43 @@ commit
 end
 ~~~
 
+Apply input checked changes.
+~~~ eve
+search
+  [#html/event/change element checked: "true"]
+
+commit
+  element.checked := "true"
+  [#html/client-checked element checked: "true"]
+end
+~~~
+
+~~~ eve
+search
+  [#html/event/change element checked: "false"]
+
+commit
+  element.checked := none
+  [#html/client-checked element checked: "false"]
+end
+~~~
+
 Clear old `#html/client-value`s.
 ~~~ eve
 search
   prev = [#html/client-value element value]
   element.value != value
+
+commit
+  prev := none
+end
+~~~
+
+Clear old `#html/client-checked`s.
+~~~ eve
+search
+  prev = [#html/client-checked element checked]
+  element.checked != checked
 
 commit
   prev := none
@@ -213,6 +284,19 @@ search
 
 watch client/websocket
   ("html/export attributes" instance "value" value)
+end
+~~~
+
+Export checkeds not from client.
+~~~ eve
+search
+  instance = [#html/instance element]
+  element = [#html/element tagname: "input"]
+  checked = if c = element.checked then c else "false"
+  not([#html/client-checked element checked])
+
+watch client/websocket
+  ("html/export attributes" instance "checked" checked)
 end
 ~~~
 
