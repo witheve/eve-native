@@ -1,10 +1,10 @@
 commit
-  [#http/request #req address: "http://echo.jsontest.com/key/value/one/two"]
+  [#http/request #req address: "http://echo.jsontest.com/last/shenberger/first/manifold"]
 end
 
 
 search
-  [#req http-response: [one key]]
+  [#req response: [#http/response status body]]
 commit
-  [#ui/text text: "{{one}} {{key}}"]
+  [#console/log text: "{{status}} {{body.first}} {{body.last}}"]
 end
