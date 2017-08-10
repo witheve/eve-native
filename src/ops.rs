@@ -208,13 +208,17 @@ impl Block {
         let mut tag_mappings:HashMap<Field, Vec<Interned>> = HashMap::new();
         // find all the e -> tag mappings
         for scan in scans.iter() {
-            if let &&Constraint::Scan {ref e, ref a, ref v, ..} = scan {
-                let actual_a = if let &Field::Value(val) = a { val } else { 0 };
-                let actual_v = if let &Field::Value(val) = v { val } else { 0 };
-                if actual_a == tag && actual_v != 0 {
-                    let mut tags = tag_mappings.entry(e.clone()).or_insert_with(|| vec![]);
-                    tags.push(actual_v);
+            match scan {
+                &&Constraint::Scan {ref e, ref a, ref v, ..} |
+                &&Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                    if actual_a == tag && actual_v != 0 {
+                        let mut tags = tag_mappings.entry(e.clone()).or_insert_with(|| vec![]);
+                        tags.push(actual_v);
+                    }
                 }
+
             }
         }
         // go through each scan and create tag, a, v pairs where 0 is wildcard
