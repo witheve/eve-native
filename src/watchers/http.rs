@@ -96,13 +96,16 @@ fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) 
     });
 
     match core.run(work) {
-        Ok(_) => println!("OK"),
+        Ok(_) => (),
         Err(e) => {
             // Form an HTTP Error
-            //let error_id = format!("http/request/error|{:?}|{:?}",&id,address);
-            //changes.push(new_change(&error_id, "tag", Internable::from_str("http/request/error"), "http/request"));
-            //changes.push(new_change(&error_id, "request", Internable::String(id), "http/request"));
-            //changes.push(new_change(&error_id, "error", Internable::String(format!("{:?}",e)), "http/request"));
+            /*
+            let error_id = format!("http/request/error|{:?}|{:?}",&id,address);
+            let mut changes = vec![];
+            changes.push(new_change(&error_id, "tag", Internable::from_str("http/request/error"), "http/request"));
+            changes.push(new_change(&error_id, "request", Internable::String(id.clone()), "http/request"));
+            changes.push(new_change(&error_id, "error", Internable::String(format!("{:?}",e)), "http/request"));
+            */
             println!("Not OK {:?}",e)
         },
     }
