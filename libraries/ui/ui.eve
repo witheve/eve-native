@@ -45,6 +45,302 @@ bind
 end
 ~~~
 
+## List
+
+Decorate list as html.
+~~~ eve
+search
+  list = [#ui/list]
+bind
+  list <- [#html/element tagname: "div"]
+end
+~~~
+
+Drop items into list (will eventually be flywheel'd).
+~~~ eve
+search
+  list = [#ui/list item]
+bind
+  list.children += item
+end
+~~~
+
+## Selectable
+
+The default cursor for a selectable list is the first item.
+@FIXME: SWITCH BACK TO gather/bottom when fixed.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  not(selectable.cursor)
+  gather/bottom[for: item.sort per: selectable limit: 1]
+  // item.sort = 1
+commit
+  selectable.cursor := item
+  // [#html/div text: "{{item.sort}}. {{item.text}}"]
+end
+~~~
+
+Selectable items are sorted by autosort if they don't specify a sort.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  sort = if s = item.sort then s else item.eve-auto-index
+bind
+  item.sort += sort
+end
+~~~
+
+Build a linked list of the items in the selectable for navigation.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  (next-sort next) = gather/next[for: (item.sort item) per: selectable]
+bind
+  item.next-selectable-item += next
+  next.prev-selectable-item += item
+end
+~~~
+
+Mark the currently selected element.
+~~~ eve
+search
+  [#ui/selectable selected]
+bind
+  selected += #ui/selected
+end
+~~~
+
+Mark the cursor element.
+~~~ eve
+search
+  [#ui/selectable #ui/focused cursor]
+bind
+  cursor += #ui/current
+end
+~~~
+
+
+### Handlers
+
+Clicking a selectable focuses it.
+~~~ eve
+search
+  selectable = [#ui/selectable]
+  [#html/event/click element: selectable]
+bind
+  [#ui/event/focus selectable]
+end
+~~~
+
+Clicking an item in a selectable selects and focuses it.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  [#html/event/click element: item]
+bind
+  [#ui/event/select selectable item]
+end
+~~~
+
+Clicking outside a focused selectable blurs it.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/focused]
+  [#html/event/click]
+  not([#html/event/click element: selectable])
+bind
+  [#ui/event/blur selectable]
+end
+~~~
+
+Escape or tab in a focused selectable blurs it.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/focused]
+  event = if e = [#html/event/key-down key: "escape"] then e
+  if e = [#html/event/key-down key: "tab"] then e
+bind
+  [#ui/event/blur selectable]
+end
+~~~
+
+Enter in a focused selectable selects its cursor.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/focused cursor:item]
+  [#html/event/key-down key: "enter"]
+bind
+  [#ui/event/select selectable item]
+  [#ui/event/blur selectable]
+end
+~~~
+
+Down in a focused selectable advances the cursor.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/focused cursor]
+  event = [#html/event/key-down key: "down"]
+commit
+  selectable.cursor := cursor.next-selectable-item
+end
+~~~
+
+Up in a focused selectable retreats the cursor.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/focused cursor]
+  [#html/event/key-down key: "up"]
+commit
+  selectable.cursor := cursor.prev-selectable-item
+end
+~~~
+
+
+### Events
+
+Focusing a selectable selectable marks it focused.
+~~~ eve
+search
+  [#ui/event/focus selectable]
+commit
+  selectable += #ui/focused
+end
+~~~
+
+Blurring a selectable selectable removes its focused status.
+~~~ eve
+search
+  [#ui/event/blur selectable]
+commit
+  selectable -= #ui/focused
+end
+~~~
+
+Selecting an element updates the selected and cursor.
+~~~ eve
+search
+  [#ui/event/select selectable item]
+commit
+  selectable.selected += item
+  selectable.cursor := item
+  selectable += #ui/selecting
+end
+~~~
+
+In a single-selectable selectable, selection overwrites the previous selected.
+~~~ eve
+search
+  [#ui/event/select selectable item]
+  selectable = [#ui/single-selectable]
+commit
+  selectable.selected := item
+end
+~~~
+
+### Dropdown
+
+Decorate dropdown as html.
+~~~ eve
+search
+  dropdown = [#ui/dropdown]
+bind
+  dropdown <- [#html/element tagname: "div"]
+end
+~~~
+
+A dropdown's first child is its input.
+~~~ eve
+search
+  dropdown = [#ui/dropdown input]
+bind
+  dropdown.children += input
+  input.sort += 1
+end
+~~~
+
+A dropdown creates a selectable list of its items.
+~~~ eve
+search
+  dropdown = [#ui/dropdown item]
+bind
+  dropdown.children += [#ui/dropdown/list #ui/list #ui/selectable #ui/single-selectable dropdown sort: 999999 | item]
+end
+~~~
+
+A dropdown's selected is its list's
+~~~ eve
+search
+  [#ui/dropdown/list dropdown selected]
+bind
+  dropdown.selected += selected
+end
+~~~
+
+
+### Handlers
+
+Clicking a dropdown opens it.
+~~~ eve
+search
+  dropdown = [#ui/dropdown]
+  [#html/event/click element: dropdown]
+bind
+  [#ui/event/open dropdown]
+end
+~~~
+
+Clicking anywhere outside an open dropdown closes it.
+~~~ eve
+search
+  dropdown = [#ui/dropdown]
+  [#html/event/click]
+  not([#html/event/click element: dropdown])
+bind
+  [#ui/event/close dropdown]
+end
+~~~
+
+Blurring a dropdown's list closes it.
+~~~ eve
+search
+  [#ui/event/blur selectable: [#ui/dropdown/list dropdown]]
+bind
+  [#ui/event/close dropdown]
+end
+~~~
+
+### Events
+
+Opening a dropdown marks it as open.
+~~~ eve
+search
+  [#ui/event/open dropdown]
+commit
+  dropdown += #ui/open
+end
+~~~
+
+When a dropdown is opened, focus its list.
+~~~ eve
+search
+  [#ui/event/open dropdown]
+  list = [#ui/dropdown/list dropdown]
+bind
+  [#ui/event/focus selectable: list]
+end
+~~~
+
+
+Closing a dropdown removes its open tag.
+~~~ eve
+search
+  e = [#ui/event/close dropdown]
+commit
+  dropdown -= #ui/open
+end
+~~~
+
 
 ## Buttons
 
@@ -375,10 +671,14 @@ end
 
 Todo:
 - [x] Toggle
-- [ ] Dropdown
-- [ ] Select
+- [x] List
+- [x] Dropdown
+  - *bug* commit removal not working for enter / click (blurs list -> closes dropdown)
+  - *bug* gather/bottom filtering randomly (always includes correct answer + optionally any others in set).
 - [ ] Tab Box
 - [ ] Rewrite AC on Dropdown
+  - input
+  - list (navigable)
 - [ ] container
   - card
 - [ ] progress
@@ -387,4 +687,3 @@ Todo:
 - [ ] date picker
 - [ ] time picker
 - [ ] dialog
-- [ ] list

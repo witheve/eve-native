@@ -1,0 +1,28 @@
+/******************************************************************************\
+ * Selectable                                                                 *
+\******************************************************************************/
+
+:root {
+    --selected-color: rgb(0, 158, 224);
+    --current-color: #f3f3f3;
+}
+
+.ui-selectable > * { padding: 5px 10px; position: relative; }
+.ui-selectable > *:first-child { padding-top: 10px; }
+.ui-selectable > *:last-child { padding-bottom: 10px; }
+
+.ui-selectable > *:hover { background: var(--current-color); }
+.ui-selectable > *:active { background: #e0e0e0; }
+
+.ui-selectable > *:after { display: block; content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 0; z-index: 1; transition: width 0.1s ease-out; background: var(--selected-color); }
+.ui-selectable > .ui-selected:after { width: 3px; }
+
+.ui-selectable > .ui-current { background: var(--current-color); }
+
+/******************************************************************************\
+ * Dropdown                                                                   *
+\******************************************************************************/
+
+.ui-dropdown { position: relative; }
+.ui-dropdown-list { position: absolute; top: 100%; min-width: content-size; width: 100%; max-height: 0; overflow: hidden; box-shadow: 0 0 0 rgba(0, 0, 0, 0.1); transition: 0.2s max-height ease-out, 0.2s box-shadow ease-out; background: white; border: 1px solide #e0e0e0; z-index: 5; }
+.ui-dropdown.ui-open > .ui-dropdown-list { max-height: 400px; box-shadow: 0 3px 5px rgba(0, 0, 0, 0.1); }
