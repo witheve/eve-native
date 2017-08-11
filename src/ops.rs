@@ -9,7 +9,7 @@ extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges, RemoteIndex};
+use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges, RemoteIndex, RemoteChange};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
 use std::collections::{HashMap, HashSet, Bound};
@@ -510,6 +510,7 @@ impl fmt::Debug for Counters {
 pub struct Frame {
     pub input: Option<Change>,
     pub intermediate: Option<IntermediateChange>,
+    pub remote: Option<RemoteChange>,
     pub row: Row,
     pub block_ix: usize,
     pub results: Vec<Interned>,
@@ -519,7 +520,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new() -> Frame {
-        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
+        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, remote: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
     pub fn get_register(&self, register:usize) -> Interned {
