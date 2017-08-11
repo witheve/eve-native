@@ -1,0 +1,82 @@
+# UI Demo
+
+~~~ eve
+commit
+  [#demo/color color:
+    [name: "primary"]
+    [name: "secondary"]
+    [name: "tertiary"]]
+
+  [#demo/style demo: "ui/toggle" style:
+    [name: "default"]
+    [name: "square"]
+    [name: "track"]]
+end
+~~~
+
+Set `#demo/color` sorts from eve-auto-index.
+~~~ eve
+search
+  [#demo/color color]
+bind
+  color.sort += color.eve-auto-index
+end
+~~~
+
+Set `#demo/style` sorts from eve-auto-index.
+~~~ eve
+search
+  [#demo/style style]
+bind
+  style.sort += style.eve-auto-index
+end
+~~~
+
+~~~ eve
+search
+  [#demo/style style]
+bind
+  [#html/div sort: style.sort text: "{{style.sort}}. {{style.name}}"]
+end
+~~~
+
+
+
+Toggle Demo
+~~~ eve
+search
+  demo = "ui/toggle"
+  [#demo/color color]
+  [#demo/style demo style]
+
+commit
+  [#demo name: demo | children:
+    [#ui/row demo style | sort: style.sort children:
+      [#ui/text sort: 0 text: style.name]
+      [#ui/spacer sort: 1]
+      [#ui/row #demo/spaced demo style sort: 2 | children:
+        [#ui/toggle style color | sort: color.sort class: (style.name color.name)]]]]
+end
+~~~
+
+Draw demo container.
+~~~ eve
+search
+  demo = [#demo name children]
+bind
+  [#html/div #demo/root demo | children:
+    [#html/element tagname: "h2" text: name]
+    [#ui/column #demo/container demo | children]]
+end
+~~~
+
+~~~ eve
+commit
+  [#html/style text: "
+    .demo-root { max-width: 300px; padding: 20px; margin: 20px; background: white; border-radius: 3px; box-shadow: 5px 0 5px rgba(0, 0, 0, 0.1); }
+    .demo-root > h2 { margin-bottom: 20px; }
+    .demo-container > .ui-row + .ui-row { margin-top: 10px; }
+    .ui-row.demo-spaced > * + * { margin-left: 10px; }
+    "]
+end
+~~~

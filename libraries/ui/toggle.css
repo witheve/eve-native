@@ -1,0 +1,44 @@
+/******************************************************************************\
+ * Toggle                                                                     *
+\******************************************************************************/
+
+:root {
+    --toggle-width: 3rem;
+    --toggle-height: 1.4rem;
+    --button-width: 1.4rem;
+    --track-edge: calc(var(--button-width) / 3);
+    --track-pad: 20%;
+    --transition-duration: 0.2s;
+    --primary-fg: rgb(0, 158, 224);
+    --primary-bg: color(rgb(0, 184, 241) lightness(80%));
+    --secondary-fg: color(rgb(107, 103, 173) lightness(65%));
+    --secondary-bg: darkgray;
+
+}
+
+.ui-toggle > input { appearance: none; outline: none; position: absolute; top: 0; bottom: 0; left: 0; width: var(--button-width); padding: 0; margin: 0; transition: var(--transition-duration) left ease-out, var(--transition-duration) margin-left ease-out; }
+.ui-toggle > input:checked { left: 100%; margin-left: -var(--button-width); }
+.ui-toggle { position: relative; width: var(--toggle-width); height: var(--toggle-height); }
+.ui-toggle:before { display: block; content: ""; position: absolute; left: 0; right: 0; top: 0; bottom: 0; border-radius: 100000px; }
+.ui-toggle > label { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+
+/* Default */
+.ui-toggle:before { border-radius: 100000px; background: darkgray; box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.2); }
+.ui-toggle > input { border-radius: 100000px; background: #ddd; border: 1px solid #ccc; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
+
+/* Square */
+.ui-toggle.square:before { border-radius: 0; }
+.ui-toggle.square > input { border-radius: 0; }
+
+/* Flat */
+.ui-toggle.flat:before { background: darkgray; box-shadow: none; }
+.ui-toggle.flat > input { background: lightgray; box-shadow: none; }
+
+/* Track */
+.ui-toggle.track:before { left: var(--track-edge); right: var(--track-edge); top: var(--track-pad); bottom: var(--track-pad); }
+
+/* Color mods */
+.ui-toggle.primary > input { background: var(--primary-fg); border-color: color(var(--primary-fg) lightness(40%)); }
+.ui-toggle.primary:before { background: var(--primary-bg); }
+.ui-toggle.secondary > input { background: var(--secondary-fg); border-color: color(var(--secondary-fg) lightness(62%)); }
+.ui-toggle.secondary:before { background: var(--secondary-bg); }

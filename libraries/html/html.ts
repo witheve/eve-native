@@ -78,6 +78,8 @@ export class HTML extends Library {
   _syntheticStyles:RawMap<StyleElement> = {};
   /** Dummy used for converting style properties to CSS strings. */
   _dummy:HTMLElement;
+  /** Map of currently checked radio buttons (used to uncheck them when their siblings are checked). */
+  _checkedRadios:{[name:string]: RawValue, [name:number]: RawValue} = {};
 
   setup() {
     if(typeof document === "undefined") {
@@ -98,6 +100,7 @@ export class HTML extends Library {
     window.addEventListener("mouseup", this._mouseEventHandler("mouse-up"));
     window.addEventListener("contextmenu", this._captureContextMenuHandler());
 
+    window.addEventListener("change", this._changeEventHandler("change"));
     window.addEventListener("input", this._inputEventHandler("change"));
     window.addEventListener("keydown", this._keyEventHandler("key-down"));
     window.addEventListener("keyup", this._keyEventHandler("key-up"));
@@ -255,6 +258,7 @@ export class HTML extends Library {
     }),
     "export roots": handleTuples(({adds}) => {
       for(let [instanceId] of adds || EMPTY) {
+        if(!this._instances[instanceId]) throw new Error(`Instance '${instanceId}' cannot be promoted to root: no longer exists.`);
         this.insertRoot(this._instances[instanceId]);
       }
     }),
@@ -423,6 +427,41 @@ export class HTML extends Library {
           [eventId, "value", target.value]
         ];
         if(eavs.length) this._sendEvent(eavs);
+      }
+    }
+  }
+
+  _changeEventHandler(tagname:string) {
+    return (event:Event) => {
+      let target = event.target as (Instance & HTMLInputElement);
+      if(!(target instanceof HTMLInputElement)) return;
+      if(target.type == "checkbox" || target.type == "radio") {
+        let elementId = target.__element;
+        if(elementId) {
+          let eventId = createId();
+          let eavs:RawEAV[] = [
+            [eventId, "tag", "html/event"],
+            [eventId, "tag", `html/event/${tagname}`],
+            [eventId, "element", elementId],
+            [eventId, "checked", ""+target.checked]
+          ];
+          let name = target.name;
+          if(target.type == "radio" && name !== undefined) {
+            let prev = this._checkedRadios[name];
+            if(prev && prev !== target.__element) {
+              // @NOTE: This is two events in one TX, a bit dangerous.
+              let event2Id = createId();
+              eavs.push(
+                [event2Id, "tag", "html/event"],
+                [event2Id, "tag", `html/event/${tagname}`],
+                [event2Id, "element", prev],
+                [event2Id, "checked", "false"]
+              );
+            }
+            this._checkedRadios[name] = elementId;
+          }
+          if(eavs.length) this._sendEvent(eavs);
+        }
       }
     }
   }

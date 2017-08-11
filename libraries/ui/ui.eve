@@ -58,6 +58,41 @@ bind
 end
 ~~~
 
+## Toggle
+
+A toggle is a checkbox and a label decorated as a toggle switch..
+~~~ eve
+search
+  element = [#ui/toggle]
+bind
+  element <- [#html/div children:
+    [#html/element tagname: "label" for: "ui-toggle-{{element}}"]
+    [#html/input #ui/toggle/input type: "checkbox" id: "ui-toggle-{{element}}"]]
+end
+~~~
+
+Copy checked from input to toggle.
+~~~ eve
+search
+  element = [#ui/toggle children: [#ui/toggle/input checked]]
+
+bind
+  element.checked += checked
+end
+~~~
+
+Copy initial from toggle to input.
+~~~ eve
+search
+  element = [#ui/toggle initial children: input]
+  input = [#ui/toggle/input]
+
+bind
+  input.initial += initial
+end
+~~~
+
+
 ## Autocomplete
 
 ### Setup
@@ -339,9 +374,17 @@ end
 
 
 Todo:
- - [X] string/index-of[text substring] match_indices(pattern)
-- [X] string/contains[text substring] contains(pattern)
-- [X] string/lowercase[text] to_lowercase
-- [X] string/uppercase[text] to_uppercase
-- [X] string/length[text]
-- [ ] Highlight functions
+- [x] Toggle
+- [ ] Dropdown
+- [ ] Select
+- [ ] Tab Box
+- [ ] Rewrite AC on Dropdown
+- [ ] container
+  - card
+- [ ] progress
+- [ ] Tree
+- [ ] chip
+- [ ] date picker
+- [ ] time picker
+- [ ] dialog
+- [ ] list
