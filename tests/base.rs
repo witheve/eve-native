@@ -1855,6 +1855,33 @@ test!(base_aggregate_next, {
     end
 });
 
+
+test!(base_aggregate_next_from, {
+    search
+        foo = [#foo value]
+        v2 = gather!/next![for:value from: 3]
+    bind
+        [#next value v2]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#next value: 1 v2: 4]
+        [#next value: 2 v2: 4]
+        [#next value: 3 v2: 4]
+        [#next value: 4 v2: 4]
+    bind
+        [#success]
+    end
+});
+
 test!(base_aggregate_next_multi, {
     search
         foo = [#foo value]
@@ -1876,6 +1903,33 @@ test!(base_aggregate_next_multi, {
         [#next value: 2 v2: 3]
         [#next value: 3 v2: 4]
         [#next value: 4 v2: 5]
+    bind
+        [#success]
+    end
+});
+
+test!(base_aggregate_next_multi_from, {
+    search
+        needle = [#foo value: 3]
+        foo = [#foo value]
+        (_, foo2) = gather!/next![for:(value, foo) from: (3, needle)]
+    bind
+        [#next value v2: foo2.value]
+    end
+
+    commit
+        [#foo value: 1]
+        [#foo value: 2]
+        [#foo value: 3]
+        [#foo value: 4]
+        [#foo value: 5]
+    end
+
+    search
+        [#next value: 1 v2: 4]
+        [#next value: 2 v2: 4]
+        [#next value: 3 v2: 4]
+        [#next value: 4 v2: 4]
     bind
         [#success]
     end

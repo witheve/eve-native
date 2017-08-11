@@ -38,6 +38,7 @@ pub enum FunctionKind {
     Scalar,
     Sum,
     Sort,
+    NeedleSort,
 }
 
 pub struct FunctionInfo {
@@ -117,8 +118,8 @@ lazy_static! {
         m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], vec!["count"], FunctionKind::Sum));
         m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["top"], FunctionKind::Sort));
         m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["bottom"], FunctionKind::Sort));
-        m.insert("gather/next".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
-        m.insert("gather/previous".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
+        m.insert("gather/next".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::NeedleSort));
+        m.insert("gather/previous".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::NeedleSort));
         m
     };
 }
@@ -180,7 +181,7 @@ pub enum Node<'a> {
 #[derive(Debug, Clone)]
 pub enum SubBlock {
     Not(Compilation),
-    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, FunctionKind),
+    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, FunctionKind),
     AggregateScan(Compilation),
     IfBranch(Compilation, Vec<Field>),
     If(Compilation, Vec<Field>, bool),
@@ -670,6 +671,7 @@ impl<'a> Node<'a> {
                 let mut cur_params = vec![Field::Value(0); info.params.len()];
                 let mut group = vec![];
                 let mut projection = vec![];
+                let mut needle = vec![];
                 for param in params {
                     let mut compiled_params = vec![];
                     let (_, unwrapped) = param.to_pos_ref(span);
@@ -695,8 +697,9 @@ impl<'a> Node<'a> {
                             ParamType::Output(ix) => { cur_outputs[ix] = v; }
                             ParamType::Invalid => {
                                 match (info.kind, a) {
-                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") => { group.push(v) }
-                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") => { projection.push(v) }
+                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") | (FunctionKind::NeedleSort, "per") => { group.push(v) }
+                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") | (FunctionKind::NeedleSort, "for") => { projection.push(v) }
+                                    (FunctionKind::NeedleSort, "from") => { needle.push(v) }
                                     _ => {
                                         cur_block.error(span, error::Error::UnknownFunctionParam(op.to_string(), a.to_string()));
                                     }
@@ -759,7 +762,22 @@ impl<'a> Node<'a> {
                         let mut sub_block = Compilation::new_child(cur_block);
                         let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
                         sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
-                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output, info.kind));
+                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, vec![], unified_output, info.kind));
+                    },
+                    FunctionKind::NeedleSort => {
+                        if needle.len() > 0 && needle.len() != projection.len() {
+                            cur_block.error(span, error::Error::InvalidNeedle);
+                            return final_result;
+                        }
+                        let mut sub_block = Compilation::new_child(cur_block);
+                        let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
+                        let unified_needle:Vec<Field> = if needle.len() > 0 {
+                            needle
+                        } else {
+                            projection.clone()
+                        };
+                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
+                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_needle, unified_output, info.kind));
                     },
                     FunctionKind::Scalar => {
                         cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
@@ -1286,13 +1304,15 @@ impl<'a> Node<'a> {
                 key_attrs.extend(inputs.iter());
                 make_anti_scan(key_attrs)
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, _, ref output, kind) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, _, ref needle, ref output, kind) => {
                 let block_name = cur_block.block_name.to_string();
                 let result_id = interner.string(&format!("{}|sub_block|aggregate_result|{}", block_name, ix));
                 let mut result_key = vec![result_id];
                 result_key.extend(group.iter());
-                if kind == FunctionKind::Sort {
-                    result_key.extend(projection.iter());
+                match kind {
+                    FunctionKind::Sort => result_key.extend(projection.iter()),
+                    FunctionKind::NeedleSort => result_key.extend(needle.iter()),
+                    _ => {}
                 }
                 make_intermediate_scan(result_key, output.clone())
             }
@@ -1324,7 +1344,7 @@ impl<'a> Node<'a> {
                 related.push(make_intermediate_insert(key_attrs, vec![], true));
                 cur_block.constraints = related;
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, _) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, _, _) => {
                 let block_name = cur_block.block_name.to_string();
 
                 // generate the scan block

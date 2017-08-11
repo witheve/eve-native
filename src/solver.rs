@@ -742,7 +742,7 @@ pub fn do_intermediate_insert(me: &Solver, state: &mut RuntimeState, frame: &mut
 pub fn do_aggregate(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
     for &(ref group, ref projection, ref params, ref output_key, add, remove, kind) in me.aggregates.iter() {
         let resolved_group:Vec<Interned> = group.iter().map(|v| frame.resolve(v)).collect();
-        let resolved_projection = if kind == FunctionKind::Sort {
+        let resolved_projection = if kind == FunctionKind::Sort || kind == FunctionKind::NeedleSort {
             projection.iter().map(|v| state.interner.get_value(frame.resolve(v)).clone()).collect()
         } else {
             vec![]
