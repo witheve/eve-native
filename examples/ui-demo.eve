@@ -11,6 +11,11 @@ commit
     [name: "default"]
     [name: "square"]
     [name: "track"]]
+
+  [#demo/style demo: "ui/slider" style:
+    [name: "default"]
+    [name: "square"]
+    [name: "track"]]
 end
 ~~~
 
@@ -32,17 +37,49 @@ bind
 end
 ~~~
 
+## Container Demos
+
+Selectable list demo.
 ~~~ eve
 search
-  [#demo/style style]
-bind
-  [#html/div sort: style.sort text: "{{style.sort}}. {{style.name}}"]
+  demo = "ui/selectable"
+
+commit
+  [#demo name: demo | children:
+    [#ui/list #ui/selectable #ui/single-selectable demo | item:
+      [#html/div demo text: "first"]
+      [#html/div demo text: "second"]
+      [#html/div demo text: "third"]
+      [#html/div demo text: "fourth"]
+      [#html/div demo text: "fifth"]
+  ]]
+end
+~~~
+
+Dropdown demo.
+~~~ eve
+search
+  demo = "ui/dropdown"
+
+commit
+  [#demo name: demo | children:
+    [#ui/dropdown demo |
+      input:
+      [#ui/button class: "inset" text: "froof"]
+      item:
+      [#html/div demo text: "first"]
+      [#html/div demo text: "second"]
+      [#html/div demo text: "third"]
+      [#html/div demo text: "fourth"]
+      [#html/div demo text: "fifth"]
+  ]]
 end
 ~~~
 
 
+## Input Demos
 
-Toggle Demo
+Toggle demo.
 ~~~ eve
 search
   demo = "ui/toggle"
@@ -73,10 +110,21 @@ end
 ~~~ eve
 commit
   [#html/style text: "
-    .demo-root { max-width: 300px; padding: 20px; margin: 20px; background: white; border-radius: 3px; box-shadow: 5px 0 5px rgba(0, 0, 0, 0.1); }
-    .demo-root > h2 { margin-bottom: 20px; }
+    .demo-root { max-width: 300px; padding: 20px; margin: 20px; background: white; border-radius: 3px; box-shadow: 0 5px 5px rgba(0, 0, 0, 0.1); }
+    .demo-root > h2 { margin-bottom: 20px; font-size: 1.5rem; }
     .demo-container > .ui-row + .ui-row { margin-top: 10px; }
     .ui-row.demo-spaced > * + * { margin-left: 10px; }
     "]
+end
+~~~
+
+DEBUG
+~~~ eve
+search
+  s = [#ui/selectable cursor]
+  s = [#ui/selectable cursor: c2]
+  cursor != c2
+bind
+  [#html/div text: "{{s}} has multiple cursors"]
 end
 ~~~
