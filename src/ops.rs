@@ -12,7 +12,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
-use std::collections::{HashMap, Bound};
+use std::collections::{HashMap, HashSet, Bound};
 use std::mem::transmute;
 use std::cmp::{self, Eq, PartialOrd};
 use std::collections::hash_map::{DefaultHasher, Entry};
@@ -2406,14 +2406,14 @@ impl Program {
         self.watchers.insert(name, watcher);
     }
 
-    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Solver>) {
+    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut HashSet<&'a Solver>) {
         let ref pipe_lookup = block_info.pipe_lookup;
         let mut tuple = (0,0,0);
         // look for (0,0,0), (0, a, 0) and (0, a, v) pipes
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe);
+                    pipes.insert(pipe);
                 }
             },
             None => {},
@@ -2422,7 +2422,7 @@ impl Program {
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe);
+                    pipes.insert(pipe);
                 }
             },
             None => {},
@@ -2431,7 +2431,7 @@ impl Program {
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe);
+                    pipes.insert(pipe);
                 }
             },
             None => {},
@@ -2446,7 +2446,7 @@ impl Program {
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe);
+                            pipes.insert(pipe);
                         }
                     },
                     None => {},
@@ -2455,7 +2455,7 @@ impl Program {
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe);
+                            pipes.insert(pipe);
                         }
                     },
                     None => {},
@@ -2464,7 +2464,7 @@ impl Program {
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe);
+                            pipes.insert(pipe);
                         }
                     },
                     None => {},
@@ -2511,7 +2511,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
 
 fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
     {
-        let mut pipes = vec![];
+        let mut pipes = HashSet::new();
         let mut next_frame = true;
 
         while next_frame {
