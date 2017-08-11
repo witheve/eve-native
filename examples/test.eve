@@ -1,10 +1,39 @@
+search
+  client_id = "3354b6a98e3c4fb3b804c5a9e064a3df"
+  response_type = "code"
+  redirect_uri = "google.com"
+  //address = "https://accounts.spotify.com/authorize/?client_id={{client_id}}&response_type=code&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=user-read-private%20user-read-email&state=34fFs29kd09"
+  //address = "https://jsonplaceholder.typicode.com/comments"
+  address = "http://echo.jsontest.com/key/shenberger/one/manifold"
 commit
-  [#http/request #req address: "http://echo.jsontest.com/last/shenberger/first/manifold"]
+  //[#foo bar: 10]
+  [#http/request #req address]
 end
-
 
 search
   [#req response: [#http/response status body]]
 commit
-  [#console/log text: "{{status}} {{body.first}} {{body.last}}"]
+  [#json/decode #qq json: body]
 end
+
+search
+  [#qq json-object: [one key]]
+commit
+  [#console/log text: "{{one}} {{key}}"]
+end
+
+
+
+disabled
+commit
+  [#http/server address: "127.0.0.1:8080"]
+end
+
+Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8
+Accept-Encoding:gzip, deflate, br
+Accept-Language:en-US,en;q=0.8
+Connection:keep-alive
+Cookie:remember=cmontella%40live.com; sp_dc=AQD2mtOZxGK5uVMFom_yG9Nx6CPebAlDZWqfJF-G0sbHXVI-5cjSxQoSyD5VW-IHgLhNIobci3nTrIUq2cryJCKQ; BOOTSTRAP_CONFIG=%7B%22FB_APP_ID%22%3A%22174829003346%22%2C%22GOOGLE_ANALYTICS_ID%22%3A%22UA-5784146-31%22%2C%22TINDER_ADJUST_TRACKER_ID%22%3A%22szcgk1_dn83gr%22%2C%22TINDER_CLIENT_ID%22%3A%22b06a803d686e4612bdc074e786e94062%22%2C%22client%22%3A%7B%22name%22%3A%22Spotify%20Developer%22%7D%2C%22country%22%3A%22US%22%2C%22locales%22%3A%5B%22en_US%22%2C%22en%22%5D%2C%22BON%22%3A%5B%220%22%2C%220%22%2C-1744276953%5D%2C%22user%22%3A%7B%22displayName%22%3A%22cmontella%22%7D%2C%22redirect%22%3Anull%7D; sp_ac=AQB_BTskkac5q-RpyZq7_nnS1-_aYgwlfwYBaKpmxVCevYGZHNF_1JUlrlGBg3gzB93sVVRSvwl4T5LMul5V0mKNaEcthgazQIhNPICjC8wsBvz10snCrorB_ZwW_DI-j1nAOdmmoP51jlyjJsh0KiB9mFoaQ9uMPFim4Q66lni0kzsAW8V0zXUcq0lA-XL-RR9Auycu5fo; csrf_token=AQBEr6KFRYrRb-PliLvnoJduz3nsImku4nRSkEhsDyrXj-Mwj8XcqVXqMd1eNruxEw2p8cw1UOxOzWrz; _ga=GA1.2.389876630.1502400017; _gid=GA1.2.745352553.1502400017; _gat=1
+Host:accounts.spotify.com
+Upgrade-Insecure-Requests:1
+User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36
