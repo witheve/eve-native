@@ -107,6 +107,14 @@ impl fmt::Debug for Solver {
     }
 }
 
+fn move_or_accept(field:&Field, ix:usize, moves:&mut Vec<(usize, usize)>, accepts:&mut Vec<(usize, Interned)>) {
+    if let &Field::Register(reg) = field {
+        moves.push((ix, reg));
+    } else if let &Field::Value(val) = field {
+        accepts.push((ix, val));
+    }
+}
+
 impl Solver {
 
     pub fn new(interner:&mut Interner, block:Interned, id:usize, active_scan:Option<&Constraint>, constraints:&Vec<Constraint>) -> Solver {
@@ -143,14 +151,13 @@ impl Solver {
             },
             Some(&Constraint::LookupRemote { e, a, v, _for, _type, from, to, .. }) => {
                 to_solve.extend(active_scan.unwrap().get_registers());
-                if let Field::Register(ix) = e { moves.push((0, ix)); }
-                if let Field::Register(ix) = a { moves.push((1, ix)); }
-                if let Field::Register(ix) = v { moves.push((2, ix)); }
-                if let Field::Register(ix) = _for { moves.push((3, ix)); }
-                if let Field::Register(ix) = _type { moves.push((4, ix)); }
-                if let Field::Register(ix) = from { moves.push((5, ix)); }
-                if let Field::Register(ix) = to { moves.push((6, ix)); }
-                unimplemented!()
+                move_or_accept(&e, 0, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&a, 1, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&v, 2, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&_for, 3, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&_type, 4, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&from, 5, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&to, 6, &mut moves, &mut intermediate_accepts);
             },
             Some(&Constraint::IntermediateScan { ref full_key, .. }) |
             Some(&Constraint::AntiScan { key: ref full_key, .. }) => {
@@ -282,6 +289,20 @@ impl Solver {
         }
     }
 
+    pub fn run_remote(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame) {
+        if !self.do_remote_move(frame) { return }
+        for accept in self.accepts.iter() {
+            let res = (*accept)(state, frame, usize::MAX);
+            if !res { return }
+        }
+        if frame.row.solved_fields != self.finished_mask {
+            self.solve_variables(state, pool, frame, 0);
+        } else {
+            self.clear_rounds(&mut state.output_rounds, frame);
+            self.do_output(state, frame);
+        }
+    }
+
     pub fn do_move(&self, state: &mut RuntimeState, frame:&mut Frame) -> bool {
         if self.moves.len() > 0 {
             let change = frame.input.expect("running solver without an input!");
@@ -315,6 +336,36 @@ impl Solver {
             }
             for &(from, value) in self.intermediate_accepts.iter() {
                 if intermediate.key[from] != value { return false }
+            }
+        }
+        true
+    }
+
+    pub fn do_remote_move(&self, frame:&mut Frame) -> bool {
+        if let Some(ref remote) = frame.remote {
+            for &(from, to) in self.moves.iter() {
+                match from {
+                    0 => { frame.row.set_multi(to, remote.e); }
+                    1 => { frame.row.set_multi(to, remote.a); }
+                    2 => { frame.row.set_multi(to, remote.v); }
+                    3 => { frame.row.set_multi(to, remote._for); }
+                    4 => { frame.row.set_multi(to, remote._type); }
+                    5 => { frame.row.set_multi(to, remote.from); }
+                    6 => { frame.row.set_multi(to, remote.to); }
+                    _ => { unreachable!() },
+                }
+            }
+            for &(from, value) in self.intermediate_accepts.iter() {
+                match from {
+                    0 => { if remote.e != value { return false } }
+                    1 => { if remote.a != value { return false } }
+                    2 => { if remote.v != value { return false } }
+                    3 => { if remote._for != value { return false } }
+                    4 => { if remote._type != value { return false } }
+                    5 => { if remote.from != value { return false } }
+                    6 => { if remote.to != value { return false } }
+                    _ => { unreachable!() },
+                }
             }
         }
         true
