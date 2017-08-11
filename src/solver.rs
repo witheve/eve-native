@@ -2,6 +2,7 @@ use ops::*;
 use compiler::{FunctionKind};
 use indexes::{WatchIndex};
 use std::collections::{HashSet};
+use std::hash::{Hash, Hasher};
 use std::usize;
 use std::iter;
 use std::sync::Arc;
@@ -61,11 +62,20 @@ pub struct Solver {
     aggregates: Vec<(Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, AggregateFunction, AggregateFunction, FunctionKind)>,
 }
 
+impl Hash for Solver {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.block.hash(state);
+        self.id.hash(state);
+    }
+}
+
 impl PartialEq for Solver {
     fn eq(&self, other:&Self) -> bool {
         self.block == other.block && self.id == other.id
     }
 }
+
+impl Eq for Solver {}
 
 unsafe impl Send for Solver {}
 impl Clone for Solver {
