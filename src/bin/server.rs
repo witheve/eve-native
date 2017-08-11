@@ -65,8 +65,6 @@ impl ClientHandler {
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
             runner.program.attach(Box::new(ConsoleWatcher::new()));
-
-            // DEBUG
             runner.program.attach(Box::new(PanicWatcher::new()));
         }
 

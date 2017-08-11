@@ -9,7 +9,7 @@ extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
+use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges, RemoteIndex};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
 use std::collections::{HashMap, HashSet, Bound};
@@ -1692,24 +1692,20 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params > v {
+                        if &local_params > v {
                             // remove v
-                            let mut neue = v.clone();
-                            neue.push(Internable::Number(0));
-                            changes.push((neue, current_round, -1));
+                            changes.push((v.clone(), current_round, -1));
                             // insert params
-                            let mut neue2 = params.clone();
-                            neue2.push(Internable::Number(0));
-                            changes.push((neue2, current_round, 1));
+                            changes.push((local_params, current_round, 1));
                         }
                     }
                     _ => {
                         // insert params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, 1));
+                        changes.push((local_params, current_round, 1));
                     }
                 }
             }
@@ -1727,26 +1723,23 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params >= v {
+                        if &local_params >= v {
                             // remove v
-                            let mut old = params.clone();
-                            old.push(Internable::Number(0));
-                            changes.push((old, current_round, -1));
+                            changes.push((local_params, current_round, -1));
                             // insert params
                             if let Some((neue_max, _)) = iter.next() {
-                                let mut neue = neue_max.clone();
-                                neue.push(Internable::Number(0));
+                                let neue = neue_max.clone();
                                 changes.push((neue, current_round, 1));
                             }
                         }
                     }
                     _ => {
                         // remove params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, -1));
+                        changes.push((local_params, current_round, -1));
                     }
                 }
             }
@@ -1764,24 +1757,20 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params < v {
+                        if &local_params < v {
                             // remove v
-                            let mut neue = v.clone();
-                            neue.push(Internable::Number(0));
-                            changes.push((neue, current_round, -1));
+                            changes.push((v.clone(), current_round, -1));
                             // insert params
-                            let mut neue2 = params.clone();
-                            neue2.push(Internable::Number(0));
-                            changes.push((neue2, current_round, 1));
+                            changes.push((local_params, current_round, 1));
                         }
                     }
                     _ => {
                         // insert params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, 1));
+                        changes.push((local_params, current_round, 1));
                     }
                 }
             }
@@ -1799,26 +1788,23 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params <= v {
+                        if &local_params <= v {
                             // remove v
-                            let mut old = params.clone();
-                            old.push(Internable::Number(0));
-                            changes.push((old, current_round, -1));
+                            changes.push((local_params, current_round, -1));
                             // insert params
                             if let Some((neue_max, _)) = iter.next() {
-                                let mut neue = neue_max.clone();
-                                neue.push(Internable::Number(0));
+                                let neue = neue_max.clone();
                                 changes.push((neue, current_round, 1));
                             }
                         }
                     }
                     _ => {
                         // remove params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, -1));
+                        changes.push((local_params, current_round, -1));
                     }
                 }
             }
@@ -2262,6 +2248,7 @@ pub struct RuntimeState {
     pub output_rounds: OutputRounds,
     pub index: HashIndex,
     pub distinct_index: DistinctIndex,
+    pub remote_index: RemoteIndex,
     pub interner: Interner,
     pub watch_indexes: HashMap<String, WatchIndex>,
     pub intermediates: IntermediateIndex,
@@ -2300,6 +2287,7 @@ impl Program {
     pub fn new() -> Program {
         let index = HashIndex::new();
         let distinct_index = DistinctIndex::new();
+        let remote_index = RemoteIndex::new();
         let intermediates = IntermediateIndex::new();
         let interner = Interner::new();
         let rounds = RoundHolder::new();
@@ -2311,7 +2299,7 @@ impl Program {
         let intermediate_pipe_lookup = HashMap::new();
         let blocks = vec![];
         let (outgoing, incoming) = mpsc::channel();
-        let state = RuntimeState { debug:false, rounds, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
+        let state = RuntimeState { debug:false, rounds, remote_index, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
     }
