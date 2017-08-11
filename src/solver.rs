@@ -1,6 +1,6 @@
 use ops::*;
 use compiler::{FunctionKind};
-use indexes::{WatchIndex};
+use indexes::{WatchIndex, RemoteChangeField};
 use std::collections::{HashSet};
 use std::hash::{Hash, Hasher};
 use std::usize;
@@ -141,12 +141,16 @@ impl Solver {
                 input_checks.push((InputField::Round, interner.number_id(0.0)));
                 get_rounds.push(make_commit_lookup_get_rounds(active_scan.unwrap()));
             },
-            Some(&Constraint::LookupRemote { e, a, v, .. }) => {
+            Some(&Constraint::LookupRemote { e, a, v, _for, _type, from, to, .. }) => {
                 to_solve.extend(active_scan.unwrap().get_registers());
                 if let Field::Register(ix) = e { moves.push((0, ix)); }
                 if let Field::Register(ix) = a { moves.push((1, ix)); }
                 if let Field::Register(ix) = v { moves.push((2, ix)); }
-                unimplemented!();
+                if let Field::Register(ix) = _for { moves.push((3, ix)); }
+                if let Field::Register(ix) = _type { moves.push((4, ix)); }
+                if let Field::Register(ix) = from { moves.push((5, ix)); }
+                if let Field::Register(ix) = to { moves.push((6, ix)); }
+                unimplemented!()
             },
             Some(&Constraint::IntermediateScan { ref full_key, .. }) |
             Some(&Constraint::AntiScan { key: ref full_key, .. }) => {
@@ -180,7 +184,7 @@ impl Solver {
                     get_rounds.push(make_commit_lookup_get_rounds(constraint));
                 },
                 &Constraint::LookupRemote {..} => {
-                    unimplemented!();
+                    get_iters.push(make_lookup_remote_get_iterator(constraint, ix));
                 },
                 &Constraint::AntiScan {..}  => {
                     get_rounds.push(make_anti_get_rounds(constraint));
@@ -462,6 +466,56 @@ pub fn make_commit_lookup_get_rounds(scan:&Constraint) -> Arc<GetRoundsFunc> {
             if !state.distinct_index.is_commit(resolved_e, resolved_a, resolved_v) {
                 state.output_rounds.clear();
             }
+    })
+}
+
+//-------------------------------------------------------------------------
+// LookupRemote
+//-------------------------------------------------------------------------
+
+pub fn make_lookup_remote_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIteratorFunc> {
+    let (e,a,v,_for,_type,from,to,register_mask) = match scan {
+        &Constraint::LookupRemote { e, a, v, _for, _type, from, to, register_mask} => (e,a,v,_for,_type,from,to,register_mask),
+        _ => unreachable!()
+    };
+    let mut fields = vec![];
+    let mut outputs = vec![];
+    if let Field::Register(ix) = e { fields.push(RemoteChangeField::E); outputs.push(ix); }
+    if let Field::Register(ix) = a { fields.push(RemoteChangeField::A); outputs.push(ix); }
+    if let Field::Register(ix) = v { fields.push(RemoteChangeField::V); outputs.push(ix); }
+    if let Field::Register(ix) = _for { fields.push(RemoteChangeField::For); outputs.push(ix); }
+    if let Field::Register(ix) = _type { fields.push(RemoteChangeField::Type); outputs.push(ix); }
+    if let Field::Register(ix) = from { fields.push(RemoteChangeField::From); outputs.push(ix); }
+    if let Field::Register(ix) = to { fields.push(RemoteChangeField::To); outputs.push(ix); }
+    Arc::new(move |iter, state, frame| {
+        // if we have already solved all of this scan's vars, we just move on
+        if check_bits(frame.row.solved_fields, register_mask) {
+            return true;
+        }
+
+        if iter.is_better(state.remote_index.len()) {
+            let resolved_e = frame.resolve(&e);
+            let resolved_a = frame.resolve(&a);
+            let resolved_v = frame.resolve(&v);
+            let resolved_for = frame.resolve(&_for);
+            let resolved_type = frame.resolve(&_type);
+            let resolved_from = frame.resolve(&from);
+            let resolved_to = frame.resolve(&to);
+            let remote_iter = Box::new(state.remote_index.index.iter().filter(|x| {
+               (resolved_e == 0 || x.e == resolved_e) &&
+               (resolved_a == 0 || x.a == resolved_a) &&
+               (resolved_v == 0 || x.v == resolved_v) &&
+               (resolved_for == 0 || x._for == resolved_for) &&
+               (resolved_type == 0 || x._type == resolved_type) &&
+               (resolved_from == 0 || x.from == resolved_from) &&
+               (resolved_to == 0 || x.to == resolved_to)
+            }).map(|x| {
+                x.extract(&fields)
+            }));
+            iter.iter = OutputingIter::Multi(outputs.clone(), OutputingIter::make_multi_ptr(remote_iter));
+            iter.constraint = ix;
+        }
+        true
     })
 }
 
