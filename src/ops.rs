@@ -1692,24 +1692,20 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params > v {
+                        if &local_params > v {
                             // remove v
-                            let mut neue = v.clone();
-                            neue.push(Internable::Number(0));
-                            changes.push((neue, current_round, -1));
+                            changes.push((v.clone(), current_round, -1));
                             // insert params
-                            let mut neue2 = params.clone();
-                            neue2.push(Internable::Number(0));
-                            changes.push((neue2, current_round, 1));
+                            changes.push((local_params, current_round, 1));
                         }
                     }
                     _ => {
                         // insert params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, 1));
+                        changes.push((local_params, current_round, 1));
                     }
                 }
             }
@@ -1727,26 +1723,23 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params >= v {
+                        if &local_params >= v {
                             // remove v
-                            let mut old = params.clone();
-                            old.push(Internable::Number(0));
-                            changes.push((old, current_round, -1));
+                            changes.push((local_params, current_round, -1));
                             // insert params
                             if let Some((neue_max, _)) = iter.next() {
-                                let mut neue = neue_max.clone();
-                                neue.push(Internable::Number(0));
+                                let neue = neue_max.clone();
                                 changes.push((neue, current_round, 1));
                             }
                         }
                     }
                     _ => {
                         // remove params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, -1));
+                        changes.push((local_params, current_round, -1));
                     }
                 }
             }
@@ -1764,24 +1757,20 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params < v {
+                        if &local_params < v {
                             // remove v
-                            let mut neue = v.clone();
-                            neue.push(Internable::Number(0));
-                            changes.push((neue, current_round, -1));
+                            changes.push((v.clone(), current_round, -1));
                             // insert params
-                            let mut neue2 = params.clone();
-                            neue2.push(Internable::Number(0));
-                            changes.push((neue2, current_round, 1));
+                            changes.push((local_params, current_round, 1));
                         }
                     }
                     _ => {
                         // insert params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, 1));
+                        changes.push((local_params, current_round, 1));
                     }
                 }
             }
@@ -1799,26 +1788,23 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params <= v {
+                        if &local_params <= v {
                             // remove v
-                            let mut old = params.clone();
-                            old.push(Internable::Number(0));
-                            changes.push((old, current_round, -1));
+                            changes.push((local_params, current_round, -1));
                             // insert params
                             if let Some((neue_max, _)) = iter.next() {
-                                let mut neue = neue_max.clone();
-                                neue.push(Internable::Number(0));
+                                let neue = neue_max.clone();
                                 changes.push((neue, current_round, 1));
                             }
                         }
                     }
                     _ => {
                         // remove params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, -1));
+                        changes.push((local_params, current_round, -1));
                     }
                 }
             }
