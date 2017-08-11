@@ -19,8 +19,7 @@ export interface StyleElement extends HTMLStyleElement {__style: RawValue}
 // Helpers
 ////////////////////////////////////////////////////////////////////////////////
 function isFocusable(x:any) {
-  return x instanceof HTMLInputElement ||
-    x instanceof HTMLTextAreaElement;
+  return x && !!x.focus;
 }
 
 let naturalComparator = new Intl.Collator("en", {numeric: true}).compare;
