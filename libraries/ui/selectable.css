@@ -7,6 +7,7 @@
     --current-color: #f3f3f3;
 }
 
+.ui-selectable:focus { outline: none; }
 .ui-selectable > * { padding: 5px 10px; position: relative; }
 .ui-selectable > *:first-child { padding-top: 10px; }
 .ui-selectable > *:last-child { padding-bottom: 10px; }

@@ -67,17 +67,24 @@ end
 
 ## Selectable
 
+Selectables are focusable.
+~~~ eve
+search
+  selectable = [#ui/selectable]
+  i = if t = selectable.tabindex then t else 0
+bind
+  selectable.tabindex += i
+end
+~~~
+
 The default cursor for a selectable list is the first item.
-@FIXME: SWITCH BACK TO gather/bottom when fixed.
 ~~~ eve
 search
   selectable = [#ui/selectable item]
   not(selectable.cursor)
   gather/bottom[for: item.sort per: selectable limit: 1]
-  // item.sort = 1
 commit
   selectable.cursor := item
-  // [#html/div text: "{{item.sort}}. {{item.text}}"]
 end
 ~~~
 
@@ -123,17 +130,17 @@ end
 
 ### Handlers
 
-Clicking a selectable focuses it.
+Mark focused selectables.
 ~~~ eve
 search
   selectable = [#ui/selectable]
-  [#html/event/click element: selectable]
+  [#html/event/focus element: selectable]
 bind
   [#ui/event/focus selectable]
 end
 ~~~
 
-Clicking an item in a selectable selects and focuses it.
+Clicking an item in a selectable selects it.
 ~~~ eve
 search
   selectable = [#ui/selectable item]
@@ -147,8 +154,9 @@ Clicking outside a focused selectable blurs it.
 ~~~ eve
 search
   selectable = [#ui/selectable #ui/focused]
-  [#html/event/click]
-  not([#html/event/click element: selectable])
+  // [#html/event/click]
+  // not([#html/event/click element: selectable])
+  [#html/event/blur element: selectable]
 bind
   [#ui/event/blur selectable]
 end
@@ -160,8 +168,9 @@ search
   selectable = [#ui/selectable #ui/focused]
   event = if e = [#html/event/key-down key: "escape"] then e
   if e = [#html/event/key-down key: "tab"] then e
-bind
-  [#ui/event/blur selectable]
+  if e = [#html/event/key-down key: "enter"] then e
+commit
+  selectable += #html/trigger/blur
 end
 ~~~
 
@@ -172,7 +181,6 @@ search
   [#html/event/key-down key: "enter"]
 bind
   [#ui/event/select selectable item]
-  [#ui/event/blur selectable]
 end
 ~~~
 
@@ -205,15 +213,17 @@ search
   [#ui/event/focus selectable]
 commit
   selectable += #ui/focused
+  selectable -= #html/trigger/focus
 end
 ~~~
 
-Blurring a selectable selectable removes its focused status.
+Blurring a selectable removes its focused status.
 ~~~ eve
 search
   [#ui/event/blur selectable]
 commit
   selectable -= #ui/focused
+  selectable -= #html/trigger/blur
 end
 ~~~
 
@@ -310,34 +320,40 @@ bind
 end
 ~~~
 
+Focusing the list of a closed dropdown opens it.
+~~~ eve
+search
+  [#ui/event/focus selectable: [#ui/dropdown/list dropdown]]
+  not(dropdown = [#ui/open])
+bind
+  [#ui/event/open dropdown]
+end
+~~~
+
+
 ### Events
 
 Opening a dropdown marks it as open.
 ~~~ eve
 search
   [#ui/event/open dropdown]
+  list = [#ui/dropdown/list dropdown]
 commit
   dropdown += #ui/open
+  list += #html/trigger/focus
+  list -= #html/trigger/blur
 end
 ~~~
-
-When a dropdown is opened, focus its list.
-~~~ eve
-search
-  [#ui/event/open dropdown]
-  list = [#ui/dropdown/list dropdown]
-bind
-  [#ui/event/focus selectable: list]
-end
-~~~
-
 
 Closing a dropdown removes its open tag.
 ~~~ eve
 search
-  e = [#ui/event/close dropdown]
+  [#ui/event/close dropdown]
+  list = [#ui/dropdown/list dropdown]
 commit
   dropdown -= #ui/open
+  list -= #html/trigger/focus
+  list += #html/trigger/blur
 end
 ~~~
 
