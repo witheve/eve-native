@@ -97,3 +97,32 @@ impl Watcher for SystemTimerWatcher {
     }
 }
 
+//-------------------------------------------------------------------------
+// Panic Watcher
+//-------------------------------------------------------------------------
+
+pub struct PanicWatcher {
+    name: String,
+}
+
+impl PanicWatcher {
+    pub fn new() -> PanicWatcher {
+        PanicWatcher{name: "eve/panic!".to_string()}
+    }
+}
+
+impl Watcher for PanicWatcher {
+    fn get_name(& self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+        for add in diff.adds {
+            println!("PANIC! {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+            panic!("Everything is probably bad.");
+        }
+    }
+}
+
