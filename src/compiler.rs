@@ -437,6 +437,12 @@ impl<'a> Node<'a> {
                 }
                 None
             },
+            &mut Node::LookupRemote(ref mut attrs, _) => {
+                for attr in attrs {
+                    attr.gather_equalities(interner, cur_block);
+                }
+                None
+            },
             &mut Node::RecordSet(ref mut records) => {
                 for record in records {
                     record.gather_equalities(interner, cur_block);
@@ -935,9 +941,9 @@ impl<'a> Node<'a> {
                         "attribute" => attribute = v,
                         "value" => value = v,
                         "to" => to = v,
+                        "from" => from = v,
                         "for" => _for = v,
                         "type" => _type = v,
-                        "from" => value = v,
                         _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
@@ -949,11 +955,12 @@ impl<'a> Node<'a> {
                 if _for == None { _for = cur_block.gen_var("eve_lookup"); }
                 if _type == None { _type = cur_block.gen_var("eve_lookup"); }
 
-                match output_type {
-                    OutputType::Lookup => cur_block.constraints.push(make_remote_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap(), _for.unwrap(), _type.unwrap(), from.unwrap(), to.unwrap())),
-                    OutputType::Commit => unimplemented!(),
-                    OutputType::Bind => unimplemented!()
-                }
+                let constraint = match output_type {
+                    OutputType::Lookup => make_remote_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap(), _for.unwrap(), _type.unwrap(), from.unwrap(), to.unwrap()),
+                    OutputType::Commit => Constraint::Watch {name:"eve/remote".to_string(), registers: vec![to.unwrap(), _for.unwrap(), entity.unwrap(), attribute.unwrap(), value.unwrap(), Field::Value(0)]},
+                    OutputType::Bind => Constraint::Watch {name:"eve/remote".to_string(), registers: vec![to.unwrap(), _for.unwrap(), entity.unwrap(), attribute.unwrap(), value.unwrap(), Field::Value(1)]},
+                };
+                cur_block.constraints.push(constraint);
                 None
             },
             &Node::Record(ref var, ref attrs) => {
@@ -1726,13 +1733,13 @@ pub fn parse_string(interner:&mut Interner, content:&str, path:&str) -> Vec<Bloc
                 block.compile(interner, &mut comp, &EMPTY_SPAN);
 
                 comp.finalize();
-                // println!("---------------------- Block {} ---------------------------", block_name);
-                // if let &mut Node::Block { code, ..} = block {
-                //     println!("{}\n\n => \n", code);
-                // }
-                // for c in comp.constraints.iter() {
-                //     println!("   {:?}", c);
-                // }
+                println!("---------------------- Block {} ---------------------------", block_name);
+                if let &mut Node::Block { code, ..} = block {
+                    println!("{}\n\n => \n", code);
+                }
+                for c in comp.constraints.iter() {
+                    println!("   {:?}", c);
+                }
                 program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content));
             }
             program_blocks

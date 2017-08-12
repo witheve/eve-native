@@ -10,6 +10,7 @@ use eve::ops::{ProgramRunner, Persister};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
+use eve::watchers::remote::{Router, RemoteWatcher};
 
 //-------------------------------------------------------------------------
 // Main
@@ -50,6 +51,10 @@ fn main() {
         runner.program.attach(Box::new(ConsoleWatcher::new()));
         runner.program.attach(Box::new(PrintDiffWatcher::new()));
         runner.program.attach(Box::new(PanicWatcher::new()));
+
+        let mut router = Router::new();
+        router.register("server", outgoing.clone());
+        runner.program.attach(Box::new(RemoteWatcher::new("server", &router)));
     }
 
     if let Some(persist_file) = persist {

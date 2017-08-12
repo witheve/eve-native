@@ -378,6 +378,8 @@ impl Solver {
         } else if let Some(ref change) = frame.intermediate {
             let count = if change.negate { change.count * -1 } else { change.count };
             output_rounds.output_rounds.push((change.round, count));
+        } else if let Some(_) = frame.remote {
+            output_rounds.output_rounds.push((0, 1));
         }
     }
 
