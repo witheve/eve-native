@@ -33,6 +33,7 @@ pub enum InputField {
 pub enum OutputFuncs {
     Bind,
     Commit,
+    DynamicCommit,
     Aggregate,
     Intermediate,
     Project,
@@ -54,12 +55,14 @@ pub struct Solver {
     moves: Vec<(usize, usize)>,
     input_checks: Vec<(InputField, Interned)>,
     commits: Vec<(Field, Field, Field, ChangeType)>,
+    dynamic_commits: Vec<(Field, Field, Field, Field)>,
     binds: Vec<(Field, Field, Field)>,
     watch_registers: Vec<(String, Vec<Field>)>,
     project_fields: Vec<usize>,
     intermediates: Vec<(Vec<Field>, Vec<Field>, bool)>,
     intermediate_accepts: Vec<(usize, Interned)>,
     aggregates: Vec<(Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, AggregateFunction, AggregateFunction, FunctionKind)>,
+    interned_remove: Interned,
 }
 
 impl Hash for Solver {
@@ -89,6 +92,7 @@ impl Clone for Solver {
             accepts: self.accepts.iter().cloned().collect(),
             get_rounds: self.get_rounds.iter().cloned().collect(),
             commits: self.commits.clone(),
+            dynamic_commits: self.dynamic_commits.clone(),
             binds: self.binds.clone(),
             intermediates: self.intermediates.clone(),
             intermediate_accepts: self.intermediate_accepts.clone(),
@@ -97,6 +101,7 @@ impl Clone for Solver {
             project_fields: self.project_fields.clone(),
             aggregates: self.aggregates.iter().map(|&(ref a, ref b, ref c, ref d,e,f,g)| (a.clone(), b.clone(), c.clone(), d.clone(), e, f, g)).collect(),
             finished_mask: self.finished_mask,
+            interned_remove: self.interned_remove,
         }
     }
 }
@@ -124,6 +129,7 @@ impl Solver {
         let mut accepts = vec![];
         let mut get_rounds = vec![];
         let mut commits = vec![];
+        let mut dynamic_commits = vec![];
         let mut binds = vec![];
         let mut watch_registers = vec![];
         let mut project_fields:Vec<usize> = vec![];
@@ -146,7 +152,7 @@ impl Solver {
                 if let Field::Register(ix) = e { moves.push((0, ix)); }
                 if let Field::Register(ix) = a { moves.push((1, ix)); }
                 if let Field::Register(ix) = v { moves.push((2, ix)); }
-                input_checks.push((InputField::Round, interner.number_id(0.0)));
+                input_checks.push((InputField::Round, 0));
                 get_rounds.push(make_commit_lookup_get_rounds(active_scan.unwrap()));
             },
             Some(&Constraint::LookupRemote { e, a, v, _for, _type, from, to, .. }) => {
@@ -240,6 +246,10 @@ impl Solver {
                     commits.push((e, Field::Value(0), Field::Value(0), ChangeType::Remove));
                     output_funcs.insert(OutputFuncs::Commit);
                 },
+                &Constraint::DynamicCommit { e,a,v,_type } => {
+                    dynamic_commits.push((e,a,v,_type));
+                    output_funcs.insert(OutputFuncs::DynamicCommit);
+                },
                 &Constraint::Project { ref registers } => {
                     project_fields.extend(registers.iter());
                     output_funcs.insert(OutputFuncs::Project);
@@ -256,13 +266,20 @@ impl Solver {
             match x {
                 OutputFuncs::Bind => do_bind as OutputFunc,
                 OutputFuncs::Commit => do_commit as OutputFunc,
+                OutputFuncs::DynamicCommit => do_dynamic_commit as OutputFunc,
                 OutputFuncs::Watch => do_watch as OutputFunc,
                 OutputFuncs::Intermediate => do_intermediate_insert as OutputFunc,
                 OutputFuncs::Project => do_project as OutputFunc,
                 OutputFuncs::Aggregate => do_aggregate as OutputFunc,
             }
         }).collect();
-        Solver { block, id, moves, input_checks, get_iters, accepts, get_rounds, commits, binds, intermediates, intermediate_accepts, outputs, watch_registers, project_fields, aggregates, finished_mask }
+
+        // Dynamic commits need to compare their type to "add" and "remove", so to reduce the
+        // runtime pressure of that, we can get the interned id for remove and just use that to
+        // compare.
+        let interned_remove = interner.string_id("remove");
+
+        Solver { block, id, moves, input_checks, get_iters, accepts, get_rounds, dynamic_commits, commits, binds, intermediates, intermediate_accepts, outputs, watch_registers, project_fields, aggregates, finished_mask, interned_remove }
     }
 
     pub fn run(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame) {
@@ -396,7 +413,9 @@ impl Solver {
         };
         'main: while { pool.get(ix).iter.next(&mut frame.row, ix) } {
             for accept in self.accepts.iter() {
-                if !(*accept)(state, frame, active_constraint) { continue 'main; }
+                if !(*accept)(state, frame, active_constraint) {
+                    continue 'main;
+                }
             }
             frame.row.put_solved(ix);
             if frame.row.solved_fields == self.finished_mask {
@@ -554,7 +573,9 @@ pub fn make_lookup_remote_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIt
             let resolved_type = frame.resolve(&_type);
             let resolved_from = frame.resolve(&from);
             let resolved_to = frame.resolve(&to);
-            let remote_iter = Box::new(state.remote_index.index.iter().filter(|x| {
+            // @FIXME: why does this need to be collected into a vector first? If the iter is
+            // passed directly, it's always empty.
+            let remote_iter = state.remote_index.index.iter().filter(|x| {
                (resolved_e == 0 || x.e == resolved_e) &&
                (resolved_a == 0 || x.a == resolved_a) &&
                (resolved_v == 0 || x.v == resolved_v) &&
@@ -564,8 +585,9 @@ pub fn make_lookup_remote_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIt
                (resolved_to == 0 || x.to == resolved_to)
             }).map(|x| {
                 x.extract(&fields)
-            }));
-            iter.iter = OutputingIter::Multi(outputs.clone(), OutputingIter::make_multi_ptr(remote_iter));
+            }).collect::<Vec<_>>();
+            iter.estimate = state.remote_index.len();
+            iter.iter = OutputingIter::Multi(outputs.clone(), OutputingIter::make_multi_ptr(Box::new(remote_iter.into_iter())));
             iter.constraint = ix;
         }
         true
@@ -829,6 +851,18 @@ pub fn do_commit(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
     for &(_, count) in state.output_rounds.get_output_rounds().iter() {
         for &(e, a, v, change_type) in me.commits.iter() {
             let correct_count = if change_type == ChangeType::Remove { count * -1 } else { count };
+            let output = Change { e: frame.resolve(&e), a: frame.resolve(&a), v:frame.resolve(&v), n, round:0, transaction: 0, count:correct_count };
+            frame.counters.inserts += 1;
+            state.rounds.commit(output, change_type)
+        }
+    }
+}
+
+pub fn do_dynamic_commit(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
+    let n = (me.block * 10000) as u32;
+    for &(_, count) in state.output_rounds.get_output_rounds().iter() {
+        for &(e, a, v, _type) in me.dynamic_commits.iter() {
+            let (correct_count, change_type) = if frame.resolve(&_type) == me.interned_remove { (count * -1, ChangeType::Remove) } else { (count, ChangeType::Insert) };
             let output = Change { e: frame.resolve(&e), a: frame.resolve(&a), v:frame.resolve(&v), n, round:0, transaction: 0, count:correct_count };
             frame.counters.inserts += 1;
             state.rounds.commit(output, change_type)

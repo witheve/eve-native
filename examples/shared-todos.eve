@@ -1,0 +1,32 @@
+search
+  [#html/event/click element: [#submit]]
+  [#todo-input value]
+commit
+  [#todo text:value]
+end
+
+search
+  [#todo text]
+bind
+  [#html/div text: "Todo: {{text}}"]
+end
+
+commit
+  [#ui/row children:
+    [#ui/input #todo-input placeholder: "todo.."]
+    [#ui/button #submit text: "submit"]]
+end
+
+search
+  entity = [#todo]
+  lookup-commit[entity attribute value]
+bind
+  lookup-remote[to:"server", for:"todo", entity attribute value]
+end
+
+search
+  lookup-remote[for:"todo", entity attribute value type]
+bind
+  lookup[entity attribute value type]
+end
+

@@ -865,6 +865,7 @@ pub enum Constraint {
     Remove {e: Field, a: Field, v:Field},
     RemoveAttribute {e: Field, a: Field},
     RemoveEntity {e: Field },
+    DynamicCommit {e: Field, a: Field, v:Field, _type: Field},
     Project {registers: Vec<usize>},
     Watch {name: String, registers: Vec<Field>},
 }
@@ -921,6 +922,7 @@ impl Constraint {
             &Constraint::Remove { ref e, ref a, ref v } => { filter_registers(&vec![e,a,v]) },
             &Constraint::RemoveAttribute { ref e, ref a } => { filter_registers(&vec![e,a]) },
             &Constraint::RemoveEntity { ref e } => { filter_registers(&vec![e]) },
+            &Constraint::DynamicCommit { ref e, ref a, ref v, ref _type } => { filter_registers(&vec![e,a,v,_type]) },
             &Constraint::Project {ref registers} => { registers.iter().map(|v| Field::Register(*v)).collect() },
             &Constraint::Watch {ref registers, ..} => { filter_registers(&registers.iter().collect()) },
         }
@@ -1025,6 +1027,7 @@ impl Constraint {
             &mut Constraint::Remove { ref mut e, ref mut a, ref mut v } => { replace_registers(&mut vec![e,a,v], lookup); },
             &mut Constraint::RemoveAttribute { ref mut e, ref mut a } => { replace_registers(&mut vec![e,a], lookup); },
             &mut Constraint::RemoveEntity { ref mut e } => { replace_registers(&mut vec![e], lookup); },
+            &mut Constraint::DynamicCommit { ref mut e, ref mut a, ref mut v, ref mut _type } => { replace_registers(&mut vec![e,a,v,_type], lookup); },
             &mut Constraint::Project {ref mut registers} => {
                 for reg in registers.iter_mut() {
                     if let &Field::Register(neue) = lookup.get(&Field::Register(*reg)).unwrap() {
@@ -1064,6 +1067,7 @@ impl Clone for Constraint {
             &Constraint::Remove { e,a,v } => { Constraint::Remove { e,a,v } },
             &Constraint::RemoveAttribute { e,a } => { Constraint::RemoveAttribute { e,a } },
             &Constraint::RemoveEntity { e } => { Constraint::RemoveEntity { e } },
+            &Constraint::DynamicCommit { e,a,v,_type } => { Constraint::DynamicCommit { e,a,v,_type } },
             &Constraint::Project {ref registers} => { Constraint::Project { registers:registers.clone() } },
             &Constraint::Watch {ref name, ref registers} => { Constraint::Watch { name:name.clone(), registers:registers.clone() } },
 
@@ -1090,6 +1094,7 @@ impl PartialEq for Constraint {
             (&Constraint::Remove { e,a,v }, &Constraint::Remove { e:e2, a:a2, v:v2 }) => {  e == e2 && a == a2 && v == v2 },
             (&Constraint::RemoveAttribute { e,a }, &Constraint::RemoveAttribute { e:e2, a:a2 }) => {  e == e2 && a == a2 },
             (&Constraint::RemoveEntity { e }, &Constraint::RemoveEntity { e:e2 }) => {  e == e2 },
+            (&Constraint::DynamicCommit { e,a,v,_type }, &Constraint::DynamicCommit { e:e2, a:a2, v:v2, _type:type2 }) => {  e == e2 && a == a2 && v == v2 && _type == type2 },
             (&Constraint::Project { ref registers }, &Constraint::Project { registers:ref registers2 }) => {  registers == registers2 },
             (&Constraint::Watch { ref name, ref registers }, &Constraint::Watch { name:ref name2, registers:ref registers2 }) => { name == name2 && registers == registers2 },
             _ => false
@@ -1116,6 +1121,7 @@ impl Hash for Constraint {
             &Constraint::Remove { e,a,v } => { e.hash(state); a.hash(state); v.hash(state); },
             &Constraint::RemoveAttribute { e,a } => { e.hash(state); a.hash(state); },
             &Constraint::RemoveEntity { e } => { e.hash(state); },
+            &Constraint::DynamicCommit { e,a,v,_type } => { e.hash(state); a.hash(state); v.hash(state); _type.hash(state); },
             &Constraint::Project { ref registers } => { registers.hash(state); },
             &Constraint::Watch { ref name, ref registers } => { name.hash(state); registers.hash(state); },
         }
@@ -1137,6 +1143,7 @@ impl fmt::Debug for Constraint {
             &Constraint::Remove { e, a, v, .. } => { write!(f, "Remove ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::RemoveAttribute { e, a, .. } => { write!(f, "RemoveAttribute ( {:?}, {:?} )", e, a) }
             &Constraint::RemoveEntity { e, .. } => { write!(f, "RemoveEntity ( {:?} )", e) }
+            &Constraint::DynamicCommit { e, a, v, _type, .. } => { write!(f, "Remove ( {:?}, {:?}, {:?}, {:?} )", e, a, v, _type) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
             &Constraint::MultiFunction { ref op, ref params, ref outputs, .. } => { write!(f, "{:?} = {}({:?})", outputs, op, params) }
             &Constraint::Aggregate { ref op, ref group, ref projection, ref params, ref output_key, .. } => { write!(f, "{:?} = {}(per: {:?}, for: {:?}, {:?})", output_key, op, group, projection, params) }
@@ -2548,13 +2555,9 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     frame.reset();
                     frame.input = Some(*change);
                     for pipe in pipes.iter() {
-                        // print_pipe(pipe, &program.block_info, &mut program.state);
+                        // println!("  PIPE: {:?} - {:?}", pipe.block, pipe.id);
                         frame.row.reset();
                         pipe.run(&mut program.state, iter_pool, frame);
-                        // if program.state.debug {
-                        //     program.state.debug = false;
-                        //     println!("\n---------------------------------\n");
-                        // }
                     }
                     // as stated above, we want to do removes after so that when we look
                     // for AB and BA, they find the same values as when they were added.
@@ -2868,6 +2871,10 @@ impl RunLoop {
 
     pub fn send(&self, msg: RunLoopMessage) {
         self.outgoing.send(msg).unwrap();
+    }
+
+    pub fn channel(&self) -> Sender<RunLoopMessage> {
+        self.outgoing.clone()
     }
 }
 

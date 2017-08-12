@@ -1,5 +1,5 @@
 use super::super::indexes::{WatchDiff, RawRemoteChange};
-use super::super::ops::{Internable, Interner, Interned, RunLoopMessage};
+use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange};
 use super::Watcher;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -7,16 +7,29 @@ use std::thread;
 use std::collections::HashMap;
 
 //-------------------------------------------------------------------------
+// Util
+//-------------------------------------------------------------------------
+
+fn s(string: &str) -> Internable {
+   Internable::String(string.to_string())
+}
+
+fn n(num: f32) -> Internable {
+   Internable::from_number(num)
+}
+
+//-------------------------------------------------------------------------
 // Router
 //-------------------------------------------------------------------------
 
 pub struct Router {
+    manager: Sender<RunLoopMessage>,
     outgoing: Sender<Vec<RawRemoteChange>>,
     clients: Arc<Mutex<HashMap<String, Sender<RunLoopMessage>>>>
 }
 
 impl Router {
-    pub fn new() -> Router {
+    pub fn new(manager: Sender<RunLoopMessage>) -> Router {
         let (outgoing, incoming) = mpsc::channel();
         let clients = Arc::new(Mutex::new(HashMap::new()));
         let clients2:Arc<Mutex<HashMap<String, Sender<RunLoopMessage>>>> = clients.clone();
@@ -38,11 +51,23 @@ impl Router {
                 }
             }
         });
-        Router { outgoing, clients }
+        Router { outgoing, clients, manager }
     }
 
     pub fn register(&mut self, name:&str, channel: Sender<RunLoopMessage>) {
+        self.manager.send(RunLoopMessage::Transaction(vec![
+            RawChange { e: s(name), a: s("tag"), v: s("router/event/add-client"), n: s("router"), count: 1 },
+            RawChange { e: s(name), a: s("name"), v: s(name), n: s("router"), count: 1 },
+        ])).unwrap();
         self.clients.lock().unwrap().insert(name.to_string(), channel);
+    }
+
+    pub fn unregister(&mut self, name:&str) {
+        self.manager.send(RunLoopMessage::Transaction(vec![
+            RawChange { e: s(name), a: s("tag"), v: s("router/event/remove-client"), n: s("router"), count: 1 },
+            RawChange { e: s(name), a: s("name"), v: s(name), n: s("router"), count: 1 },
+        ])).unwrap();
+        self.clients.lock().unwrap().remove(name);
     }
 
     pub fn get_channel(&self) -> Sender<Vec<RawRemoteChange>> {
@@ -95,7 +120,7 @@ impl Watcher for RemoteWatcher {
             if remove[5] == 1 {
                 match remove.as_slice() {
                     &[to, _for, entity, attribute, value, _] => {
-                        println!("SEND REMOVE: ({:?}, {:?}, {:?}, {:?}, {:?})", to, _for, entity, attribute, value);
+                        // println!("SEND REMOVE: ({:?}, {:?}, {:?}, {:?}, {:?})", to, _for, entity, attribute, value);
                         changes.push(self.to_raw_change(interner, Internable::String("remove".to_string()), to, _for, entity, attribute, value));
                     }
                     _ => panic!("Invalid remote watch")
@@ -106,7 +131,7 @@ impl Watcher for RemoteWatcher {
         for add in diff.adds {
             match add.as_slice() {
                 &[to, _for, entity, attribute, value, _] => {
-                    println!("SEND ADD: ({:?}, {:?}, {:?}, {:?}, {:?})", to, _for, entity, attribute, value);
+                    // println!("SEND ADD: ({:?}, {:?}, {:?}, {:?}, {:?})", to, _for, entity, attribute, value);
                     changes.push(self.to_raw_change(interner, Internable::String("add".to_string()), to, _for, entity, attribute, value));
                 }
                 _ => panic!("Invalid remote watch")

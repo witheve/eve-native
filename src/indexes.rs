@@ -684,7 +684,7 @@ impl RawRemoteChange {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub enum RemoteChangeField {
     E,
     A,
