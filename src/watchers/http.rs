@@ -14,9 +14,12 @@ use self::futures::{Future, Stream};
 use self::hyper::Client;
 use self::hyper_tls::HttpsConnector;
 use self::tokio_core::reactor::Core;
-use self::hyper::{Method, Request};
-//use std::thread;
+use self::hyper::{Method};
+use std::thread;
 use std::io::{Write};
+extern crate iron;
+use self::iron::prelude::*;
+use self::iron::status;
 
 pub struct HttpWatcher {
     name: String,
@@ -47,8 +50,8 @@ impl Watcher for HttpWatcher {
                     send_http_request(address, id, &mut changes);
                 },
                 "server" => {
-                    println!("Starting HTTP Server");
-                    //http_server(address);
+                    println!("Starting HTTP Server at {:?}",address);
+                    http_server(address);
                     println!("HTTP Server started");
                 },
                 _ => {},
@@ -61,14 +64,15 @@ impl Watcher for HttpWatcher {
     }
 }
 
-/*fn http_server(address: String, service: str) -> thread::JoinHandle<()> {
+fn hello_world(_: &mut Request) -> IronResult<Response> {
+    Ok(Response::with((status::Ok, "Hello World!")))
+}
+
+fn http_server(address: String) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        println!("Starting HTTP Server at {}... ", address);
-        let addr = address.parse().unwrap();
-        let server = Http::new().bind(&addr, || Ok(service)).unwrap();
-        server.run().unwrap();
+        let server = Iron::new(hello_world).http(address).unwrap();
     })
-}*/
+}
 
 fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) {
     let mut core = Core::new().unwrap();
@@ -77,7 +81,7 @@ fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) 
         .connector(HttpsConnector::new(4,&handle).unwrap())
         .build(&handle);
     let url = address.parse::<hyper::Uri>().unwrap();
-    let req = Request::new(Method::Get, url);
+    let req = hyper::Request::new(Method::Get, url);
     let work = client.request(req).and_then(|res| {
         let status = res.status().as_u16();
         let response_id = format!("http/response|{:?}",id);
