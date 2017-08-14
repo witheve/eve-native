@@ -483,7 +483,11 @@ impl<'a> Node<'a> {
                 let right = value.gather_equalities(interner, cur_block);
                 if op == &"<-" {
                     cur_block.provide(right.unwrap(), true);
-                    cur_block.equalities.push((left.unwrap(), right.unwrap()));
+                    if let &Node::MutatingAttributeAccess(..) = record.unwrap_ref_pos() {
+                        // @NOTE: Compile will create a scan to resolve right, we only need to indicate that it exists.
+                    } else {
+                        cur_block.equalities.push((left.unwrap(), right.unwrap()));
+                    }
                 }
                 None
             },
@@ -602,7 +606,7 @@ impl<'a> Node<'a> {
                 let mut final_var = "attr_access".to_string();
                 let mut parent = get_provided!(cur_block, span, items[0]);
                 if items.len() > 2 {
-                    for item in items[1..items.len()-2].iter() {
+                    for item in items[1..items.len()-1].iter() {
                         final_var.push_str("|");
                         final_var.push_str(item);
                         let reg = cur_block.get_register(&final_var);
@@ -611,6 +615,7 @@ impl<'a> Node<'a> {
                         cur_block.constraints.push(make_scan(parent, interner.string(item), next));
                         parent = next;
                     }
+                    println!("MAA: {}", final_var);
                 }
                 Some(parent)
             },
@@ -1090,6 +1095,11 @@ impl<'a> Node<'a> {
                 let mut avs = vec![];
                 match (attr, val) {
                     (None, &Node::Tag(t)) => { avs.push((interner.string("tag"), interner.string(t))) },
+                    (Some(attr), &Node::Tag(t)) => {
+                        let me = cur_block.gen_var("tag_mutation").unwrap();
+                        cur_block.constraints.push(make_scan(reg, interner.string(attr), me));
+                        cur_block.constraints.push(Constraint::Insert{e:me, a:interner.string("tag"), v:interner.string(t), commit});
+                    },
                     (None, &Node::NoneValue) => { avs.push((Field::Value(0), Field::Value(0))) }
                     (Some(attr), &Node::NoneValue) => { avs.push((interner.string(attr), Field::Value(0))) }
                     (Some(attr), &Node::ExprSet(ref nodes)) => {
@@ -1102,6 +1112,18 @@ impl<'a> Node<'a> {
                             avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
                         }
                     },
+                    (Some(attr), &Node::OutputRecord(Some(ref name), ..)) => {
+                        match op {
+                            &"<-" => {
+                                let me = get_provided!(cur_block, span, name);
+                                cur_block.constraints.push(make_scan(reg, interner.string(attr), me));
+                                val.compile(interner, cur_block, local_span);
+                            }
+                            _ => {
+                                avs.push((interner.string(attr), val.compile(interner, cur_block, local_span).unwrap()));
+                            }
+                        }
+                    },
                     (Some(attr), v) => {
                         avs.push((interner.string(attr), v.compile(interner, cur_block, local_span).unwrap()))
                     },
@@ -1112,7 +1134,7 @@ impl<'a> Node<'a> {
                             &"<-" => { val.compile(interner, cur_block, local_span); }
                             _ => panic!("Invalid {:?}", self)
                         }
-                    }
+                    },
                     _ => { panic!("Invalid {:?}", self) }
                 };
                 for (a, v) in avs {
