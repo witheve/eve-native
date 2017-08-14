@@ -37,6 +37,8 @@ pub struct CompileError {
 
 #[derive(Debug, Clone)]
 pub enum Error {
+    InvalidNeedle,
+    InvalidLookupType,
     Unprovided(String),
     UnknownFunction(String),
     UnknownFunctionParam(String, String),
@@ -46,6 +48,8 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            &Error::InvalidNeedle => { write!(f, "The `from` in a sorted aggregate has to be the same size as the `for` in order to match the values.") }
+            &Error::InvalidLookupType => { write!(f, "Lookup can only have \"add\" or \"remove\" for its type field.") }
             &Error::Unprovided(ref var) => { write!(f, "Nothing in the block is providing `{}`. You can search for\n something that provides `{}`, or bind a constant.\n e.g. `{}: \"Hello\"`", var, var, var) }
             &Error::UnknownFunction(ref func) => { write!(f, "I don't know the `{}` function, so I'm not sure what to execute.", func) }
             &Error::UnknownFunctionParam(ref func, ref param) => { write!(f, "The `{}` function doesn't have a `{}` attribute.", func, param) }
@@ -66,7 +70,7 @@ fn format_error_source(span:&Span, lines:&Vec<&str>) {
         print!("{}", BrightYellow.paint(&line_marker[..]));
         print!("{}",lines[line_ix]);
         print!("\n");
-        
+
     }
     if span.single_line() {
         for _ in 0..line_marker.len() - 1 { print!(" "); }

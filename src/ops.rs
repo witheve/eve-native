@@ -9,10 +9,11 @@ extern crate term_painter;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry, CollapsedChanges};
+use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry,
+    CollapsedChanges, RemoteIndex, RemoteChange, RawRemoteChange};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
-use std::collections::{HashMap, Bound};
+use std::collections::{HashMap, HashSet, Bound};
 use std::mem::transmute;
 use std::cmp::{self, Eq, PartialOrd};
 use std::collections::hash_map::{DefaultHasher, Entry};
@@ -154,6 +155,7 @@ pub struct IntermediateChange {
 pub enum PipeShape {
     Scan(Interned, Interned, Interned),
     Intermediate(Interned),
+    Remote(Interned),
 }
 
 #[derive(Debug)]
@@ -246,6 +248,13 @@ impl Block {
                         }
                     }
                 },
+                &&Constraint::LookupRemote { ref _for, .. } => {
+                    if let &Field::Value(id) = _for {
+                        scan_shapes.push(PipeShape::Remote(id));
+                    } else {
+                        scan_shapes.push(PipeShape::Remote(0));
+                    }
+                }
                 &&Constraint::AntiScan { ref key, .. } => {
                     if let Field::Value(id) = key[0] {
                         scan_shapes.push(PipeShape::Intermediate(id));
@@ -510,6 +519,7 @@ impl fmt::Debug for Counters {
 pub struct Frame {
     pub input: Option<Change>,
     pub intermediate: Option<IntermediateChange>,
+    pub remote: Option<RemoteChange>,
     pub row: Row,
     pub block_ix: usize,
     pub results: Vec<Interned>,
@@ -519,7 +529,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new() -> Frame {
-        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
+        Frame {row: Row::new(64), block_ix:0, input: None, intermediate: None, remote: None, results: vec![], counters: Counters {iter_next: 0, accept: 0, accept_bail: 0, inserts: 0, instructions: 0, accept_ns: 0, total_ns: 0, considered: 0}}
     }
 
     pub fn get_register(&self, register:usize) -> Interned {
@@ -859,6 +869,7 @@ pub enum Constraint {
     Remove {e: Field, a: Field, v:Field},
     RemoveAttribute {e: Field, a: Field},
     RemoveEntity {e: Field },
+    DynamicCommit {e: Field, a: Field, v:Field, _type: Field},
     Project {registers: Vec<usize>},
     Watch {name: String, registers: Vec<Field>},
 }
@@ -915,6 +926,7 @@ impl Constraint {
             &Constraint::Remove { ref e, ref a, ref v } => { filter_registers(&vec![e,a,v]) },
             &Constraint::RemoveAttribute { ref e, ref a } => { filter_registers(&vec![e,a]) },
             &Constraint::RemoveEntity { ref e } => { filter_registers(&vec![e]) },
+            &Constraint::DynamicCommit { ref e, ref a, ref v, ref _type } => { filter_registers(&vec![e,a,v,_type]) },
             &Constraint::Project {ref registers} => { registers.iter().map(|v| Field::Register(*v)).collect() },
             &Constraint::Watch {ref registers, ..} => { filter_registers(&registers.iter().collect()) },
         }
@@ -959,7 +971,7 @@ impl Constraint {
             }
             &mut Constraint::LookupRemote { ref mut e, ref mut a, ref mut v, ref mut _type, ref mut _for, ref mut to, ref mut from, ref mut register_mask} => {
                 replace_registers(&mut vec![e,a,v,_for,_type,from,to], lookup);
-                *register_mask = make_register_mask(vec![e,a,v]);
+                *register_mask = make_register_mask(vec![e,a,v,_type,_for,from,to]);
             }
             &mut Constraint::AntiScan { ref mut key, ref mut register_mask} => {
                 replace_registers(&mut key.iter_mut().collect(), lookup);
@@ -1019,6 +1031,7 @@ impl Constraint {
             &mut Constraint::Remove { ref mut e, ref mut a, ref mut v } => { replace_registers(&mut vec![e,a,v], lookup); },
             &mut Constraint::RemoveAttribute { ref mut e, ref mut a } => { replace_registers(&mut vec![e,a], lookup); },
             &mut Constraint::RemoveEntity { ref mut e } => { replace_registers(&mut vec![e], lookup); },
+            &mut Constraint::DynamicCommit { ref mut e, ref mut a, ref mut v, ref mut _type } => { replace_registers(&mut vec![e,a,v,_type], lookup); },
             &mut Constraint::Project {ref mut registers} => {
                 for reg in registers.iter_mut() {
                     if let &Field::Register(neue) = lookup.get(&Field::Register(*reg)).unwrap() {
@@ -1058,6 +1071,7 @@ impl Clone for Constraint {
             &Constraint::Remove { e,a,v } => { Constraint::Remove { e,a,v } },
             &Constraint::RemoveAttribute { e,a } => { Constraint::RemoveAttribute { e,a } },
             &Constraint::RemoveEntity { e } => { Constraint::RemoveEntity { e } },
+            &Constraint::DynamicCommit { e,a,v,_type } => { Constraint::DynamicCommit { e,a,v,_type } },
             &Constraint::Project {ref registers} => { Constraint::Project { registers:registers.clone() } },
             &Constraint::Watch {ref name, ref registers} => { Constraint::Watch { name:name.clone(), registers:registers.clone() } },
 
@@ -1084,6 +1098,7 @@ impl PartialEq for Constraint {
             (&Constraint::Remove { e,a,v }, &Constraint::Remove { e:e2, a:a2, v:v2 }) => {  e == e2 && a == a2 && v == v2 },
             (&Constraint::RemoveAttribute { e,a }, &Constraint::RemoveAttribute { e:e2, a:a2 }) => {  e == e2 && a == a2 },
             (&Constraint::RemoveEntity { e }, &Constraint::RemoveEntity { e:e2 }) => {  e == e2 },
+            (&Constraint::DynamicCommit { e,a,v,_type }, &Constraint::DynamicCommit { e:e2, a:a2, v:v2, _type:type2 }) => {  e == e2 && a == a2 && v == v2 && _type == type2 },
             (&Constraint::Project { ref registers }, &Constraint::Project { registers:ref registers2 }) => {  registers == registers2 },
             (&Constraint::Watch { ref name, ref registers }, &Constraint::Watch { name:ref name2, registers:ref registers2 }) => { name == name2 && registers == registers2 },
             _ => false
@@ -1110,6 +1125,7 @@ impl Hash for Constraint {
             &Constraint::Remove { e,a,v } => { e.hash(state); a.hash(state); v.hash(state); },
             &Constraint::RemoveAttribute { e,a } => { e.hash(state); a.hash(state); },
             &Constraint::RemoveEntity { e } => { e.hash(state); },
+            &Constraint::DynamicCommit { e,a,v,_type } => { e.hash(state); a.hash(state); v.hash(state); _type.hash(state); },
             &Constraint::Project { ref registers } => { registers.hash(state); },
             &Constraint::Watch { ref name, ref registers } => { name.hash(state); registers.hash(state); },
         }
@@ -1123,7 +1139,7 @@ impl fmt::Debug for Constraint {
         match self {
             &Constraint::Scan { e, a, v, .. } => { write!(f, "Scan ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::LookupCommit { e, a, v, .. } => { write!(f, "LookupCommit ( {:?}, {:?}, {:?} )", e, a, v) }
-            &Constraint::LookupRemote { e, a, v, .. } => { write!(f, "LookupRemote ( {:?}, {:?}, {:?} )", e, a, v) }
+            &Constraint::LookupRemote { e, a, v, _for, _type, from, to, .. } => { write!(f, "LookupRemote ( {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?} )", e, a, v, _for, _type, from, to) }
             &Constraint::AntiScan { ref key, .. } => { write!(f, "AntiScan ({:?})", key) }
             &Constraint::IntermediateScan { ref key, ref value, .. } => { write!(f, "IntermediateScan ( {:?}, {:?} )", key, value) }
             &Constraint::Insert { e, a, v, .. } => { write!(f, "Insert ( {:?}, {:?}, {:?} )", e, a, v) }
@@ -1131,6 +1147,7 @@ impl fmt::Debug for Constraint {
             &Constraint::Remove { e, a, v, .. } => { write!(f, "Remove ( {:?}, {:?}, {:?} )", e, a, v) }
             &Constraint::RemoveAttribute { e, a, .. } => { write!(f, "RemoveAttribute ( {:?}, {:?} )", e, a) }
             &Constraint::RemoveEntity { e, .. } => { write!(f, "RemoveEntity ( {:?} )", e) }
+            &Constraint::DynamicCommit { e, a, v, _type, .. } => { write!(f, "Remove ( {:?}, {:?}, {:?}, {:?} )", e, a, v, _type) }
             &Constraint::Function { ref op, ref params, ref output, .. } => { write!(f, "{:?} = {}({:?})", output, op, params) }
             &Constraint::MultiFunction { ref op, ref params, ref outputs, .. } => { write!(f, "{:?} = {}({:?})", outputs, op, params) }
             &Constraint::Aggregate { ref op, ref group, ref projection, ref params, ref output_key, .. } => { write!(f, "{:?} = {}(per: {:?}, for: {:?}, {:?})", output_key, op, group, projection, params) }
@@ -1696,24 +1713,20 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params > v {
+                        if &local_params > v {
                             // remove v
-                            let mut neue = v.clone();
-                            neue.push(Internable::Number(0));
-                            changes.push((neue, current_round, -1));
+                            changes.push((v.clone(), current_round, -1));
                             // insert params
-                            let mut neue2 = params.clone();
-                            neue2.push(Internable::Number(0));
-                            changes.push((neue2, current_round, 1));
+                            changes.push((local_params, current_round, 1));
                         }
                     }
                     _ => {
                         // insert params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, 1));
+                        changes.push((local_params, current_round, 1));
                     }
                 }
             }
@@ -1731,26 +1744,23 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params >= v {
+                        if &local_params >= v {
                             // remove v
-                            let mut old = params.clone();
-                            old.push(Internable::Number(0));
-                            changes.push((old, current_round, -1));
+                            changes.push((local_params, current_round, -1));
                             // insert params
                             if let Some((neue_max, _)) = iter.next() {
-                                let mut neue = neue_max.clone();
-                                neue.push(Internable::Number(0));
+                                let neue = neue_max.clone();
                                 changes.push((neue, current_round, 1));
                             }
                         }
                     }
                     _ => {
                         // remove params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, -1));
+                        changes.push((local_params, current_round, -1));
                     }
                 }
             }
@@ -1768,24 +1778,20 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params < v {
+                        if &local_params < v {
                             // remove v
-                            let mut neue = v.clone();
-                            neue.push(Internable::Number(0));
-                            changes.push((neue, current_round, -1));
+                            changes.push((v.clone(), current_round, -1));
                             // insert params
-                            let mut neue2 = params.clone();
-                            neue2.push(Internable::Number(0));
-                            changes.push((neue2, current_round, 1));
+                            changes.push((local_params, current_round, 1));
                         }
                     }
                     _ => {
                         // insert params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, 1));
+                        changes.push((local_params, current_round, 1));
                     }
                 }
             }
@@ -1803,26 +1809,23 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
                     entry.0.last() == limit_param &&
                     is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
+                let mut local_params = params.clone();
+                local_params.push(interned_limit.clone());
                 match iter.next() {
                     Some((v, _)) => {
-                        if params <= v {
+                        if &local_params <= v {
                             // remove v
-                            let mut old = params.clone();
-                            old.push(Internable::Number(0));
-                            changes.push((old, current_round, -1));
+                            changes.push((local_params, current_round, -1));
                             // insert params
                             if let Some((neue_max, _)) = iter.next() {
-                                let mut neue = neue_max.clone();
-                                neue.push(Internable::Number(0));
+                                let neue = neue_max.clone();
                                 changes.push((neue, current_round, 1));
                             }
                         }
                     }
                     _ => {
                         // remove params
-                        let mut neue = params.clone();
-                        neue.push(Internable::Number(0));
-                        changes.push((neue, current_round, -1));
+                        changes.push((local_params, current_round, -1));
                     }
                 }
             }
@@ -2266,6 +2269,7 @@ pub struct RuntimeState {
     pub output_rounds: OutputRounds,
     pub index: HashIndex,
     pub distinct_index: DistinctIndex,
+    pub remote_index: RemoteIndex,
     pub interner: Interner,
     pub watch_indexes: HashMap<String, WatchIndex>,
     pub intermediates: IntermediateIndex,
@@ -2274,6 +2278,7 @@ pub struct RuntimeState {
 pub struct BlockInfo {
     pub pipe_lookup: HashMap<(Interned,Interned,Interned), Vec<Solver>>,
     pub intermediate_pipe_lookup: HashMap<Interned, Vec<Solver>>,
+    pub remote_pipe_lookup: HashMap<Interned, Vec<Solver>>,
     pub block_names: HashMap<String, usize>,
     pub blocks: Vec<Block>,
 }
@@ -2289,6 +2294,7 @@ impl BlockInfo {
 pub enum RunLoopMessage {
     Stop,
     Transaction(Vec<RawChange>),
+    RemoteTransaction(Vec<RawRemoteChange>),
     CodeTransaction(Vec<Block>, Vec<String>)
 }
 
@@ -2304,6 +2310,7 @@ impl Program {
     pub fn new() -> Program {
         let index = HashIndex::new();
         let distinct_index = DistinctIndex::new();
+        let remote_index = RemoteIndex::new();
         let intermediates = IntermediateIndex::new();
         let interner = Interner::new();
         let rounds = RoundHolder::new();
@@ -2313,10 +2320,11 @@ impl Program {
         let watchers = HashMap::new();
         let pipe_lookup = HashMap::new();
         let intermediate_pipe_lookup = HashMap::new();
+        let remote_pipe_lookup = HashMap::new();
         let blocks = vec![];
         let (outgoing, incoming) = mpsc::channel();
-        let state = RuntimeState { debug:false, rounds, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
-        let block_info = BlockInfo { pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
+        let state = RuntimeState { debug:false, rounds, remote_index, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
+        let block_info = BlockInfo { pipe_lookup, remote_pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
         Program { state, block_info, watchers, incoming, outgoing }
     }
 
@@ -2361,6 +2369,10 @@ impl Program {
                         let cur = self.block_info.intermediate_pipe_lookup.entry(id).or_insert_with(|| vec![]);
                         cur.push(pipe.clone());
                     }
+                    &PipeShape::Remote(id) => {
+                        let cur = self.block_info.remote_pipe_lookup.entry(id).or_insert_with(|| vec![]);
+                        cur.push(pipe.clone());
+                    }
                 }
             }
         }
@@ -2379,6 +2391,9 @@ impl Program {
                         },
                         &PipeShape::Intermediate(id) => {
                             self.block_info.intermediate_pipe_lookup.get_mut(&id).unwrap().retain(|x| x.block != block.block_id);
+                        }
+                        &PipeShape::Remote(id) => {
+                            self.block_info.remote_pipe_lookup.get_mut(&id).unwrap().retain(|x| x.block != block.block_id);
                         }
                     }
                 }
@@ -2410,14 +2425,14 @@ impl Program {
         self.watchers.insert(name, watcher);
     }
 
-    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut Vec<&'a Solver>) {
+    pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut HashSet<&'a Solver>) {
         let ref pipe_lookup = block_info.pipe_lookup;
         let mut tuple = (0,0,0);
         // look for (0,0,0), (0, a, 0) and (0, a, v) pipes
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe);
+                    pipes.insert(pipe);
                 }
             },
             None => {},
@@ -2426,7 +2441,7 @@ impl Program {
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe);
+                    pipes.insert(pipe);
                 }
             },
             None => {},
@@ -2435,7 +2450,7 @@ impl Program {
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
-                    pipes.push(pipe);
+                    pipes.insert(pipe);
                 }
             },
             None => {},
@@ -2450,7 +2465,7 @@ impl Program {
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe);
+                            pipes.insert(pipe);
                         }
                     },
                     None => {},
@@ -2459,7 +2474,7 @@ impl Program {
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe);
+                            pipes.insert(pipe);
                         }
                     },
                     None => {},
@@ -2468,7 +2483,7 @@ impl Program {
                 match pipe_lookup.get(&tuple) {
                     Some(found) => {
                         for pipe in found.iter() {
-                            pipes.push(pipe);
+                            pipes.insert(pipe);
                         }
                     },
                     None => {},
@@ -2515,7 +2530,7 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
 
 fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
     {
-        let mut pipes = vec![];
+        let mut pipes = HashSet::new();
         let mut next_frame = true;
 
         while next_frame {
@@ -2544,13 +2559,9 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     frame.reset();
                     frame.input = Some(*change);
                     for pipe in pipes.iter() {
-                        // print_pipe(pipe, &program.block_info, &mut program.state);
+                        // println!("  PIPE: {:?} - {:?}", pipe.block, pipe.id);
                         frame.row.reset();
                         pipe.run(&mut program.state, iter_pool, frame);
-                        // if program.state.debug {
-                        //     program.state.debug = false;
-                        //     println!("\n---------------------------------\n");
-                        // }
                     }
                     // as stated above, we want to do removes after so that when we look
                     // for AB and BA, they find the same values as when they were added.
@@ -2607,6 +2618,76 @@ impl<'a> Transaction<'a> {
             program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
         transaction_flow(&mut self.commits, &mut self.frame, self.iter_pool, program);
+        if let &mut Some(ref channel) = persistence_channel {
+            self.collapsed_commits.clear();
+            let mut to_persist = vec![];
+            for commit in self.commits.drain(..) {
+                self.collapsed_commits.insert(commit);
+            }
+            for commit in self.collapsed_commits.drain() {
+                to_persist.push(commit.to_raw(&program.state.interner));
+            }
+            channel.send(PersisterMessage::Write(to_persist)).unwrap();
+        } else {
+            self.commits.clear();
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.changes.clear();
+        self.commits.clear();
+    }
+}
+
+//-------------------------------------------------------------------------
+// Remote Transaction
+//-------------------------------------------------------------------------
+
+pub struct RemoteTransaction<'a> {
+    changes: Vec<RemoteChange>,
+    commits: Vec<Change>,
+    iter_pool: &'a mut EstimateIterPool,
+    collapsed_commits: CollapsedChanges,
+    frame: Frame,
+}
+
+impl<'a> RemoteTransaction<'a> {
+    pub fn new(iter_pool:&mut EstimateIterPool) -> RemoteTransaction {
+        let frame = Frame::new();
+        RemoteTransaction { changes: vec![], commits: vec![], collapsed_commits:CollapsedChanges::new(), frame, iter_pool}
+    }
+
+    pub fn input_change(&mut self, change: RemoteChange) {
+        self.changes.push(change);
+    }
+
+    pub fn exec(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>) {
+        let ref mut frame = self.frame;
+        let ref mut iter_pool = self.iter_pool;
+
+        for change in self.changes.drain(..) {
+            if let Some(ref pipes) = program.block_info.remote_pipe_lookup.get(&0) {
+                frame.reset();
+                frame.remote = Some(change.clone());
+                for pipe in pipes.iter() {
+                    frame.row.reset();
+                    pipe.run_remote(&mut program.state, iter_pool, frame);
+                }
+            }
+            if let Some(ref pipes) = program.block_info.remote_pipe_lookup.get(&change._for) {
+                frame.reset();
+                frame.remote = Some(change.clone());
+                for pipe in pipes.iter() {
+                    frame.row.reset();
+                    pipe.run_remote(&mut program.state, iter_pool, frame);
+                }
+            }
+            program.state.remote_index.insert(change);
+        }
+
+        transaction_flow(&mut self.commits, frame, iter_pool, program);
+        program.state.remote_index.clear();
+
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -2795,6 +2876,10 @@ impl RunLoop {
     pub fn send(&self, msg: RunLoopMessage) {
         self.outgoing.send(msg).unwrap();
     }
+
+    pub fn channel(&self) -> Sender<RunLoopMessage> {
+        self.outgoing.clone()
+    }
 }
 
 pub struct ProgramRunner {
@@ -2850,6 +2935,17 @@ impl ProgramRunner {
                     Ok(RunLoopMessage::Transaction(v)) => {
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new(&mut iter_pool);
+                        for cur in v {
+                            txn.input_change(cur.to_change(&mut program.state.interner));
+                        };
+                        txn.exec(&mut program, &mut persistence_channel);
+                        let end_ns = time::precise_time_ns();
+                        let time = (end_ns - start_ns) as f64;
+                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                    }
+                    Ok(RunLoopMessage::RemoteTransaction(v)) => {
+                        let start_ns = time::precise_time_ns();
+                        let mut txn = RemoteTransaction::new(&mut iter_pool);
                         for cur in v {
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
