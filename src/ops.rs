@@ -49,7 +49,7 @@ pub type Count = i32;
 // When the interner is created, we automatically add the string "tag" to it
 // as that is used specifically throughout the code to do filtering and the
 // like.
-const TAG_INTERNED_ID:Interned = 1;
+pub const TAG_INTERNED_ID:Interned = 1;
 
 //-------------------------------------------------------------------------
 // Utils
