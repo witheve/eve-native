@@ -41,6 +41,7 @@ end
 Create a list of trigger and listener tags to send to the client if present.
 ~~~ eve
 commit
+  [#html/state-tag state: "html/focused" start-event: "html/event/focus" stop-event: "html/event/blur"]
   [#html/trigger-tag | trigger: (
     "html/trigger/focus"
     "html/trigger/blur")]
@@ -220,6 +221,39 @@ commit
 end
 ~~~
 
+## State Management
+
+When the start event for a state tag fires, add the state to the element.
+~~~ eve
+search
+  [#html/state-tag state add-event]
+  [#html/event tag: add-event element]
+commit
+  element.tag += state
+end
+~~~
+
+When the stop event for a state tag fires, remove the state from the element.
+~~~ eve
+search
+  [#html/state-tag state stop-event]
+  [#html/event tag: stop-event element]
+commit
+  element.tag -= state
+end
+~~~
+
+## Trigger Management
+
+Clean up triggers after the client executes them.
+~~~ eve
+search
+  [#html/event/trigger trigger element]
+commit
+  element.tag -= trigger
+end
+~~~
+
 
 ## Exports
 
@@ -236,7 +270,8 @@ end
 Export roots.
 ~~~ eve
 search
-  instance = [#html/instance element: [#html/root]]
+  instance = [#html/instance element]
+  element = [#html/root]
 watch client/websocket
   ("html/export roots" instance)
 end
@@ -300,18 +335,6 @@ watch client/websocket
 end
 ~~~
 
-Export triggers.
-~~~ eve
-search
-  [#html/trigger-tag trigger]
-  element = [#html/element tag: trigger]
-  instance = [#html/instance element]
-
-watch client/websocket
-  ("html/export triggers" instance trigger)
-end
-~~~
-
 Export listeners.
 ~~~ eve
 search
@@ -321,5 +344,16 @@ search
 
 watch client/websocket
   ("html/export listeners" instance listener)
+end
+~~~
+
+Export triggers.
+~~~ eve
+search
+  [#html/trigger-tag trigger]
+  element = [#html/element tag: trigger]
+
+watch client/websocket
+  ("html/export triggers" element trigger)
 end
 ~~~
