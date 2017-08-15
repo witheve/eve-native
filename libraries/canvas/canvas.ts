@@ -105,7 +105,7 @@ export class Canvas extends Library {
     return this.operations[id] = {type, args: {}, paths: []};
   }
   clearOperation(id:RawValue) {
-    if(!this.operations[id]) { debugger; throw new Error(`Missing operation instance ${id}`); }
+    if(!this.operations[id]) { throw new Error(`Missing operation instance ${id}`); }
     this.operations[id] = undefined;
   }
   getOperation(id:RawValue) {
