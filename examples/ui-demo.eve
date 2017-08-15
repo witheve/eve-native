@@ -4,15 +4,15 @@
 commit
   [#demo/color color:
     [name: "primary"]
-    [name: "secondary"]
-    [name: "tertiary"]]
+    //[name: "secondary"]
+    [name: "default-color"]]
+
+  [#demo/style demo: "ui/button" style:
+    [name: "default"]
+    [name: "inset"]
+    [name: "flat"]]
 
   [#demo/style demo: "ui/toggle" style:
-    [name: "default"]
-    [name: "square"]
-    [name: "track"]]
-
-  [#demo/style demo: "ui/slider" style:
     [name: "default"]
     [name: "square"]
     [name: "track"]]
@@ -37,15 +37,125 @@ bind
 end
 ~~~
 
-## Container Demos
+## Root
+
+Create a demo hierarchy to order the various demos on the page.
+~~~ eve
+commit
+  [#ui/column #demo/wrapper | children:
+    [#demo/group name: "layout" | children:
+      [#demo name: "ui/row"]
+      [#demo name: "ui/column"]
+      [#demo name: "ui/spacer"]]
+    [#demo/group name: "inputs" | children:
+      [#demo name: "ui/button"]
+      [#demo name: "ui/toggle"]]
+    [#demo/group name: "advanced inputs" | children:
+      [#demo name: "ui/selectable"]
+      [#demo name: "ui/dropdown"]
+      [#demo name: "ui/autocomplete"]]]
+end
+~~~
+
+## Layout Demos
+
+Row demo.
+~~~ eve
+search
+  demo = "ui/row"
+  container = [#demo name: demo]
+commit
+  container <- [children:
+    [#ui/row #demo-spaced demo | children:
+      [#html/div #demo-square demo sort: 1]
+      [#html/div #demo-square demo sort: 2]
+      [#html/div #demo-square demo sort: 3]]]
+end
+~~~
+
+Column demo.
+~~~ eve
+search
+  demo = "ui/column"
+  container = [#demo name: demo]
+commit
+  container <- [children:
+    [#ui/column #demo-spaced demo | children:
+      [#html/div #demo-square demo sort: 1]
+      [#html/div #demo-square demo sort: 2]
+      [#html/div #demo-square demo sort: 3]]]
+end
+~~~
+
+Spacer demo.
+~~~ eve
+search
+  demo = "ui/spacer"
+  container = [#demo name: demo]
+commit
+  container <- [children:
+    [#ui/row style: [align-items: "stretch" flex: 1] demo | children:
+      [#ui/column demo sort: 1 | children:
+        [#html/div #demo-square demo sort: 1]
+        [#ui/spacer demo sort: 2]
+        [#html/div #demo-square demo sort: 3]]
+      [#ui/spacer sort: 2]
+      [#ui/column demo sort: 3 | children:
+        [#html/div #demo-square demo sort: 1]
+        [#ui/spacer demo sort: 2]
+        [#html/div #demo-square demo sort: 3]]]]
+end
+~~~
+
+
+
+## Input Demos
+
+Button demo.
+~~~ eve
+search
+  demo = "ui/button"
+  [#demo/color color]
+  [#demo/style demo style]
+  container = [#demo name: demo]
+commit
+  container <- [children:
+    [#variant-matrix demo example: "text" | style color content:
+      [#ui/button style color text: "button" | sort: color.sort class: (style.name color.name)]]
+
+    [#variant-matrix demo example: "icon" | style color content:
+      [#ui/button style color icon: "forward" | sort: color.sort class: (style.name color.name)]]]
+end
+~~~
+
+
+Toggle demo.
+~~~ eve
+search
+  demo = "ui/toggle"
+  [#demo/color color]
+  [#demo/style demo style]
+  container = [#demo name: demo]
+commit
+  container <- [children:
+    [#ui/row demo style | sort: style.sort children:
+      [#ui/text sort: 0 text: style.name]
+      [#ui/spacer sort: 1]
+      [#ui/row #demo/spaced demo style sort: 2 | children:
+        [#ui/toggle style color | sort: color.sort class: (style.name color.name)]]]]
+end
+~~~
+
+
+## Advanced Input Demos
 
 Selectable list demo.
 ~~~ eve
 search
   demo = "ui/selectable"
-
+  container = [#demo name: demo]
 commit
-  [#demo name: demo | children:
+  container <- [children:
     [#ui/list #ui/selectable #ui/single-selectable demo | item:
       [#html/div demo text: "first"]
       [#html/div demo text: "second"]
@@ -60,9 +170,9 @@ Dropdown demo.
 ~~~ eve
 search
   demo = "ui/dropdown"
-
+  container = [#demo name: demo]
 commit
-  [#demo name: demo | children:
+  container <- [children:
     [#ui/dropdown demo |
       input:
       [#ui/button class: "inset" text: "froof"]
@@ -76,44 +186,85 @@ commit
 end
 ~~~
 
-
-## Input Demos
-
-Toggle demo.
+Autocomplete demo.
 ~~~ eve
 search
-  demo = "ui/toggle"
-  [#demo/color color]
-  [#demo/style demo style]
-
+  demo = "ui/autocomplete"
+  container = [#demo name: demo]
 commit
-  [#demo name: demo | children:
-    [#ui/row demo style | sort: style.sort children:
-      [#ui/text sort: 0 text: style.name]
-      [#ui/spacer sort: 1]
-      [#ui/row #demo/spaced demo style sort: 2 | children:
-        [#ui/toggle style color | sort: color.sort class: (style.name color.name)]]]]
+  container <- [children:
+    [#ui/autocomplete demo |
+      completion:
+      [#html/div demo text: "foo"]
+      [#html/div demo text: "foofoo"]
+      [#html/div demo text: "ford"]
+      [#html/div demo text: "fabulous"]
+      [#html/div demo text: "jack"]
+      [#html/div demo text: "jeff"]
+      [#html/div demo text: "jeffry"]
+  ]]
 end
 ~~~
+
+
+Draw a variant matrix.
+~~~ eve
+search
+  matrix = [#variant-matrix demo example style color content]
+  content.style = style
+  content.color = color
+bind
+  matrix <- [#ui/column class: "variant-matrix" demo example | children:
+    [#ui/row #variant-row demo  example style | sort: style.sort children:
+      [#ui/text text: style.name]
+      [#ui/spacer]
+      [#ui/row #demo/spaced demo example style | children:
+        content]]]
+end
+~~~
+
 
 Draw demo container.
 ~~~ eve
 search
   demo = [#demo name children]
 bind
-  [#html/div #demo/root demo | children:
-    [#html/element tagname: "h2" text: name]
-    [#ui/column #demo/container demo | children]]
+  demo <- [#ui/column children:
+    [#html/element tagname: "h3" sort: 0 text: name]]
 end
 ~~~
+
+Draw a group container.
+~~~ eve
+search
+  group = [#demo/group name]
+bind
+  group += #ui/row
+  group.children += [#html/element #demo/group/header tagname: "header" group | sort: 0 children:
+    [#demo/group/title #html/element tagname: "h2" text: name]
+    [#ui/spacer #demo/group/separator]]
+end
+~~~
+
 
 ~~~ eve
 commit
   [#html/style text: "
-    .demo-root { max-width: 300px; padding: 20px; margin: 20px; background: white; border-radius: 3px; box-shadow: 0 5px 5px rgba(0, 0, 0, 0.1); }
-    .demo-root > h2 { margin-bottom: 20px; font-size: 1.5rem; }
-    .demo-container > .ui-row + .ui-row { margin-top: 10px; }
+    .demo-group { flex-wrap: wrap; margin: 20px; }
+    .demo-group-header { display: flex; flex-direction: row; justify-content: flex-start; width: 100%; font-size: 1.5rem; }
+    .demo-group-title { margin-left: 20px; flex: 0 0 auto; }
+    .demo-group-separator {margin: 0 20px; border-top: 1px solid #ddd; align-self: center; }
+
+    .demo { width: 280px; padding: 20px; margin: 20px; background: white; border-radius: 3px; box-shadow: 0 5px 5px rgba(0, 0, 0, 0.1); }
+    .demo > h3 { margin-bottom: 20px; font-size: 1.5rem; }
+    .demo > h3:before { content: '#'; color: #808080; }
+    .demo > .ui-row + .ui-row,
+    .variant-matrix > .ui-row + .ui-row { margin-top: 10px; }
+    .variant-matrix + .variant-matrix { margin-top: 10px; }
     .ui-row.demo-spaced > * + * { margin-left: 10px; }
+    .ui-column.demo-spaced > * + * { margin-top: 10px; }
+
+    .demo-square { width: 50px; height: 50px; background: rgb(95, 211, 247); }
     "]
 end
 ~~~
@@ -126,5 +277,16 @@ search
   cursor != c2
 bind
   [#html/div text: "{{s}} has multiple cursors"]
+end
+~~~
+
+~~~ eve
+search
+  [#ui/autocomplete item]
+  item = [sort: sort]
+  item = [sort: sort2]
+  sort != sort2
+bind
+  [#html/div text: "{{item.text}} has multiple sorts! {{sort}}"]
 end
 ~~~
