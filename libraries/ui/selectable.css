@@ -26,7 +26,7 @@
 
 .ui-dropdown { position: relative; }
 .ui-dropdown-list { position: absolute; top: 100%; min-width: content-size; width: 100%; max-height: 0; overflow: hidden; box-shadow: 0 0 0 rgba(0, 0, 0, 0.1); transition: 0.2s max-height ease-out, 0.2s box-shadow ease-out; background: white; border: 1px solide #e0e0e0; z-index: 5; }
-.ui-dropdown.ui-open > .ui-dropdown-list { max-height: 400px; overflow-y: auto; box-shadow: 0 3px 5px rgba(0, 0, 0, 0.1); }
+.ui-dropdown.ui-active > .ui-dropdown-list { max-height: 400px; overflow-y: auto; box-shadow: 0 3px 5px rgba(0, 0, 0, 0.1); }
 
 /******************************************************************************\
  * Autocomplete                                                               *
