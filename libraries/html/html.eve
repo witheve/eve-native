@@ -239,3 +239,12 @@ watch client/websocket
   ("html/export listeners" instance listener)
 end
 ~~~
+
+Redirect to a url.
+~~~ eve
+search
+  [#html/redirect url]
+watch client/websocket
+  ("html/redirect" url)
+end
+~~~

@@ -1,21 +1,25 @@
 search
   client_id = "3354b6a98e3c4fb3b804c5a9e064a3df"
   response_type = "code"
-  redirect_uri = "google.com"
-  //address = "https://accounts.spotify.com/authorize/?client_id={{client_id}}&response_type=code&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=user-read-private%20user-read-email&state=34fFs29kd09"
+  redirect_uri = "http://google.com"
+  address = "https://accounts.spotify.com/authorize/?client_id={{client_id}}&response_type=code&redirect_uri=http%3A%2F%2Flocalhost:8080%2Fcallback&scope=user-read-private%20user-read-email&state=34fFs29kd09"
   //address = "https://jsonplaceholder.typicode.com/comments"
-  address = "http://echo.jsontest.com/key/shenberger/one/manifold"
+  //address = "http://echo.jsontest.com/key/shenberger/one/manifold"
 commit
   //[#foo bar: 10]
-  [#http/request #req address]
+  [#html/redirect #req url: address]
 end
 
+
+disabled
 search
   [#req response: [#http/response status body]]
 commit
   [#json/decode #qq json: body]
 end
 
+
+disabled
 search
   [#qq json-object: [one key]]
 commit
@@ -37,3 +41,11 @@ Cookie:remember=cmontella%40live.com; sp_dc=AQD2mtOZxGK5uVMFom_yG9Nx6CPebAlDZWqf
 Host:accounts.spotify.com
 Upgrade-Insecure-Requests:1
 User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36
+
+
+
+commit
+  //[#html/redirect url: "http://bing.com"]
+  [#console/log text: "This is a test"]
+  [#ui/text text: "This is also a test"]
+end

@@ -340,6 +340,11 @@ export class HTML extends Library {
         if(!instance.listeners) instance.listeners = {[listener]: true};
         else instance.listeners[listener] = true;
       }
+    }),
+    "redirect": handleTuples(({adds, removes}) => {
+      for(let [url] of adds || EMPTY) {
+        window.location.replace(`${url}`);
+      }
     })
   };
 
