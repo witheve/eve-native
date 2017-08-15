@@ -4,7 +4,7 @@
 
 ~~~ eve
 commit
-  [#ui/column #db-explorer/root | children:
+  [#ui/row #db-explorer/root | children:
     [#ui/row #db-explorer/query-box | children:
       [#ui/token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
       [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
@@ -12,17 +12,30 @@ commit
 end
 ~~~
 
-Draw each matching record as a record card.
+Draw each matching record as a record symbol.
 ~~~ eve
 search
   [#db-explorer/root record]
   card-list = [#db-explorer/card-list]
 bind
-  card-list.children += [#record-card/card #db-explorer/card record]
+  card-list.children += [#db-explorer/record-symbol record]
 end
 ~~~
 
 If no records are specified, show any record.
+~~~ eve
+search
+  not([#db-explorer/completion-record])
+  root = [#db-explorer/root]
+  record = if r = [#pet] then r
+  if r = [#person] then r
+  if r = [#company] then r
+bind
+  root.record += record
+end
+~~~
+
+
 // ~~~ eve
 // search
 //   lookup[entity: record]
@@ -34,6 +47,41 @@ If no records are specified, show any record.
 //   card-list.children += [#record-card/card #db-explorer/card record]
 // end
 // ~~~
+
+## Record Symbol
+
+~~~ eve
+search
+  symbol = [#db-explorer/record-symbol record]
+bind
+  symbol <- [#html/div record | children:
+  [#ui/text sort: 1 text: "⬢"]]
+end
+~~~
+
+If a record symbol is open, inject its card.
+~~~ eve
+search
+  symbol = [#db-explorer/record-symbol record]
+  root = [#db-explorer/root open: record]
+bind
+  symbol.children +=
+  [#record-card/card #db-explorer/card record sort: 2]
+end
+~~~
+
+
+Clicking a record symbol opens its card.
+~~~ eve
+search
+  [#html/event/click element: [#db-explorer/record-symbol record]]
+  root = [#db-explorer/root]
+commit
+  // root.open += record // @FIXME: Why doesn't this work if we do + and -
+  root.open := record
+end
+~~~
+
 
 
 ## Record Card
@@ -62,9 +110,12 @@ end
 
 ~~~ eve
 search
-  [#html/event/click element: [#db-explorer/close-card card]]
+  [#html/event/click element: [#db-explorer/close-card card: [record]]]
+  root = [#db-explorer/root]
 commit
-  card := none
+  // root.open -= record // @FIXME Why doesn't this work if we do + and -
+  // [#html/div text: "CLOSED {{record}}"]
+  root.open := none
 end
 ~~~
 
@@ -219,24 +270,36 @@ commit
 end
 ~~~
 
+# DEBUG
+
+~~~ eve
+// search
+//   root = [#db-explorer/root]
+//   record = [#pet]
+// commit
+//   root.record += record
+// end
+~~~
+
+
+~~~ eve
+// search
+//   [#db-explorer/query completion-pattern]
+//   root = [#db-explorer/root]
+// bind
+//   root.record += completion-pattern
+// end
+~~~
+
 ~~~ eve
 search
+  [#db-explorer/completion-record record]
   root = [#db-explorer/root]
-  record = [#pet]
-commit
+bind
   root.record += record
 end
 ~~~
 
-DEBUG
-~~~ eve
-search
-  [#db-explorer/query completion-pattern]
-  root = [#db-explorer/root]
-bind
-  root.record += completion-pattern
-end
-~~~
 
 ~~~ eve
 search
@@ -263,6 +326,10 @@ commit
   [#html/style text: "
     .db-explorer-root { max-width: 900px; }
     .db-explorer-card-list { flex-wrap: wrap; }
+
+    .db-explorer-query-box { align-items: center; }
+
+    .db-explorer-record-symbol { width: 30px height: 30px; text-align: center; margin: 20px; }
 "]
 end
 ~~~
