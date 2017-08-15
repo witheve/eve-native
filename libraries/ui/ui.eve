@@ -109,6 +109,54 @@ end
 ~~~
 
 
+## Buttons
+
+Give button elements icons if specified.
+~~~ eve
+search
+  element = [#ui/button icon]
+bind
+  element.class += "iconic"
+  element.class += "ion-{{icon}}"
+end
+~~~
+
+
+## Toggle
+
+A toggle is a checkbox and a label decorated as a toggle switch.
+~~~ eve
+search
+  element = [#ui/toggle]
+bind
+  element <- [#html/div children:
+    [#html/element tagname: "label" for: "ui-toggle-{{element}}"]
+    [#html/input #ui/toggle/input type: "checkbox" id: "ui-toggle-{{element}}"]]
+end
+~~~
+
+Copy checked from input to toggle.
+~~~ eve
+search
+  element = [#ui/toggle children: [#ui/toggle/input checked]]
+
+bind
+  element.checked += checked
+end
+~~~
+
+Copy initial from toggle to input.
+~~~ eve
+search
+  element = [#ui/toggle initial children: input]
+  input = [#ui/toggle/input]
+
+bind
+  input.initial += initial
+end
+~~~
+
+
 ## List
 
 Decorate list as html.
@@ -443,53 +491,6 @@ end
 ~~~
 
 
-## Buttons
-
-Give button elements icons if specified.
-~~~ eve
-search
-  element = [#ui/button icon]
-bind
-  element.class += "iconic"
-  element.class += "ion-{{icon}}"
-end
-~~~
-
-## Toggle
-
-A toggle is a checkbox and a label decorated as a toggle switch.
-~~~ eve
-search
-  element = [#ui/toggle]
-bind
-  element <- [#html/div children:
-    [#html/element tagname: "label" for: "ui-toggle-{{element}}"]
-    [#html/input #ui/toggle/input type: "checkbox" id: "ui-toggle-{{element}}"]]
-end
-~~~
-
-Copy checked from input to toggle.
-~~~ eve
-search
-  element = [#ui/toggle children: [#ui/toggle/input checked]]
-
-bind
-  element.checked += checked
-end
-~~~
-
-Copy initial from toggle to input.
-~~~ eve
-search
-  element = [#ui/toggle initial children: input]
-  input = [#ui/toggle/input]
-
-bind
-  input.initial += initial
-end
-~~~
-
-
 ## Completer
 
 Decorate completer.
@@ -574,8 +575,6 @@ commit
   input += #html/trigger/focus
 end
 ~~~
-
-
 
 
 ## Autocomplete
