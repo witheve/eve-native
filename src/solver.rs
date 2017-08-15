@@ -287,8 +287,9 @@ impl Solver {
         if frame.row.solved_fields != self.finished_mask {
             self.solve_variables(state, pool, frame, 0);
         } else {
-            self.clear_rounds(&mut state.output_rounds, frame);
-            self.do_output(state, frame);
+            if self.clear_rounds(state, frame) {
+                self.do_output(state, frame);
+            }
         }
     }
 
@@ -301,8 +302,9 @@ impl Solver {
         if frame.row.solved_fields != self.finished_mask {
             self.solve_variables(state, pool, frame, 0);
         } else {
-            self.clear_rounds(&mut state.output_rounds, frame);
-            self.do_output(state, frame);
+            if self.clear_rounds(state, frame) {
+                self.do_output(state, frame);
+            }
         }
     }
 
@@ -315,8 +317,9 @@ impl Solver {
         if frame.row.solved_fields != self.finished_mask {
             self.solve_variables(state, pool, frame, 0);
         } else {
-            self.clear_rounds(&mut state.output_rounds, frame);
-            self.do_output(state, frame);
+            if self.clear_rounds(state, frame) {
+                self.do_output(state, frame);
+            }
         }
     }
 
@@ -388,16 +391,26 @@ impl Solver {
         true
     }
 
-    pub fn clear_rounds(&self, output_rounds:&mut OutputRounds, frame: &mut Frame) {
-        output_rounds.clear();
-        if let Some(ref change) = frame.input {
-            output_rounds.output_rounds.push((change.round, change.count));
-        } else if let Some(ref change) = frame.intermediate {
-            let count = if change.negate { change.count * -1 } else { change.count };
-            output_rounds.output_rounds.push((change.round, count));
-        } else if let Some(_) = frame.remote {
-            output_rounds.output_rounds.push((0, 1));
+    pub fn clear_rounds(&self, state:&mut RuntimeState, frame: &mut Frame) -> bool {
+        {
+            let ref mut output_rounds = state.output_rounds;
+            output_rounds.clear();
+            if let Some(ref change) = frame.input {
+                output_rounds.output_rounds.push((change.round, change.count));
+            } else if let Some(ref change) = frame.intermediate {
+                let count = if change.negate { change.count * -1 } else { change.count };
+                output_rounds.output_rounds.push((change.round, count));
+            } else if let Some(_) = frame.remote {
+                output_rounds.output_rounds.push((0, 1));
+            }
         }
+        for get in self.get_rounds.iter() {
+            (*get)(state, frame);
+            if state.output_rounds.get_output_rounds().len() == 0 {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn solve_variables(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame, ix:usize) {
@@ -419,12 +432,8 @@ impl Solver {
             }
             frame.row.put_solved(ix);
             if frame.row.solved_fields == self.finished_mask {
-                self.clear_rounds(&mut state.output_rounds, frame);
-                for get in self.get_rounds.iter() {
-                    (*get)(state, frame);
-                    if state.output_rounds.get_output_rounds().len() == 0 {
-                        continue 'main;
-                    }
+                if !self.clear_rounds(state, frame) {
+                    continue 'main;
                 }
                 self.do_output(state, frame);
             } else {
