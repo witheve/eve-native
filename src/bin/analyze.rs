@@ -9,6 +9,9 @@ use clap::{Arg, App};
 use eve::ops::{Program};
 use eve::compiler::{parse_file};
 use eve::analyzer::{Analysis};
+use std::fs::File;
+use std::io::prelude::*;
+use std::process::Command;
 
 //-------------------------------------------------------------------------
 // Main
@@ -42,5 +45,15 @@ fn main() {
         analysis.block(block);
     }
     analysis.analyze();
+
+    let mut file = File::create("graph.dot").unwrap();
+    file.write_all(analysis.make_dot_graph().as_bytes()).unwrap();
+    let output = Command::new("dot")
+        .arg("-Tsvg")
+        .arg("graph.dot")
+        .output()
+        .expect("failed to execute process");
+    let mut file2 = File::create("graph.svg").unwrap();
+    file2.write_all(&output.stdout).unwrap();
 }
 

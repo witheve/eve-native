@@ -110,8 +110,11 @@ impl TagInfo {
 
 pub struct BlockInfo {
     id: Interned,
+    has_scans: bool,
     constraints: Vec<Constraint>,
     field_to_tags: HashMap<Field, Vec<Interned>>,
+    inputs: Vec<(Interned, Interned, Interned)>,
+    outputs: Vec<(Interned, Interned, Interned)>,
 }
 
 impl BlockInfo {
@@ -119,7 +122,10 @@ impl BlockInfo {
         let id = block.block_id;
         let constraints = block.constraints.clone();
         let field_to_tags = HashMap::new();
-        BlockInfo { id, constraints, field_to_tags }
+        let inputs = vec![];
+        let outputs = vec![];
+        let has_scans = false;
+        BlockInfo { id, has_scans, constraints, field_to_tags, inputs, outputs }
     }
 
     pub fn gather_tags(&mut self) {
@@ -128,6 +134,7 @@ impl BlockInfo {
         for scan in self.constraints.iter() {
             match scan {
                 &Constraint::Scan {ref e, ref a, ref v, ..} |
+                &Constraint::Insert {ref e, ref a, ref v, ..} |
                 &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
                         let actual_a = if let &Field::Value(val) = a { val } else { 0 };
                         let actual_v = if let &Field::Value(val) = v { val } else { 0 };
@@ -140,10 +147,65 @@ impl BlockInfo {
             }
         }
     }
+
+    pub fn gather_inputs_outputs(&mut self) {
+        self.gather_tags();
+        self.has_scans = false;
+        self.inputs.clear();
+        self.outputs.clear();
+        let no_tags = vec![0];
+        for scan in self.constraints.iter() {
+            match scan {
+                &Constraint::Scan {ref e, ref a, ref v, ..} |
+                &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
+                    self.has_scans = true;
+                    let tags = self.field_to_tags.get(e).unwrap_or(&no_tags);
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                    for tag in tags {
+                        self.inputs.push((*tag, actual_a, actual_v));
+                    }
+                }
+                &Constraint::Insert {ref e, ref a, ref v, ..} => {
+                    let tags = self.field_to_tags.get(e).unwrap_or(&no_tags);
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                    for tag in tags {
+                        self.outputs.push((*tag, actual_a, actual_v));
+                    }
+                }
+                &Constraint::Remove {ref e, ref a, ref v, ..} => {
+                    let tags = self.field_to_tags.get(e).unwrap_or(&no_tags);
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                    for tag in tags {
+                        self.outputs.push((*tag, actual_a, actual_v));
+                    }
+                }
+                &Constraint::RemoveAttribute {ref e, ref a, ..} => {
+                    let tags = self.field_to_tags.get(e).unwrap_or(&no_tags);
+                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                    for tag in tags {
+                        self.outputs.push((*tag, actual_a, 0));
+                    }
+                }
+                &Constraint::RemoveEntity {ref e, ..} => {
+                    let tags = self.field_to_tags.get(e).unwrap_or(&no_tags);
+                    for tag in tags {
+                        self.outputs.push((*tag, 0, 0));
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
 }
 
 pub struct Analysis {
     blocks: HashMap<Interned, BlockInfo>,
+    inputs: HashMap<(Interned, Interned, Interned), HashSet<Interned>>,
+    setup_blocks: Vec<Interned>,
+    root_blocks: Vec<Interned>,
     tags: HashMap<String, TagInfo>,
     dirty_blocks: Vec<Interned>,
 }
@@ -153,7 +215,10 @@ impl Analysis {
         let blocks = HashMap::new();
         let tags = HashMap::new();
         let dirty_blocks = vec![];
-        Analysis { blocks, tags, dirty_blocks }
+        let inputs = HashMap::new();
+        let setup_blocks = vec![];
+        let root_blocks = vec![];
+        Analysis { blocks, tags, dirty_blocks, inputs, setup_blocks, root_blocks }
     }
 
     pub fn block(&mut self, block: &Block) {
@@ -167,9 +232,35 @@ impl Analysis {
         println!("\nAnalysis starting...");
         println!("  Dirty blocks: {:?}", self.dirty_blocks);
 
-        for block in self.dirty_blocks.drain(..) {
-            // self.analyze_block(self.blocks.get(&block).unwrap());
+        for block_id in self.dirty_blocks.drain(..) {
+            let block = self.blocks.get_mut(&block_id).unwrap();
+            block.gather_inputs_outputs();
+            for input in block.inputs.iter() {
+                let entry = self.inputs.entry(input.clone()).or_insert_with(|| HashSet::new());
+                entry.insert(block.id);
+            }
+            if !block.has_scans {
+                self.setup_blocks.push(block.id);
+            }
         }
+    }
+
+    pub fn make_dot_graph(&self) -> String {
+        let mut graph = "digraph program {\n".to_string();
+        let mut followers:HashSet<Interned> = HashSet::new();
+        for block in self.blocks.values() {
+            followers.clear();
+            for output in block.outputs.iter() {
+                if let Some(nexts) = self.inputs.get(output) {
+                    followers.extend(nexts.iter());
+                }
+            }
+            for next in followers.iter() {
+                graph.push_str(&format!("{:?} -> {:?};\n", block.id, next));
+            }
+        }
+        graph.push_str("}");
+        graph
     }
 }
 
