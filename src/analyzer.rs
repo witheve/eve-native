@@ -108,31 +108,44 @@ impl TagInfo {
     }
 }
 
-pub struct Analysis {
-    blocks: HashMap<Interned, Block>,
-    tags: HashMap<String, TagInfo>,
-    dirty_blocks: Vec<Interned>,
+pub struct BlockInfo {
+    id: Interned,
+    constraints: Vec<Constraint>,
+    field_to_tags: HashMap<Field, Vec<Interned>>,
 }
 
-pub fn get_field_tags(block: &Block) -> HashMap<Field, Vec<Interned>> {
-    let tag = TAG_INTERNED_ID;
-    let mut tag_mappings = HashMap::new();
-    // find all the e -> tag mappings
-    for scan in block.constraints.iter() {
-        match scan {
-            &Constraint::Scan {ref e, ref a, ref v, ..} |
-            &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
-                    let actual_a = if let &Field::Value(val) = a { val } else { 0 };
-                    let actual_v = if let &Field::Value(val) = v { val } else { 0 };
-                    if actual_a == tag && actual_v != 0 {
-                        let mut tags = tag_mappings.entry(e.clone()).or_insert_with(|| vec![]);
-                        tags.push(actual_v);
+impl BlockInfo {
+    pub fn new(block: &Block) -> BlockInfo {
+        let id = block.block_id;
+        let constraints = block.constraints.clone();
+        let field_to_tags = HashMap::new();
+        BlockInfo { id, constraints, field_to_tags }
+    }
+
+    pub fn gather_tags(&mut self) {
+        let tag = TAG_INTERNED_ID;
+        // find all the e -> tag mappings
+        for scan in self.constraints.iter() {
+            match scan {
+                &Constraint::Scan {ref e, ref a, ref v, ..} |
+                &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
+                        let actual_a = if let &Field::Value(val) = a { val } else { 0 };
+                        let actual_v = if let &Field::Value(val) = v { val } else { 0 };
+                        if actual_a == tag && actual_v != 0 {
+                            let mut tags = self.field_to_tags.entry(e.clone()).or_insert_with(|| vec![]);
+                            tags.push(actual_v);
+                        }
                     }
-                }
-            _ => (),
+                _ => (),
+            }
         }
     }
-    tag_mappings
+}
+
+pub struct Analysis {
+    blocks: HashMap<Interned, BlockInfo>,
+    tags: HashMap<String, TagInfo>,
+    dirty_blocks: Vec<Interned>,
 }
 
 impl Analysis {
@@ -143,9 +156,9 @@ impl Analysis {
         Analysis { blocks, tags, dirty_blocks }
     }
 
-    pub fn block(&mut self, block: Block) {
+    pub fn block(&mut self, block: &Block) {
         let id = block.block_id;
-        self.blocks.insert(id, block);
+        self.blocks.insert(id, BlockInfo::new(block));
         self.dirty_blocks.push(id);
     }
 

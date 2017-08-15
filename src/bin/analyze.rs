@@ -38,7 +38,7 @@ fn main() {
     }
 
     let mut analysis = Analysis::new();
-    for block in blocks {
+    for block in blocks.iter() {
         analysis.block(block);
     }
     analysis.analyze();
