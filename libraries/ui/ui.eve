@@ -67,16 +67,6 @@ end
 
 ## Selectable
 
-Selectables are focusable.
-~~~ eve
-search
-  selectable = [#ui/selectable]
-  i = if t = selectable.tabindex then t else 0
-bind
-  selectable.tabindex += i
-end
-~~~
-
 The default cursor for a selectable list is the first item.
 ~~~ eve
 search
@@ -85,6 +75,16 @@ search
   gather/bottom[for: item.sort per: selectable limit: 1]
 commit
   selectable.cursor := item
+end
+~~~
+
+If the cursor is no longer an item, clear it.
+~~~ eve
+search
+  selectable = [#ui/selectable cursor]
+  not(selectable = [#ui/selectable item: cursor])
+commit
+  selectable.cursor := none
 end
 ~~~
 
@@ -121,83 +121,104 @@ end
 Mark the cursor element.
 ~~~ eve
 search
-  [#ui/selectable #ui/focused cursor]
+  [#ui/selectable #ui/active cursor]
 bind
   cursor += #ui/current
+end
+~~~
+
+A focused selectable is active.
+~~~ eve
+search
+  selectable = [#ui/selectable #html/focused]
+bind
+  selectable += #ui/active
 end
 ~~~
 
 
 ### Handlers
 
-Mark focused selectables.
+If a selectable is focused by the client, indicate that.
 ~~~ eve
 search
   selectable = [#ui/selectable]
   [#html/event/focus element: selectable]
 bind
-  [#ui/event/focus selectable]
+  [#ui/event/activate selectable]
 end
 ~~~
 
-Clicking an item in a selectable selects it.
+Blurring an active selectable deactivates it.
+~~~ eve
+// search
+//   selectable = [#ui/selectable #ui/active]
+//   [#html/event/blur element: selectable]
+// bind
+//   [#ui/event/deactivate selectable]
+end
+~~~
+
+Escape or tab in a active selectable deactivates it.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/active]
+  event = if e = [#html/event/key-down key: "escape"] then e
+  if e = [#html/event/key-down key: "tab"] then e
+  if e = [#html/event/key-down key: "enter"] then e
+bind
+  [#ui/event/deactivate selectable]
+end
+~~~
+
+Clicking an item in a selectable selects the item and activates the selectable.
 ~~~ eve
 search
   selectable = [#ui/selectable item]
   [#html/event/click element: item]
 bind
   [#ui/event/select selectable item]
+  [#ui/event/activate selectable]
 end
 ~~~
 
-Clicking outside a focused selectable blurs it.
+Clicking outside an active selectable deactivates it.
+@FIXME: This just won't work :(
 ~~~ eve
-search
-  selectable = [#ui/selectable #ui/focused]
-  // [#html/event/click]
-  // not([#html/event/click element: selectable])
-  [#html/event/blur element: selectable]
-bind
-  [#ui/event/blur selectable]
-end
+// search
+//   selectable = [#ui/selectable #ui/active]
+//   [#html/event/click]
+//   not(container = if c = selectable.container then c else selectable
+//       [#html/event/click element: container])
+// bind
+//   [#ui/event/deactivate selectable]
+// end
 ~~~
 
-Escape or tab in a focused selectable blurs it.
+Enter in a active selectable selects its cursor.
 ~~~ eve
 search
-  selectable = [#ui/selectable #ui/focused]
-  event = if e = [#html/event/key-down key: "escape"] then e
-  if e = [#html/event/key-down key: "tab"] then e
-  if e = [#html/event/key-down key: "enter"] then e
-commit
-  selectable += #html/trigger/blur
-end
-~~~
-
-Enter in a focused selectable selects its cursor.
-~~~ eve
-search
-  selectable = [#ui/selectable #ui/focused cursor:item]
+  selectable = [#ui/selectable #ui/active cursor:item]
   [#html/event/key-down key: "enter"]
 bind
   [#ui/event/select selectable item]
 end
 ~~~
 
-Down in a focused selectable advances the cursor.
+Down in a active selectable advances the cursor.
 ~~~ eve
 search
-  selectable = [#ui/selectable #ui/focused cursor]
+  selectable = [#ui/selectable #ui/active cursor]
   event = [#html/event/key-down key: "down"]
 commit
   selectable.cursor := cursor.next-selectable-item
 end
 ~~~
 
-Up in a focused selectable retreats the cursor.
+Up in a active selectable retreats the cursor.
 ~~~ eve
 search
-  selectable = [#ui/selectable #ui/focused cursor]
+  selectable = [#ui/selectable #ui/active cursor]
   [#html/event/key-down key: "up"]
 commit
   selectable.cursor := cursor.prev-selectable-item
@@ -207,46 +228,57 @@ end
 
 ### Events
 
-Focusing a selectable selectable marks it focused.
+Activating a selectable marks it active.
 ~~~ eve
 search
-  [#ui/event/focus selectable]
+  event = [#ui/event/activate selectable]
 commit
-  selectable += #ui/focused
-  selectable -= #html/trigger/focus
+  selectable += #ui/active
+  event := none
 end
 ~~~
 
-Blurring a selectable removes its focused status.
+Deactivating a selectable removes its active status.
 ~~~ eve
 search
-  [#ui/event/blur selectable]
+  event = [#ui/event/deactivate selectable]
 commit
-  selectable -= #ui/focused
-  selectable -= #html/trigger/blur
+  selectable -= #ui/active
+  event := none
 end
 ~~~
 
 Selecting an element updates the selected and cursor.
 ~~~ eve
 search
-  [#ui/event/select selectable item]
+  event = [#ui/event/select selectable item]
 commit
   selectable.selected += item
   selectable.cursor := item
-  selectable += #ui/selecting
+  event := none
 end
 ~~~
 
 In a single-selectable selectable, selection overwrites the previous selected.
 ~~~ eve
 search
-  [#ui/event/select selectable item]
+  event = [#ui/event/select selectable item]
   selectable = [#ui/single-selectable]
 commit
   selectable.selected := item
 end
 ~~~
+
+Clearing a selectable clears its selected.
+~~~ eve
+search
+  event = [#ui/event/clear selectable]
+commit
+  selectable.selected := none
+  event := none
+end
+~~~
+
 
 ### Dropdown
 
@@ -274,7 +306,7 @@ A dropdown creates a selectable list of its items.
 search
   dropdown = [#ui/dropdown item]
 bind
-  dropdown.children += [#ui/dropdown/list #ui/list #ui/selectable #ui/single-selectable dropdown sort: 999999 | item]
+  dropdown.children += [#ui/dropdown/list #ui/list #ui/selectable #ui/single-selectable dropdown container: dropdown sort: 999999 | item]
 end
 ~~~
 
@@ -294,6 +326,7 @@ Clicking a dropdown opens it.
 ~~~ eve
 search
   dropdown = [#ui/dropdown]
+  not(dropdown = [#ui/open])
   [#html/event/click element: dropdown]
 bind
   [#ui/event/open dropdown]
@@ -303,7 +336,7 @@ end
 Clicking anywhere outside an open dropdown closes it.
 ~~~ eve
 search
-  dropdown = [#ui/dropdown]
+  dropdown = [#ui/dropdown #ui/open]
   [#html/event/click]
   not([#html/event/click element: dropdown])
 bind
@@ -311,49 +344,102 @@ bind
 end
 ~~~
 
-Blurring a dropdown's list closes it.
+Deactivating a dropdown's list closes it.
 ~~~ eve
 search
-  [#ui/event/blur selectable: [#ui/dropdown/list dropdown]]
+  [#ui/event/deactivate selectable: [#ui/dropdown/list dropdown]]
 bind
   [#ui/event/close dropdown]
 end
 ~~~
 
-Focusing the list of a closed dropdown opens it.
+Activating the list of a closed dropdown opens it.
 ~~~ eve
 search
-  [#ui/event/focus selectable: [#ui/dropdown/list dropdown]]
+  [#ui/event/activate selectable: [#ui/dropdown/list dropdown]]
   not(dropdown = [#ui/open])
 bind
   [#ui/event/open dropdown]
 end
 ~~~
 
+Selecting an item from the dropdown list dispatches a select on the dropdown.
+~~~ eve
+search
+  [#ui/event/select item selectable: [#ui/dropdown/list dropdown]]
+bind
+  [#ui/event/select dropdown item]
+end
+~~~
+
 
 ### Events
 
-Opening a dropdown marks it as open.
+Opening a button-based dropdown blurs the button.
 ~~~ eve
 search
   [#ui/event/open dropdown]
   list = [#ui/dropdown/list dropdown]
+  dropdown.input.tagname = "button"
 commit
-  dropdown += #ui/open
-  list += #html/trigger/focus
-  list -= #html/trigger/blur
+  dropdown.input += #html/trigger/blur
 end
 ~~~
 
-Closing a dropdown removes its open tag.
+Opening a dropdown marks it open and activates its selectable.
 ~~~ eve
 search
-  [#ui/event/close dropdown]
+  event = [#ui/event/open dropdown]
+commit
+  dropdown += #ui/open
+  event := none
+end
+~~~
+
+~~~ eve
+search
+  event = [#ui/event/open dropdown]
   list = [#ui/dropdown/list dropdown]
+bind
+  [#ui/event/activate selectable: list]
+end
+~~~
+
+Closing a dropdown removes its open tag and deactivates its selectable.
+~~~ eve
+search
+  event = [#ui/event/close dropdown]
 commit
   dropdown -= #ui/open
-  list -= #html/trigger/focus
-  list += #html/trigger/blur
+  event := none
+end
+~~~
+
+~~~ eve
+search
+  event = [#ui/event/close dropdown]
+  list = [#ui/dropdown/list dropdown]
+bind
+  [#ui/event/deactivate selectable: list]
+end
+~~~
+
+
+Clearing a dropdown clears it's selectable.
+~~~ eve
+search
+  [#ui/event/clear dropdown]
+  list = [#ui/dropdown/list dropdown]
+bind
+  [#ui/event/clear selectable: list]
+end
+~~~
+
+~~~ eve
+search
+  event = [#ui/event/clear dropdown]
+commit
+  event := none
 end
 ~~~
 
@@ -372,7 +458,7 @@ end
 
 ## Toggle
 
-A toggle is a checkbox and a label decorated as a toggle switch..
+A toggle is a checkbox and a label decorated as a toggle switch.
 ~~~ eve
 search
   element = [#ui/toggle]
@@ -414,9 +500,8 @@ Decorate autocompletes.
 search
   autocomplete = [#ui/autocomplete]
 bind
-  autocomplete <- [#ui/column children:
-    [#ui/input #ui/autocomplete/input sort: 1 autocomplete]
-    [#ui/column #ui/autocomplete/matches sort: 2 autocomplete]]
+  autocomplete <- [#ui/dropdown input:
+    [#ui/input #ui/autocomplete/input autocomplete]]
 end
 ~~~
 
@@ -438,26 +523,6 @@ bind
 end
 ~~~
 
-Copy trigger focus.
-~~~ eve
-search
-  autocomplete = [#ui/autocomplete #html/event/trigger-focus]
-  input = [#ui/autocomplete/input autocomplete]
-bind
-  input += #html/event/trigger-focus
-end
-~~~
-
-Copy autosize input.
-~~~ eve
-search
-  autocomplete = [#ui/autocomplete #html/autosize-input]
-  input = [#ui/autocomplete/input autocomplete]
-bind
-  input += #html/autosize-input
-end
-~~~
-
 An autocomplete's value is its input's.
 ~~~ eve
 search
@@ -468,135 +533,96 @@ bind
 end
 ~~~
 
-An autocomplete uses a custom-specified needle as the search term if provided, otherwise its current value.
-~~~ eve
-search
-  autocomplete = [#ui/autocomplete]
-  term = if n = autocomplete.needle then n else autocomplete.value
-bind
-  autocomplete.term += term
-end
-~~~
 
+### Logic
 
 If an autocomplete's value disagrees with its selected, clear the selected.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete term selected]
+  autocomplete = [#ui/autocomplete value: term selected]
   selected.text != term
 commit
-  autocomplete.selected := none
+  [#ui/event/clear dropdown: autocomplete]
 end
 ~~~
 
-Completions that match the current input value are matches.
+Completions that match the current input value are matches, sorted by length.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete term completion]
-  string/index-of[text: completion.text substring: string/lowercase[text: term]]
+  autocomplete = [#ui/autocomplete value: term completion]
+  ix = string/index-of[text: completion.text substring: string/lowercase[text: term]]
+  sort = string/length[text: completion.text]
 bind
-  autocomplete.match += completion
+  autocomplete.item += completion
+  completion.sort += "{{sort}}{{completion.text}}"
 end
 ~~~
 
-Matches are sorted by length.
-~~~ eve
-search
-  autocomplete = [#ui/autocomplete match]
-  sort = string/length[text: match.text]
-bind
-  match.sort += sort
-end
-~~~
-
-Show the matches in a popout beneath the input.
-~~~ eve
-search
-  autocomplete = [#ui/autocomplete match]
-  matches = [#ui/autocomplete/matches autocomplete]
-bind
-  matches.children += match
-  match <- [#ui/autocomplete/match #ui/text autocomplete]
-end
-~~~
-
-### Interaction
-
-Clicking a match updates the selected and value of the autocomplete.
-~~~ eve
-search
-  match = [#ui/autocomplete/match autocomplete]
-  [#html/event/mouse-down element: match]
-commit
-  [#ui/event/select autocomplete selected: match]
-end
-~~~
-
-Focusing an autocomplete input opens it.
-~~~ eve
-search
-  input = [#ui/autocomplete/input autocomplete]
-  [#html/event/focus element: input]
-commit
-  [#ui/event/open autocomplete]
-end
-~~~
-
-Blurring an autocomplete input opens it.
-~~~ eve
-search
-  input = [#ui/autocomplete/input autocomplete]
-  [#html/event/blur element: input]
-commit
-  [#ui/event/close autocomplete]
-end
-~~~
+### Handlers
 
 If the value matches perfectly on blur, select that match.
 ~~~ eve
 search
   input = [#ui/autocomplete/input autocomplete]
   [#html/event/blur element: input value]
-  match = autocomplete.match
+  match = autocomplete.item
   lower = string/lowercase[text: match.text]
   lower = string/lowercase[text: value]
-commit
+bind
   [#ui/event/select autocomplete selected: match]
 end
 ~~~
 
-Pressing escape in an open autocomplete closes it.
+Focusing the autocomplete opens the dropdown.
 ~~~ eve
 search
-  [#ui/autocomplete open: "true"]
-  [#html/event/key-down key: "escape" element: autocomplete]
-commit
-  [#ui/event/close autocomplete]
+  input = [#ui/autocomplete/input autocomplete]
+  [#html/event/focus element: input]
+bind
+  [#ui/event/open dropdown: autocomplete]
 end
 ~~~
 
-Pressing enter in an open autocomplete submits it.
-~~~ eve
-search
-  [#ui/autocomplete open: "true"]
-  [#html/event/key-down key: "enter" element: autocomplete]
-commit
-  [#ui/event/submit autocomplete]
-  [#ui/event/close autocomplete]
-end
-~~~
-
-Pressing tab in an open autocomplete submits it.
+Blurring the autocomplete closes the dropdown.
 ~~~ eve
 // search
-//   [#ui/autocomplete open: "true" match]
-//   [#html/event/key-down key: "tab" element: autocomplete]
-//   1 == gather/sort[for: match.sort per: autocomplete]
-// commit
-//   [#ui/event/select autocomplete selected: match]
-//   [#ui/event/close autocomplete]
+//   input = [#ui/autocomplete/input autocomplete]
+//   [#html/event/blur element: input]
+// bind
+//   [#ui/event/close dropdown: autocomplete]
 // end
 ~~~
+
+Closing an autocomplete's dropdown blurs it.
+~~~ eve
+search
+  [#ui/event/close dropdown: autocomplete]
+  autocomplete = [#ui/autocomplete input]
+commit
+  input += #html/trigger/blur
+end
+~~~
+
+Selecting an item from the dropdown dispatches a select on the autocomplete.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete]
+  [#ui/event/select item dropdown: autocomplete]
+bind
+  [#ui/event/select autocomplete item]
+end
+~~~
+
+Autocompletes not marked `#ui/advanced` will update their values on select.
+~~~ eve
+search
+  autocomplete = [#ui/autocomplete input]
+  [#ui/event/select item dropdown: autocomplete]
+commit
+  input.value := item.text
+end
+~~~
+
 
 ### Events
 
@@ -607,6 +633,7 @@ search
   input = [#ui/autocomplete/input autocomplete]
 commit
   input.value := none
+  [#ui/event/clear dropdown: autocomplete]
   event := none
 end
 ~~~
@@ -620,7 +647,6 @@ search
 commit
   autocomplete.open := "true"
   autocomplete.previous := value
-  input -= #html/trigger/blur
   event := none
 end
 ~~~
@@ -634,7 +660,6 @@ commit
   autocomplete.open := none
   autocomplete.previous := none
   input += #html/trigger/blur
-  input -= #html/trigger/focus
   event := none
 end
 ~~~
@@ -659,20 +684,6 @@ commit
 end
 ~~~
 
-
-Selecting a completion updates the autocomplete if you aren't using a custom needle.
-~~~ eve
-search
-  event = [#ui/event/select autocomplete selected]
-  input = [#ui/autocomplete/input autocomplete]
-  not(autocomplete.needle)
-commit
-  input.value := selected.text
-  autocomplete.selected := selected
-  event := none
-end
-~~~
-
 Clear the autocomplete change event.
 ~~~ eve
 search
@@ -689,8 +700,8 @@ Todo:
 - [x] Toggle
 - [x] List
 - [x] Dropdown
-  - *bug* commit removal not working for enter / click (blurs list -> closes dropdown)
-  - *bug* gather/bottom filtering randomly (always includes correct answer + optionally any others in set).
+  - [x] *bug* commit removal not working for enter / click (blurs list -> closes dropdown)
+  - [x] *bug* gather/bottom filtering randomly (always includes correct answer + optionally any others in set).
 - [ ] Tab Box
 - [ ] Rewrite AC on Dropdown
   - input
