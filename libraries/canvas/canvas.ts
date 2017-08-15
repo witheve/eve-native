@@ -216,17 +216,14 @@ export class Canvas extends Library {
       this.changing();
     }),
     "export paths": handleTuples(({adds, removes}) => {
-      console.log("EP", {removes, adds}, this);
       for(let [pathId] of removes || EMPTY) this.clearPath(pathId);
       for(let [pathId] of adds || EMPTY) this.addPath(pathId);
     }),
     "export operations": handleTuples(({adds, removes}) => {
-      console.log("EO", {removes, adds}, this);
       for(let [operationId] of removes || EMPTY) this.clearOperation(operationId);
       for(let [operationId, kind] of adds || EMPTY) this.addOperation(operationId, kind);
     }),
     "export canvas paths": handleTuples(({adds, removes}) => {
-      console.log("ECP", {removes, adds}, this);
       for(let [canvasId, pathId, ix] of removes || EMPTY) {
         if(typeof ix !== "number") continue;
         let instances = this.canvases[canvasId];
@@ -257,7 +254,6 @@ export class Canvas extends Library {
     }),
 
     "export path operations": handleTuples(({adds, removes}) => {
-      console.log("EPO", {removes, adds}, this);
       for(let [pathId, operationId, ix] of removes || EMPTY) {
         if(typeof ix !== "number") continue;
         let path = this.paths[pathId];
@@ -281,7 +277,6 @@ export class Canvas extends Library {
     }),
 
     "export operation attributes": handleTuples(({adds, removes}) => {
-      console.log("EOA", {removes, adds}, this);
       for(let [operationId, attribute, value] of removes || EMPTY) {
         let operation = this.operations[operationId];
         if(!operation) continue;
