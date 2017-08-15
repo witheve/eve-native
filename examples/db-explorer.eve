@@ -4,10 +4,9 @@
 
 ~~~ eve
 commit
-  [#init stage: 1]
   [#ui/column #db-explorer/root | children:
     [#ui/row #db-explorer/query-box | children:
-      [#token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
+      [#ui/token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
       [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
     [#ui/row #db-explorer/card-list]]
 end
@@ -47,7 +46,7 @@ search
   count = gather/count[for:container.children]
 
 commit
-  container.children += [#record-card/card record: value]
+  container.children += [#record-card/card #db-explorer/card record: value]
 end
 ~~~
 
@@ -81,7 +80,7 @@ search
   not(string/contains[text: query.value substring: " "])
   [tag]
 bind
-  query.completion += [text: "#{{tag}}" value: tag]
+  query.completion += [value: tag text: "#{{tag}}"]
 end
 ~~~
 
@@ -92,7 +91,7 @@ search
   not(string/contains[text: query.value substring: " "])
   lookup[attribute]
 bind
-  query.completion += [text: attribute value: attribute]
+  query.completion += [value: attribute text: attribute]
 end
 ~~~
 
@@ -102,7 +101,7 @@ search
   query = [#db-explorer/query]
   [#db-explorer/completion-record record: [tag]]
 bind
-  query.completion += [text: "#{{tag}}" value: tag]
+  query.completion += [value: tag text: "#{{tag}}"]
 end
 ~~~
 
@@ -113,7 +112,7 @@ search
   [#db-explorer/completion-record record]
   lookup[entity: record attribute]
 bind
-  query.completion += [text: attribute value: attribute]
+  query.completion += [value: attribute text: attribute]
 end
 ~~~
 
@@ -150,6 +149,7 @@ If the token doesn't start with `#`, it's an attribute.
 search
   [#db-explorer/tokens-to-pattern pattern token]
   not(1 = string/index-of[text: token substring: "#"])
+  token != ""
 bind
   pattern.attribute += [attribute: token]
 end
@@ -192,20 +192,9 @@ search
   block = [#db-explorer/completer record-var]
 bind
   value-var = [#eve/compiler/variable completion-pattern attribute]
-  block.constraint += [#eve/compiler/scan entity: record-var attribute value: value-var]
+  block.constraint += [#eve/compiler/scan entity: record-var attribute: attribute.attribute value: value-var]
 end
 ~~~
-
-DEBUG
-~~~ eve
-search
-  [#db-explorer/completion-record record]
-bind
-  [#ui/text text: record]
-end
-~~~
-
-
 
 When the search button is clicked, parse the current search string into a search block.
 ~~~ eve
@@ -218,41 +207,6 @@ end
 ~~~
 
 
-## Token Completer
-
-Token completers are autocompleters.
-~~~ eve
-search
-  completer = [#token-completer]
-bind
-  completer <- [#ui/autocomplete]
-end
-~~~
-
-~~~ eve
-search
-  completer = [#token-completer value]
-  (token, 1) = eve-internal/string/split-reverse[text: value by: " "]
-bind
-  completer.needle += token
-end
-~~~
-
-~~~ eve
-search
-  event = [#ui/event/select autocomplete selected]
-  input = [#ui/autocomplete/input autocomplete]
-  autocomplete = [#token-completer]
-  needle-start = 0 - string/length[text: autocomplete.needle]
-  value = string/substring[text: input.value from: 1 to: needle-start]
-commit
-  input.value := "{{value}}{{selected.text}}"
-  autocomplete.selected := selected
-  event := none
-
-end
-~~~
-
 ## Test
 
 ~~~ eve
@@ -260,28 +214,17 @@ commit
   dubdub = [#person #employee #male text: "wump" sort: 7 name: "dubdub" blarg: "crab" salary: 96 | company: kodowa friend: jubalyn]
   jubalyn = [#person #female name: "jubalyn" weight: 13 age: 91 coolness: 6 | friend: dubdub]
   kodowa = [#company #startup name: "kodowa" ceo: "chris" man-of-distinction: "josh" | employees: (dubdub, "josh", "chris", "corey", "rob")]
+  [#pet #cat name: "blort" age: 13 | owner: dubdub]
+  [#pet #dog name: "steve" age: 3 | owner: dubdub]
 end
 ~~~
 
 ~~~ eve
 search
-  foo = [#person name: "dubdub"]
-commit
-  foo <- [pet:
-    [#pet #cat name: "blort" age: 13 | owner: foo]
-    [#pet #dog name: "steve" age: 3 | owner: foo]]
-end
-~~~
-
-
-~~~ eve
-search
-  init = [#init stage: 1]
   root = [#db-explorer/root]
   record = [#pet]
 commit
   root.record += record
-  init.stage := 2
 end
 ~~~
 
@@ -294,6 +237,24 @@ bind
   root.record += completion-pattern
 end
 ~~~
+
+~~~ eve
+search
+  block = [#db-explorer/completer]
+  root = [#db-explorer/root]
+bind
+  root.record += block
+end
+~~~
+
+~~~ eve
+search
+  [#db-explorer/completion-record record]
+bind
+  [#html/div text: record]
+end
+~~~
+
 
 
 

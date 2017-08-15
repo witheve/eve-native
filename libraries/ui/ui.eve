@@ -692,6 +692,80 @@ end
 ~~~
 
 
+## Token Completer
+
+Token completers are completers.
+~~~ eve
+search
+  completer = [#ui/token-completer]
+bind
+  completer <- [#ui/completer]
+end
+~~~
+
+Token items are divs.
+~~~ eve
+search
+  completer = [#ui/token-completer item]
+bind
+  item += #html/div
+end
+~~~
+
+
+### Logic
+
+The current term is the last word of the value.
+~~~ eve
+search
+  completer = [#ui/token-completer value]
+  (token, 1) = eve-internal/string/split-reverse[text: value by: " "]
+bind
+  completer.needle += token
+end
+~~~
+
+Completions that match the current input value are matches, sorted by length.
+~~~ eve
+search
+  completer = [#ui/token-completer needle: term completion]
+  ix = string/index-of[text: string/lowercase[text: completion.text] substring: string/lowercase[text: term]]
+  sort = string/length[text: completion.text]
+bind
+  completer.item += completion
+  completion.sort += "{{sort}}{{completion.text}}"
+end
+~~~
+
+
+### Handlers
+
+If the value matches perfectly on blur, select that match.
+~~~ eve
+search
+  input = [#ui/completer/input completer]
+  [#html/event/blur element: input]
+  match = completer.item
+  lower = string/lowercase[text: match.text]
+  lower = string/lowercase[text: completer.needle]
+bind
+  [#ui/event #ui/event/select element: completer item: match]
+end
+~~~
+
+Token completers update their values on select.
+~~~ eve
+search
+  event = [#ui/event/select completer item]
+  input = [#ui/completer/input completer]
+  completer = [#ui/token-completer]
+  needle-start = 0 - string/length[text: completer.needle]
+  value = string/substring[text: input.value from: 1 to: needle-start]
+commit
+  input.value := "{{value}}{{item.text}}"
+end
+~~~
+
 
 
 Todo:
