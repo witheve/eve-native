@@ -4,7 +4,7 @@ extern crate term_painter;
 
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
-use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan,
+use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan, Internable,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
           make_multi_function, make_commit_lookup, make_remote_lookup, make_aggregate, Block};
 use std::io::prelude::*;
@@ -437,6 +437,12 @@ impl<'a> Node<'a> {
                 }
                 None
             },
+            &mut Node::LookupRemote(ref mut attrs, _) => {
+                for attr in attrs {
+                    attr.gather_equalities(interner, cur_block);
+                }
+                None
+            },
             &mut Node::RecordSet(ref mut records) => {
                 for record in records {
                     record.gather_equalities(interner, cur_block);
@@ -794,6 +800,7 @@ impl<'a> Node<'a> {
                 let mut entity = None;
                 let mut attribute = None;
                 let mut value = None;
+                let mut _type = None;
 
                 for attr in attrs {
                     let (local_span, unwrapped) = attr.to_pos_ref(span);
@@ -830,6 +837,7 @@ impl<'a> Node<'a> {
                         "entity" => {}
                         "attribute" => attribute = v,
                         "value" => value = v,
+                        "type" => _type = v,
                         _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
@@ -837,11 +845,22 @@ impl<'a> Node<'a> {
                 if attribute == None { attribute = cur_block.gen_var("eve_lookup"); }
                 if value == None { value = cur_block.gen_var("eve_lookup"); }
 
-                match output_type {
-                    OutputType::Lookup => cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap())),
-                    OutputType::Commit => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true}),
-                    OutputType::Bind => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false})
-                }
+                let constraint = match (output_type, _type) {
+                    (OutputType::Lookup, _) => make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap()),
+                    (OutputType::Bind, _) => Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false},
+                    (OutputType::Commit, None) => Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true},
+                    (OutputType::Commit, Some(Field::Value(v))) => {
+                        match interner.get_value(v) {
+                            &Internable::String(ref s) if s == "add" => Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true},
+                            &Internable::String(ref s) if s == "remove" => Constraint::Remove{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap() },
+                            _ => { cur_block.error(span, error::Error::InvalidLookupType); return None; }
+                        }
+                    },
+                    (OutputType::Commit, Some(Field::Register(_))) => {
+                        Constraint::DynamicCommit {e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), _type: _type.unwrap()}
+                    },
+                };
+                cur_block.constraints.push(constraint);
 
                 None
             },
@@ -940,9 +959,9 @@ impl<'a> Node<'a> {
                         "attribute" => attribute = v,
                         "value" => value = v,
                         "to" => to = v,
+                        "from" => from = v,
                         "for" => _for = v,
                         "type" => _type = v,
-                        "from" => value = v,
                         _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
@@ -954,11 +973,12 @@ impl<'a> Node<'a> {
                 if _for == None { _for = cur_block.gen_var("eve_lookup"); }
                 if _type == None { _type = cur_block.gen_var("eve_lookup"); }
 
-                match output_type {
-                    OutputType::Lookup => cur_block.constraints.push(make_remote_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap(), _for.unwrap(), _type.unwrap(), from.unwrap(), to.unwrap())),
-                    OutputType::Commit => unimplemented!(),
-                    OutputType::Bind => unimplemented!()
-                }
+                let constraint = match output_type {
+                    OutputType::Lookup => make_remote_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap(), _for.unwrap(), _type.unwrap(), from.unwrap(), to.unwrap()),
+                    OutputType::Commit => Constraint::Watch {name:"eve/remote".to_string(), registers: vec![to.unwrap(), _for.unwrap(), entity.unwrap(), attribute.unwrap(), value.unwrap(), Field::Value(0)]},
+                    OutputType::Bind => Constraint::Watch {name:"eve/remote".to_string(), registers: vec![to.unwrap(), _for.unwrap(), entity.unwrap(), attribute.unwrap(), value.unwrap(), Field::Value(1)]},
+                };
+                cur_block.constraints.push(constraint);
                 None
             },
             &Node::Record(ref var, ref attrs) => {

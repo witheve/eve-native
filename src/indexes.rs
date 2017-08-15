@@ -659,15 +659,15 @@ impl<'a> Iterator for DistinctIter<'a> {
 // RemoteIndex
 //-------------------------------------------------------------------------
 
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RawRemoteChange {
-    e: Internable,
-    a: Internable,
-    v: Internable,
-    _for: Internable,
-    _type: Internable,
-    from: Internable,
-    to: Internable,
+    pub e: Internable,
+    pub a: Internable,
+    pub v: Internable,
+    pub _for: Internable,
+    pub _type: Internable,
+    pub from: Internable,
+    pub to: Internable,
 }
 
 impl RawRemoteChange {
@@ -684,7 +684,7 @@ impl RawRemoteChange {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub enum RemoteChangeField {
     E,
     A,
@@ -695,7 +695,7 @@ pub enum RemoteChangeField {
     To,
 }
 
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RemoteChange {
     pub e: Interned,
     pub a: Interned,
