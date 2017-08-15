@@ -66,7 +66,7 @@ search
   container = [#demo name: demo]
 commit
   container <- [children:
-    [#ui/row #demo-spaced demo | children:
+    [#ui/row #demo-spaced #demo-centered demo | children:
       [#html/div #demo-square demo sort: 1]
       [#html/div #demo-square demo sort: 2]
       [#html/div #demo-square demo sort: 3]]]
@@ -80,7 +80,7 @@ search
   container = [#demo name: demo]
 commit
   container <- [children:
-    [#ui/column #demo-spaced demo | children:
+    [#ui/column #demo-spaced #demo-centered demo | children:
       [#html/div #demo-square demo sort: 1]
       [#html/div #demo-square demo sort: 2]
       [#html/div #demo-square demo sort: 3]]]
@@ -261,8 +261,10 @@ commit
     .demo > .ui-row + .ui-row,
     .variant-matrix > .ui-row + .ui-row { margin-top: 10px; }
     .variant-matrix + .variant-matrix { margin-top: 10px; }
+
     .ui-row.demo-spaced > * + * { margin-left: 10px; }
     .ui-column.demo-spaced > * + * { margin-top: 10px; }
+    .demo-centered { flex: 1; align-items: center; justify-content: center }
 
     .demo-square { width: 50px; height: 50px; background: rgb(95, 211, 247); }
     "]
