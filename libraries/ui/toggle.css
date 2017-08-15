@@ -10,9 +10,9 @@
     --track-pad: 20%;
     --transition-duration: 0.2s;
     --inactive-bg: #c0c0c0;
-    --active-bg: color(rgb(0, 184, 241) saturation(- 30%) lightness(+ 35%)); /*color(rgb(0, 184, 241) lightness(+ 40%));*/
+    --active-bg: color(rgb(0, 184, 241) saturation(- 30%) lightness(+ 35%));
     --default-fg: #e9e9e9;
-    --primary-fg: color(rgb(0, 184, 241) saturation(- 10%) lightness(+ 15%)); /*rgb(0, 184, 241);*/
+    --primary-fg: color(rgb(0, 184, 241) saturation(- 10%) lightness(+ 20%));
     --primary-bg: color(rgb(0, 184, 241) saturation(- 30%) lightness(+ 35%));
     --secondary-fg: color(rgb(107, 103, 173) lightness(+ 15%));
     --secondary-bg: color(rgb(107, 103, 173) saturation(- 10%) lightness(+ 30%));
