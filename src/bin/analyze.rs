@@ -40,14 +40,14 @@ fn main() {
         blocks.extend(parse_file(&mut program.state.interner, file, true));
     }
 
-    let mut analysis = Analysis::new();
+    let mut analysis = Analysis::new(&mut program.state.interner);
     for block in blocks.iter() {
         analysis.block(block);
     }
     analysis.analyze();
 
     let mut file = File::create("graph.dot").unwrap();
-    file.write_all(analysis.make_dot_graph().as_bytes()).unwrap();
+    file.write_all(analysis.make_dot_chains().as_bytes()).unwrap();
     let output = Command::new("dot")
         .arg("-Tsvg")
         .arg("graph.dot")

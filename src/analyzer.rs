@@ -1,69 +1,40 @@
-/* ;; #[bench] */
-/* ;; fn rust_balls_raw(b: &mut Bencher) { */
-/* ;;     let mut raw_boid = vec![]; */
-/* ;;     for order in 1..200 { */
-/* ;;         let rand = random(order as u32); */
-/* ;;         let rand2 = random(order as u32); */
-/* ;;         let x = rand * 500.0; */
-/* ;;         let y = rand2 * 500.0; */
-/* ;;         let vx = rand * 3.0 + 1.0; */
-/* ;;         let vy = rand2 * 4.0 + 1.0; */
-/* ;;         raw_boid.push(RawBoid { x, y, vx, vy, arc: RawArc { x, y } }); */
-/* ;;     } */
-/* ;; */
-/* ;;     b.iter(move || { */
-/* ;;         for boid in raw_boid.iter_mut() { */
-/* ;;             boid.x += boid.vx; */
-/* ;;             boid.y += boid.vy; */
-/* ;;             boid.vy += 0.07; */
-/* ;;             if boid.y < 10.0 && boid.vy < 0.0 { */
-/* ;;                 boid.vy *= -0.9; */
-/* ;;             } */
-/* ;;             if boid.x < 10.0 && boid.vx < 0.0 { */
-/* ;;                 boid.vx *= -0.9; */
-/* ;;             } */
-/* ;;             if boid.y > 490.0 && boid.vy > 0.0 { */
-/* ;;                 boid.vy *= -0.9; */
-/* ;;             } */
-/* ;;             if boid.x > 490.0 && boid.vx > 0.0 { */
-/* ;;                 boid.vx *= -0.9; */
-/* ;;             } */
-/* ;;             boid.arc.x = boid.x; */
-/* ;;             boid.arc.y = boid.y; */
-/* ;;         } */
-/* ;;     }); */
-/* ;; } */
-
-
-/* (component boid x number vx number y number vy number) */
-
-/*   (for [i (range 1 200)] */
-/*    (let [rand (random i) */
-/*          rand2 (random (* i 2)) */
-/*          x (* rand 500) */
-/*          y (* rand 400) */
-/*          vx 10 */
-/*          vy 10 */
-/*          entity (make-entity)] */
-/*      (make-component boid x vx y vy))) */
-
-/*   (on event/tick */
-/*     (for [boid (get-components boid)] */
-/*      (set! boid.x (+ boid.vx boid.x)) */
-/*      (set! boid.y (+ boid.vy boid.y)) */
-/*      (set! boid.vy (+ boid.vy 0.07)) */
-/*      (if (and (< boid.y 10) (boid.vy < 0)) */
-/*       (set! boid.vy (* boid.vy -0.09))) */
-/*      (if (and (< boid.y 10) (boid.vy < 0)) */
-/*       (set! boid.vy (* boid.vy -0.09))) */
-/*      (if (and (< boid.y 10) (boid.vy < 0)) */
-/*       (set! boid.vy (* boid.vy -0.09))) */
-/*      (if (and (< boid.y 10) (boid.vy < 0)) */
-/*       (set! boid.vy (* boid.vy -0.09))) */
-/*      )) */
-
-use ops::{Field, Interned, Constraint, Block, TAG_INTERNED_ID};
+use ops::{Field, Interned, Constraint, Block, TAG_INTERNED_ID, Interner};
 use std::collections::{HashSet, HashMap};
+
+//-------------------------------------------------------------------------
+// Domain
+//-------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum Domain {
+    Unknown,
+    Exists(bool),
+    Number(u64, u64),
+    String,
+    Record,
+}
+
+impl Domain {
+    pub fn intersects(&self, other: &Domain) -> bool {
+        match (self, other) {
+            (&Domain::Unknown, &Domain::Unknown) => true,
+            (&Domain::Exists(true), &Domain::Exists(true)) => true,
+            (&Domain::String, &Domain::String) => true,
+            (&Domain::Number(a, b), &Domain::Number(x, y)) => {
+                a <= x && b >= y
+            },
+            _ => false,
+        }
+    }
+
+    pub fn merge(&mut self, other: &Domain) {
+
+    }
+}
+
+//-------------------------------------------------------------------------
+// Attribute Info
+//-------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum ValueType {
@@ -89,6 +60,10 @@ impl AttributeInfo {
     }
 }
 
+//-------------------------------------------------------------------------
+// Tag Info
+//-------------------------------------------------------------------------
+
 pub struct TagInfo {
     attributes: HashMap<String, AttributeInfo>,
     other_tags: HashSet<String>,
@@ -107,6 +82,10 @@ impl TagInfo {
         TagInfo { attributes, other_tags, tag_relationships, external, event }
     }
 }
+
+//-------------------------------------------------------------------------
+// Block Info
+//-------------------------------------------------------------------------
 
 pub struct BlockInfo {
     id: Interned,
@@ -143,6 +122,51 @@ impl BlockInfo {
                             tags.push(actual_v);
                         }
                     }
+                _ => (),
+            }
+        }
+    }
+
+    pub fn gather_domains(&mut self) {
+        let no_tags:Vec<Interned> = vec![];
+        let mut field_domains:HashMap<Field, Domain> = HashMap::new();
+        // determine the constraints per register
+        // while changed
+        //      for each constraint
+        //          determine all the domains for the registers
+        //          determine the domains for static attributes as well
+        //          if there was a change
+        //              set changed
+        // go through the scans
+        //      set the domain for (tag, attribute) pairs for inputs and outputs
+        for scan in self.constraints.iter() {
+            match scan {
+                &Constraint::Scan {ref e, ref a, ref v, ..} |
+                &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
+                    if let &Field::Register(_) = e {
+                        let domain = field_domains.entry(*e).or_insert_with(|| Domain::Unknown);
+                        domain.merge(&Domain::Record);
+                    }
+                    if let &Field::Register(_) = a {
+                        let domain = field_domains.entry(*a).or_insert_with(|| Domain::Unknown);
+                        domain.merge(&Domain::String);
+                    }
+                    if let &Field::Register(_) = v {
+                        let domain = field_domains.entry(*v).or_insert_with(|| Domain::Unknown);
+                        domain.merge(&Domain::Exists(true));
+                    }
+                },
+                &Constraint::Filter { ref left, ref right, ref op, .. } => {
+                    match op.as_str() {
+                        ">" => {
+
+                        }
+                        "<" => {}
+                        ">=" => {}
+                        "<=" => {}
+                        _ => { }
+                    }
+                }
                 _ => (),
             }
         }
@@ -201,24 +225,49 @@ impl BlockInfo {
     }
 }
 
+//-------------------------------------------------------------------------
+// Chain node
+//-------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct Node {
+    id: usize,
+    block: Interned,
+    next: HashSet<usize>,
+    back_edges: HashSet<usize>,
+}
+
+//-------------------------------------------------------------------------
+// Analysis
+//-------------------------------------------------------------------------
+
 pub struct Analysis {
     blocks: HashMap<Interned, BlockInfo>,
     inputs: HashMap<(Interned, Interned, Interned), HashSet<Interned>>,
     setup_blocks: Vec<Interned>,
-    root_blocks: Vec<Interned>,
+    root_blocks: HashSet<Interned>,
     tags: HashMap<String, TagInfo>,
+    externals: HashSet<Interned>,
+    chains: Vec<usize>,
+    nodes: Vec<Node>,
     dirty_blocks: Vec<Interned>,
 }
 
 impl Analysis {
-    pub fn new() -> Analysis {
+    pub fn new(interner: &mut Interner) -> Analysis {
         let blocks = HashMap::new();
         let tags = HashMap::new();
+        let chains = vec![];
+        let nodes = vec![];
         let dirty_blocks = vec![];
         let inputs = HashMap::new();
         let setup_blocks = vec![];
-        let root_blocks = vec![];
-        Analysis { blocks, tags, dirty_blocks, inputs, setup_blocks, root_blocks }
+        let root_blocks = HashSet::new();
+        let mut external_tags = vec![];
+        external_tags.push("system/timer/change");
+        let mut externals = HashSet::new();
+        externals.extend(external_tags.iter().map(|x| interner.string_id(x)));
+        Analysis { blocks, tags, dirty_blocks, inputs, setup_blocks, root_blocks, externals, chains, nodes }
     }
 
     pub fn block(&mut self, block: &Block) {
@@ -238,11 +287,80 @@ impl Analysis {
             for input in block.inputs.iter() {
                 let entry = self.inputs.entry(input.clone()).or_insert_with(|| HashSet::new());
                 entry.insert(block.id);
+                if self.externals.contains(&input.0) {
+                    self.root_blocks.insert(block.id);
+                }
             }
             if !block.has_scans {
                 self.setup_blocks.push(block.id);
             }
         }
+
+        let mut chains = vec![];
+        let mut nodes = vec![];
+        let mut seen = HashMap::new();
+        let mut node_ix = 0;
+        for setup in self.setup_blocks.iter().cloned() {
+            seen.clear();
+            chains.push(self.build_chain(setup, &mut nodes, &mut seen, &mut node_ix));
+        }
+        for root in self.root_blocks.iter().cloned() {
+            seen.clear();
+            chains.push(self.build_chain(root, &mut nodes, &mut seen, &mut node_ix));
+        }
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        self.chains.extend(chains);
+        self.nodes.extend(nodes);
+        println!("NODES: {:?}", self.nodes);
+    }
+
+    pub fn build_chain(&self, root_block:Interned, nodes: &mut Vec<Node>, seen: &mut HashMap<Interned, usize>, next_ix:&mut usize) -> usize {
+        let mut root = Node { id: *next_ix, block:root_block, next: HashSet::new(), back_edges: HashSet::new() };
+        *next_ix += 1;
+        seen.insert(root_block, root.id);
+        let block = self.blocks.get(&root_block).unwrap();
+        let mut followers = HashSet::new();
+        for output in block.outputs.iter() {
+            if let Some(nexts) = self.inputs.get(output) {
+                followers.extend(nexts);
+            }
+        }
+        for next in followers.iter().cloned() {
+            match seen.get(&next).cloned() {
+                Some(edge) => {
+                    root.back_edges.insert(edge);
+                },
+                _ => {
+                    let next_id = self.build_chain(next, nodes, seen, next_ix);
+                    root.next.insert(next_id);
+                }
+            }
+        }
+        seen.remove(&root_block);
+        let id = root.id;
+        nodes.push(root);
+        id
+    }
+
+    pub fn dot_chain_link(&self, node_id:usize, graph:&mut String) {
+        let me = &self.nodes[node_id];
+        graph.push_str(&format!("{:?} [label=\"{:?}\"]\n", me.id, me.block));
+        for next in me.next.iter().cloned() {
+            graph.push_str(&format!("{:?} -> {:?};\n", me.id, next));
+            self.dot_chain_link(next, graph);
+        }
+        for next in me.back_edges.iter().cloned() {
+            graph.push_str(&format!("{:?} -> {:?};\n", me.id, next));
+        }
+    }
+
+    pub fn make_dot_chains(&self) -> String {
+        let mut graph = "digraph program {\n".to_string();
+        for chain in self.chains.iter().cloned() {
+            self.dot_chain_link(chain, &mut graph);
+        }
+        graph.push_str("}");
+        graph
     }
 
     pub fn make_dot_graph(&self) -> String {
@@ -263,23 +381,4 @@ impl Analysis {
         graph
     }
 }
-
-// let info = HashMap::new();
-// info.insert(("boid", "x"), )
-// info.insert(("boid", "vx"), )
-// info.insert(("boid", "y"), )
-// info.insert(("boid", "vy"), )
-// info.insert(("boid", "order"), )
-
-// info.insert(("arc", "x"), )
-// info.insert(("arc", "y"), )
-// info.insert(("arc", "type"), )
-// info.insert(("arc", "sort"), )
-// info.insert(("arc", "radius"), )
-// info.insert(("arc", "startAngle"), )
-// info.insert(("arc", "endAngle"), )
-
-// info.insert(("system/timer/change", "tick"), )
-
-
 
