@@ -41,6 +41,7 @@ end
 Create a list of trigger and listener tags to send to the client if present.
 ~~~ eve
 commit
+  [#html/state-tag state: "html/focused" start-event: "html/event/focus" stop-event: "html/event/blur"]
   [#html/trigger-tag | trigger: (
     "html/trigger/focus"
     "html/trigger/blur")]
@@ -104,6 +105,56 @@ bind
 end
 ~~~
 
+Mark elements with a user-editable value as such.
+~~~ eve
+search
+  elem = if input = [#html/element tagname: "input" type]
+    type != "button"
+    type != "checkbox"
+    type != "submit"
+    type != "radio"
+    then input
+  if input = [#html/element tagname: "input"]
+    not(input.type)
+    then input
+  if textarea = [#html/element tagname: "textarea"] then textarea
+bind
+  elem += #html/editable-value
+end
+~~~
+
+Mark elements with a user-editable checked as such.
+~~~ eve
+search
+  elem = [#html/element tagname: "input" type]
+  checkable = if type = "checkbox" then "true" if type = "radio" then "true"
+bind
+  elem += #html/editable-checked
+end
+~~~
+
+Elements with an editable value and an initial use it as the default value
+~~~ eve
+search
+  input = [#html/editable-value initial]
+  value = if input.value then input.value else initial
+
+bind
+  input.value += value
+end
+~~~
+
+Elements with an editable checked and an initial use it as the default checked
+~~~ eve
+search
+  input = [#html/editable-checked initial]
+  checked = if input.checked then input.checked else initial
+
+bind
+  input.checked += checked
+end
+~~~
+
 
 ## Events
 
@@ -113,17 +164,6 @@ search
   event = [#html/event]
 commit
   event := none
-end
-~~~
-
-Inputs with an initial but no value use the initial.
-~~~ eve
-search
-  input = [#html/element tagname: "input"]
-  value = if input.value then input.value else input.initial
-
-bind
-  input.value += value
 end
 ~~~
 
@@ -138,6 +178,27 @@ commit
 end
 ~~~
 
+Apply input checked changes.
+~~~ eve
+search
+  [#html/event/change element checked: "true"]
+
+commit
+  element.checked := "true"
+  [#html/client-checked element checked: "true"]
+end
+~~~
+
+~~~ eve
+search
+  [#html/event/change element checked: "false"]
+
+commit
+  element.checked := none
+  [#html/client-checked element checked: "false"]
+end
+~~~
+
 Clear old `#html/client-value`s.
 ~~~ eve
 search
@@ -146,6 +207,50 @@ search
 
 commit
   prev := none
+end
+~~~
+
+Clear old `#html/client-checked`s.
+~~~ eve
+search
+  prev = [#html/client-checked element checked]
+  element.checked != checked
+
+commit
+  prev := none
+end
+~~~
+
+## State Management
+
+When the start event for a state tag fires, add the state to the element.
+~~~ eve
+search
+  [#html/state-tag state add-event]
+  [#html/event tag: add-event element]
+commit
+  element.tag += state
+end
+~~~
+
+When the stop event for a state tag fires, remove the state from the element.
+~~~ eve
+search
+  [#html/state-tag state stop-event]
+  [#html/event tag: stop-event element]
+commit
+  element.tag -= state
+end
+~~~
+
+## Trigger Management
+
+Clean up triggers after the client executes them.
+~~~ eve
+search
+  [#html/event/trigger trigger element]
+commit
+  element.tag -= trigger
 end
 ~~~
 
@@ -165,7 +270,8 @@ end
 Export roots.
 ~~~ eve
 search
-  instance = [#html/instance element: [#html/root]]
+  instance = [#html/instance element]
+  element = [#html/root]
 watch client/websocket
   ("html/export roots" instance)
 end
@@ -216,15 +322,16 @@ watch client/websocket
 end
 ~~~
 
-Export triggers.
+Export checkeds not from client.
 ~~~ eve
 search
-  [#html/trigger-tag trigger]
-  element = [#html/element tag: trigger]
   instance = [#html/instance element]
+  element = [#html/element tagname: "input"]
+  checked = if c = element.checked then c else "false"
+  not([#html/client-checked element checked])
 
 watch client/websocket
-  ("html/export triggers" instance trigger)
+  ("html/export attributes" instance "checked" checked)
 end
 ~~~
 
@@ -237,5 +344,16 @@ search
 
 watch client/websocket
   ("html/export listeners" instance listener)
+end
+~~~
+
+Export triggers.
+~~~ eve
+search
+  [#html/trigger-tag trigger]
+  element = [#html/element tag: trigger]
+
+watch client/websocket
+  ("html/export triggers" element trigger)
 end
 ~~~

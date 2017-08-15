@@ -1,0 +1,49 @@
+/******************************************************************************\
+ * Toggle                                                                     *
+\******************************************************************************/
+
+:root {
+    --toggle-width: 3rem;
+    --toggle-height: 1.4rem;
+    --button-width: 1.4rem;
+    --track-edge: calc(var(--button-width) / 3);
+    --track-pad: 20%;
+    --transition-duration: 0.2s;
+    --inactive-bg: #c0c0c0;
+    --active-bg: color(rgb(0, 184, 241) saturation(- 30%) lightness(+ 35%));
+    --default-fg: #e9e9e9;
+    --primary-fg: color(rgb(0, 184, 241) saturation(- 10%) lightness(+ 20%));
+    --primary-bg: color(rgb(0, 184, 241) saturation(- 30%) lightness(+ 35%));
+    --secondary-fg: color(rgb(107, 103, 173) lightness(+ 15%));
+    --secondary-bg: color(rgb(107, 103, 173) saturation(- 10%) lightness(+ 30%));
+
+}
+
+.ui-toggle > input { appearance: none; outline: none; position: absolute; top: 0; bottom: 0; left: 0; width: var(--button-width); padding: 0; margin: 0; transition: var(--transition-duration) left ease-out, var(--transition-duration) margin-left ease-out; }
+.ui-toggle > input:checked { left: 100%; margin-left: -var(--button-width); }
+.ui-toggle { position: relative; width: var(--toggle-width); height: var(--toggle-height); }
+.ui-toggle:before { display: block; content: ""; position: absolute; left: 0; right: 0; top: 0; bottom: 0; border-radius: 100000px; transition: var(--transition-duration) background ease-out;}
+.ui-toggle > label { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+
+/* Default */
+.ui-toggle:before { border-radius: 100000px; background: var(--inactive-bg); box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.2); }
+.ui-toggle[checked]:before { background: var(--active-bg); }
+.ui-toggle > input { border-radius: 100000px; background: var(--default-fg); border: 1px solid color(var(--default-fg) lightness(- 10%)); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+.ui-toggle > input:focus { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 3px 1px var(--primary-fg); }
+
+/* Square */
+.ui-toggle.square:before { border-radius: 0; }
+.ui-toggle.square > input { border-radius: 0; }
+
+/* Flat */
+.ui-toggle.flat:before { background: darkgray; box-shadow: none; }
+.ui-toggle.flat > input { background: lightgray; box-shadow: none; }
+
+/* Track */
+.ui-toggle.track:before { left: var(--track-edge); right: var(--track-edge); top: var(--track-pad); bottom: var(--track-pad); }
+
+/* Color mods */
+.ui-toggle.primary > input { background: var(--primary-fg); border-color: color(var(--primary-fg) lightness(- 10%)); }
+.ui-toggle.primary[checked]:before { background: var(--primary-bg); }
+.ui-toggle.secondary > input { background: var(--secondary-fg); border-color: color(var(--secondary-fg) lightness(- 6%)); }
+.ui-toggle.secondary[checked]:before { background: var(--secondary-bg); }
