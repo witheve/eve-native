@@ -621,7 +621,6 @@ impl<'a> Node<'a> {
                         cur_block.constraints.push(make_scan(parent, interner.string(item), next));
                         parent = next;
                     }
-                    println!("MAA: {}", final_var);
                 }
                 Some(parent)
             },
