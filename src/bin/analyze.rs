@@ -44,7 +44,7 @@ fn main() {
     for block in blocks.iter() {
         analysis.block(block);
     }
-    analysis.analyze();
+    analysis.analyze(&program.state.interner);
 
     let mut file = File::create("graph.dot").unwrap();
     file.write_all(analysis.make_dot_chains().as_bytes()).unwrap();
