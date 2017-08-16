@@ -1,6 +1,7 @@
 import md5 from "md5";
 import "setimmediate";
 import {Program, Library, createId, RawValue, RawEAV, RawMap, handleTuples} from "../../ts";
+import url from "url";
 
 const EMPTY:never[] = [];
 
@@ -92,22 +93,26 @@ export class HTML extends Library {
     this._container.appendChild(this._syntheticStyleContainer);
     this._dummy = document.createElement("div");
 
+    // Mouse events
     window.addEventListener("click", this._mouseEventHandler("click"));
     window.addEventListener("dblclick", this._mouseEventHandler("double-click"));
     window.addEventListener("mousedown", this._mouseEventHandler("mouse-down"));
     window.addEventListener("mouseup", this._mouseEventHandler("mouse-up"));
     window.addEventListener("contextmenu", this._captureContextMenuHandler());
-
-    window.addEventListener("input", this._inputEventHandler("change"));
-    window.addEventListener("keydown", this._keyEventHandler("key-down"));
-    window.addEventListener("keyup", this._keyEventHandler("key-up"));
-    window.addEventListener("focus", this._focusEventHandler("focus"), true);
-    window.addEventListener("blur", this._focusEventHandler("blur"), true);
-
     document.body.addEventListener("mouseenter", this._hoverEventHandler("hover-in"), true);
     document.body.addEventListener("mouseleave", this._hoverEventHandler("hover-out"), true);
 
-    // window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
+    // Form events
+    window.addEventListener("input", this._inputEventHandler("change"));
+    window.addEventListener("focus", this._focusEventHandler("focus"), true);
+    window.addEventListener("blur", this._focusEventHandler("blur"), true);
+
+    // Keyboard events
+    window.addEventListener("keydown", this._keyEventHandler("key-down"));
+    window.addEventListener("keyup", this._keyEventHandler("key-up"));
+
+    // Frame events
+    window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
   }
 
   protected decorate(elem:Element, elemId:RawValue): Instance {
@@ -512,6 +517,31 @@ export class HTML extends Library {
       if(eavs.length) this._sendEvent(eavs);
     };
   }
+
+  _hashChangeHandler(tagname:string) {
+    return (event: HashChangeEvent) => {
+      if (event.newURL !== null) {
+        let eavs:RawEAV[] = [];
+        let eventId = createId();
+        let {hash, host, hostname, href, path, pathname, port, protocol} = url.parse(event.newURL);
+        eavs.push(
+          [eventId, "tag", "html/event"],
+          [eventId, "tag", `html/event/${tagname}`],
+          [eventId, "host", `${host}`],
+          [eventId, "hash", `${hash}`],
+          [eventId, "hostname", `${hostname}`],
+          [eventId, "href", `${href}`],
+          [eventId, "path", `${path}`],
+          [eventId, "pathname", `${pathname}`],
+          [eventId, "port", `${port}`],
+          [eventId, "protocol", `${protocol}`],
+        );
+        this._sendEvent(eavs);
+      }    
+    }
+  }
+
+
 }
 
 Library.register(HTML.id, HTML);
