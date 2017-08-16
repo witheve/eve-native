@@ -255,15 +255,15 @@ impl BlockInfo {
             match scan {
                 &Constraint::Scan {ref e, ref a, ref v, ..} |
                 &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
-                    if let &Field::Register(_) = e {
+                    if e.is_register() {
                         let domain = field_domains.entry(*e).or_insert_with(|| Domain::Unknown);
                         domain.merge(&Domain::Record);
                     }
-                    if let &Field::Register(_) = a {
+                    if a.is_register() {
                         let domain = field_domains.entry(*a).or_insert_with(|| Domain::Unknown);
                         domain.merge(&Domain::String);
                     }
-                    if let &Field::Register(_) = v {
+                    if v.is_register() {
                         let domain = field_domains.entry(*v).or_insert_with(|| Domain::Unknown);
                         domain.merge(&Domain::Exists(true));
                     }
@@ -271,7 +271,6 @@ impl BlockInfo {
                 &Constraint::Filter { ref left, ref right, ref op, .. } => {
                     match op.as_str() {
                         ">" => {
-
                         }
                         "<" => {}
                         ">=" => {}

@@ -561,6 +561,16 @@ pub enum Field {
     Value(Interned),
 }
 
+impl Field {
+    is_register(&self) -> bool {
+        if let &Field::Register(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
 pub fn register(ix: usize) -> Field {
     Field::Register(ix)
 }
