@@ -562,7 +562,7 @@ pub enum Field {
 }
 
 impl Field {
-    is_register(&self) -> bool {
+    pub fn is_register(&self) -> bool {
         if let &Field::Register(_) = self {
             true
         } else {
