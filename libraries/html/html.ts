@@ -525,7 +525,7 @@ export class HTML extends Library {
         let eavs:RawEAV[] = [];
         let eventId = createId();
         let urlId = createId();
-        let {hash, host, hostname, href, path, pathname, port, protocol} = url.parse(event.newURL);
+        let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(event.newURL, true);
         eavs.push(
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
@@ -535,20 +535,31 @@ export class HTML extends Library {
           [urlId, "hash", `${hash}`],
           [urlId, "hostname", `${hostname}`],
           [urlId, "href", `${href}`],
-          [urlId, "path", `${path}`],
           [urlId, "pathname", `${pathname}`],
           [urlId, "port", `${port}`],
           [urlId, "protocol", `${protocol}`],
         );
+        let ix = 1;
+        for (var key in query) {
+          let value = query[key];
+          let queryId = createId();
+          eavs.push(
+            [urlId, "query", `${queryId}`],
+            [queryId, "index", `${ix}`],
+            [queryId, "key", key],
+            [queryId, "value", value],
+          )
+          ix++;
+        }
         this._sendEvent(eavs);
       }    
     }
   }
 
   _pageShowHandler(tagname:string) {
-    return (event: any) => {
+    return (event: any) => {      
       if (event.srcElement !== null) {
-        let {hash, host, hostname, href, path, pathname, port, protocol} = url.parse(event.target.URL);
+        let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(event.target.URL, true);
         let eavs:RawEAV[] = [];
         let eventId = createId();
         let urlId = createId();
@@ -561,11 +572,22 @@ export class HTML extends Library {
           [urlId, "hash", `${hash}`],
           [urlId, "hostname", `${hostname}`],
           [urlId, "href", `${href}`],
-          [urlId, "path", `${path}`],
           [urlId, "pathname", `${pathname}`],
           [urlId, "port", `${port}`],
           [urlId, "protocol", `${protocol}`],
         );
+        let ix = 1;
+        for (var key in query) {
+          let value = query[key];
+          let queryId = createId();
+          eavs.push(
+            [urlId, "query", `${queryId}`],
+            [queryId, "index", `${ix}`],
+            [queryId, "key", key],
+            [queryId, "value", value],
+          )
+          ix++;
+        }
         this._sendEvent(eavs);
       }
     }
