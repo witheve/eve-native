@@ -113,6 +113,7 @@ export class HTML extends Library {
 
     // Frame events
     window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
+    window.addEventListener("pageshow", this._pageShowHandler("page-show"));
   }
 
   protected decorate(elem:Element, elemId:RawValue): Instance {
@@ -523,25 +524,52 @@ export class HTML extends Library {
       if (event.newURL !== null) {
         let eavs:RawEAV[] = [];
         let eventId = createId();
+        let urlId = createId();
         let {hash, host, hostname, href, path, pathname, port, protocol} = url.parse(event.newURL);
         eavs.push(
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "host", `${host}`],
-          [eventId, "hash", `${hash}`],
-          [eventId, "hostname", `${hostname}`],
-          [eventId, "href", `${href}`],
-          [eventId, "path", `${path}`],
-          [eventId, "pathname", `${pathname}`],
-          [eventId, "port", `${port}`],
-          [eventId, "protocol", `${protocol}`],
+          [eventId, "url", `${urlId}`],
+          [urlId, "tag", "html/url"],
+          [urlId, "host", `${host}`],
+          [urlId, "hash", `${hash}`],
+          [urlId, "hostname", `${hostname}`],
+          [urlId, "href", `${href}`],
+          [urlId, "path", `${path}`],
+          [urlId, "pathname", `${pathname}`],
+          [urlId, "port", `${port}`],
+          [urlId, "protocol", `${protocol}`],
         );
         this._sendEvent(eavs);
       }    
     }
   }
 
-
+  _pageShowHandler(tagname:string) {
+    return (event: any) => {
+      if (event.srcElement !== null) {
+        let {hash, host, hostname, href, path, pathname, port, protocol} = url.parse(event.target.URL);
+        let eavs:RawEAV[] = [];
+        let eventId = createId();
+        let urlId = createId();
+        eavs.push(
+          [eventId, "tag", "html/event"],
+          [eventId, "tag", `html/event/${tagname}`],
+          [eventId, "url", `${urlId}`],
+          [urlId, "tag", "html/url"],
+          [urlId, "host", `${host}`],
+          [urlId, "hash", `${hash}`],
+          [urlId, "hostname", `${hostname}`],
+          [urlId, "href", `${href}`],
+          [urlId, "path", `${path}`],
+          [urlId, "pathname", `${pathname}`],
+          [urlId, "port", `${port}`],
+          [urlId, "protocol", `${protocol}`],
+        );
+        this._sendEvent(eavs);
+      }
+    }
+  }
 }
 
 Library.register(HTML.id, HTML);
