@@ -1,5 +1,7 @@
 use ops::{Field, Interned, Constraint, Block, TAG_INTERNED_ID, Interner};
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet, HashMap, Bound};
+use std::collections::Bound::{Unbounded, Excluded, Included};
+use std::mem::transmute;
 
 //-------------------------------------------------------------------------
 // Domain
@@ -9,7 +11,7 @@ use std::collections::{HashSet, HashMap};
 pub enum Domain {
     Unknown,
     Exists(bool),
-    Number(u64, u64),
+    Number(Bound<u64>, Bound<u64>),
     String,
     Record,
 }
@@ -21,7 +23,7 @@ impl Domain {
             (&Domain::Exists(true), &Domain::Exists(true)) => true,
             (&Domain::String, &Domain::String) => true,
             (&Domain::Number(a, b), &Domain::Number(x, y)) => {
-                a <= x && b >= y
+                a.lte(&x) && b.gte(&y)
             },
             _ => false,
         }
@@ -29,6 +31,116 @@ impl Domain {
 
     pub fn merge(&mut self, other: &Domain) {
 
+    }
+}
+
+fn to_float(num: u64) -> f64 {
+    unsafe { transmute::<u64, f64>(num) }
+}
+
+fn from_float(num: f64) -> u64 {
+    unsafe { transmute::<f64, u64>(num) }
+}
+
+trait BoundMath {
+    fn add(&self, b: f64) -> Bound<u64>;
+    fn subtract(&self, b: f64) -> Bound<u64>;
+    fn multiply(&self, b: f64) -> Bound<u64>;
+    fn divide(&self, b: f64) -> Bound<u64>;
+    fn unwrap(&self) -> u64;
+    fn lte(&self, other: &Self) -> bool;
+    fn gte(&self, other: &Self) -> bool;
+}
+
+impl BoundMath for Bound<u64> {
+    fn add(&self, b: f64) -> Bound<u64> {
+        match self {
+            &Included(v) => Included(from_float(to_float(v) + b)),
+            &Excluded(v) => Excluded(from_float(to_float(v) + b)),
+            &Unbounded => Unbounded,
+        }
+    }
+
+    fn subtract(&self, b: f64) -> Bound<u64> {
+        match self {
+            &Included(v) => Included(from_float(to_float(v) - b)),
+            &Excluded(v) => Excluded(from_float(to_float(v) - b)),
+            &Unbounded => Unbounded,
+        }
+    }
+
+    fn multiply(&self, b: f64) -> Bound<u64> {
+        match self {
+            &Included(v) => Included(from_float(to_float(v) * b)),
+            &Excluded(v) => Excluded(from_float(to_float(v) * b)),
+            &Unbounded => Unbounded,
+        }
+    }
+
+    fn divide(&self, b: f64) -> Bound<u64> {
+        match self {
+            &Included(v) => Included(from_float(to_float(v) / b)),
+            &Excluded(v) => Excluded(from_float(to_float(v) / b)),
+            &Unbounded => Unbounded,
+        }
+    }
+
+    fn unwrap(&self) -> u64 {
+        match self {
+            &Included(v) => v,
+            &Excluded(v) => v,
+            &Unbounded => panic!("Unwrapped an unbounded"),
+        }
+    }
+
+    fn lte(&self, other: &Self) -> bool {
+        match (self, other) {
+            (&Unbounded, _) => true,
+            (_, &Unbounded) => true,
+            (&Included(a), &Included(b)) => { to_float(a) <= to_float(b) }
+            _ => { to_float(self.unwrap()) < to_float(other.unwrap()) }
+        }
+    }
+
+    fn gte(&self, other: &Self) -> bool {
+        match (self, other) {
+            (&Unbounded, _) => true,
+            (_, &Unbounded) => true,
+            (&Included(a), &Included(b)) => { to_float(a) >= to_float(b) }
+            _ => { to_float(self.unwrap()) > to_float(other.unwrap()) }
+        }
+    }
+}
+
+pub fn add_domain(a: &Domain, b: f64) -> Domain {
+    if let &Domain::Number(start, stop) = a {
+        Domain::Number(start.add(b), stop.add(b))
+    } else {
+        panic!("Domain math on non-number");
+    }
+}
+
+pub fn subtract_domain(a: &Domain, b: f64) -> Domain {
+    if let &Domain::Number(start, stop) = a {
+        Domain::Number(start.subtract(b), stop.subtract(b))
+    } else {
+        panic!("Domain math on non-number");
+    }
+}
+
+pub fn multiply_domain(a: &Domain, b: f64) -> Domain {
+    if let &Domain::Number(start, stop) = a {
+        Domain::Number(start.multiply(b), stop.multiply(b))
+    } else {
+        panic!("Domain math on non-number");
+    }
+}
+
+pub fn divide_domain(a: &Domain, b: f64) -> Domain {
+    if let &Domain::Number(start, stop) = a {
+        Domain::Number(start.divide(b), stop.divide(b))
+    } else {
+        panic!("Domain math on non-number");
     }
 }
 
