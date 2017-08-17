@@ -27,6 +27,8 @@ extern crate iron;
 extern crate staticfile;
 extern crate mount;
 
+use std::env::current_exe;
+use std::fs::canonicalize;
 use std::path::Path;
 use iron::{Iron, Chain, status, Request, Response, IronResult, IronError, AfterMiddleware};
 use staticfile::Static;
@@ -59,7 +61,7 @@ pub struct ClientHandler {
 }
 
 impl ClientHandler {
-    pub fn new(out:Sender, router: Arc<Mutex<Router>>, files:&Vec<&str>, clean: bool, client_name:&str) -> ClientHandler {
+    pub fn new(out:Sender, router: Arc<Mutex<Router>>, library_path:Option<&str>, files:&Vec<&str>, clean: bool, client_name:&str) -> ClientHandler {
         let mut runner = ProgramRunner::new(client_name);
         let outgoing = runner.program.outgoing.clone();
         router.lock().unwrap().register(&client_name, outgoing.clone());
@@ -73,6 +75,9 @@ impl ClientHandler {
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().unwrap().deref())));
         }
 
+        if let Some(path) = library_path {
+            runner.load(path);
+        }
         for file in files {
             runner.load(file);
         }
@@ -153,7 +158,7 @@ fn http_server(address: String) -> std::thread::JoinHandle<()> {
     })
 }
 
-fn websocket_server(address: String, server_file:Option<&str>, files:&Vec<&str>, persist:Option<&str>, clean: bool) {
+fn websocket_server(address: String, library_path:Option<&str>, server_file:Option<&str>, files:&Vec<&str>, persist:Option<&str>, clean: bool) {
     println!("{} Websocket Server at {}... ", BrightGreen.paint("Starting:"), address);
 
     // create a server program
@@ -187,7 +192,7 @@ fn websocket_server(address: String, server_file:Option<&str>, files:&Vec<&str>,
     match listen(address, |out| {
         ix += 1;
         let client_name = format!("ws_client_{}", ix);
-        ClientHandler::new(out, router.clone(), files, clean, &client_name)
+        ClientHandler::new(out, router.clone(), library_path, files, clean, &client_name)
     }) {
         Ok(_) => {},
         Err(why) => println!("{} Failed to start Websocket Server: {}", BrightRed.paint("Error:"), why),
@@ -208,6 +213,12 @@ fn main() {
                                .long("persist")
                                .value_name("FILE")
                                .help("Sets the name for the database to load from and write to")
+                               .takes_value(true))
+                          .arg(Arg::with_name("library-path")
+                               .short("L")
+                               .long("library-path")
+                               .value_name("PATH")
+                               .help("Override default library path")
                                .takes_value(true))
                           .arg(Arg::with_name("EVE_FILES")
                                .help("The eve files and folders to load")
@@ -243,6 +254,33 @@ fn main() {
                           .get_matches();
 
     println!("");
+    let library_path = match matches.value_of("library-path") {
+        Some(s) => Some(s.to_owned()),
+        _ => {
+            let current = current_exe().and_then(|path| canonicalize(path));
+            let mut result = None;
+            match current {
+                Ok(mut cur) => {
+                    loop {
+                        let lib_path = cur.join("libraries");
+                        if lib_path.exists() {
+                            result = lib_path.to_str().map(|guy| guy.to_owned());
+                            break;
+                        }
+                        if !cur.pop() { break; }
+                    }
+                },
+                _ => {}
+
+            }
+            if result.is_none() {
+                println!("{} Unable to find library path and no library path specified. Running without libraries.", BrightYellow.paint("WARN:"));
+            }
+            result
+        }
+    };
+
+
     let wport = matches.value_of("port").unwrap_or("3012");
     let hport = matches.value_of("http-port").unwrap_or("8081");
     let address = matches.value_of("address").unwrap_or("127.0.0.1");
@@ -257,5 +295,5 @@ fn main() {
     let clean = matches.is_present("clean");
 
     http_server(http_address);
-    websocket_server(websocket_address, server_file, &files, persist, clean);
+    websocket_server(websocket_address, library_path.as_ref().map(String::as_str), server_file, &files, persist, clean);
 }
