@@ -42,7 +42,7 @@ fn main() {
     let persist = matches.value_of("persist");
     let clean = matches.is_present("clean");
 
-    let mut runner = ProgramRunner::new();
+    let mut runner = ProgramRunner::new("main");
     let outgoing = runner.program.outgoing.clone();
     if !clean {
         runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
