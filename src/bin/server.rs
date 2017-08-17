@@ -4,7 +4,7 @@ extern crate clap;
 use clap::{Arg, App};
 
 extern crate ws;
-use ws::{listen, Message, Sender, Handler, CloseCode};
+use ws::{listen, Message, Sender as WSSender, Handler, CloseCode};
 
 #[macro_use]
 extern crate serde_derive;
@@ -12,6 +12,8 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate serde;
 use serde_json::{Error};
+
+use std::sync::mpsc::Sender;
 
 extern crate eve;
 extern crate time;
@@ -21,7 +23,7 @@ use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
 use eve::watchers::editor::EditorWatcher;
-use eve::watchers::remote::{Router, RemoteWatcher};
+use eve::watchers::remote::{Router, RouterMessage, RemoteWatcher};
 use eve::watchers::websocket::WebsocketClientWatcher;
 
 extern crate iron;
@@ -54,14 +56,16 @@ pub enum ClientMessage {
 }
 
 pub struct ClientHandler {
-    out: Sender,
+    out: WSSender,
     running: RunLoop,
     client_name: String,
     router: Arc<Mutex<Router>>,
+    router_channel: Sender<RouterMessage>
 }
 
 impl ClientHandler {
-    pub fn new(out:Sender, router: Arc<Mutex<Router>>, eve_paths:&EvePaths, clean: bool, client_name:&str) -> ClientHandler {
+    pub fn new(out:WSSender, router: Arc<Mutex<Router>>, eve_paths:&EvePaths, clean: bool, client_name:&str) -> ClientHandler {
+        let router_channel = router.lock().unwrap().deref().get_channel();
         let mut runner = ProgramRunner::new(client_name);
         let outgoing = runner.program.outgoing.clone();
         router.lock().unwrap().register(&client_name, outgoing.clone());
@@ -87,7 +91,7 @@ impl ClientHandler {
 
         let running = runner.run();
 
-        ClientHandler {out, running, client_name: client_name.to_owned(), router }
+        ClientHandler {out, running, client_name: client_name.to_owned(), router, router_channel }
     }
 }
 
@@ -113,11 +117,7 @@ impl Handler for ClientHandler {
                         RawChange { e:e.into(), a:a.into(), v:v.into(), n:Internable::String("input".to_string()),count:-1 }
                     }));
 
-                    // @FIXME: This needs to be behind a channel too. :/
-                    self.router.lock().expect("ERROR: Unable to lock router. This is a known issue, this line needs to be put behind a channel.")
-                        .send_to(&client, RunLoopMessage::Transaction(raw_changes))
-                        .expect("ERROR: Unable to send Transaction to client for some reason.");
-                    // self.running.send(RunLoopMessage::Transaction(raw_changes));
+                    self.router_channel.send(RouterMessage::Local(client, raw_changes)).unwrap();
                 }
                 _ => { }
             }
