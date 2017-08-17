@@ -1,0 +1,77 @@
+Add clients.
+~~~ eve
+// search
+//   event = [#router/event/add-client name]
+// commit
+//   event := none
+//   [#client name]
+// end
+~~~
+
+Remove clients.
+~~~ eve
+// search
+//   event = [#router/event/remove-client name]
+//   client = [#client name]
+// commit
+//   client := none
+//   event := none
+// end
+~~~
+
+Store client tags.
+~~~ eve
+search
+  lookup-remote[for: "all-tags" attribute: "tagname" value: tagname]
+bind
+  [#db-explorer/client-tag value: tagname]
+end
+~~~
+
+Store client attributes.
+~~~ eve
+search
+  lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute]
+bind
+  [#db-explorer/client-attribute value: attribute]
+end
+~~~
+
+# DEBUG
+
+Show off tags.
+~~~ eve
+search
+  [#db-explorer/client-tag value: tagname]
+bind
+  [#html/div text: "#{{tagname}}"]
+end
+~~~
+
+~~~ eve
+search
+  [#db-explorer/client-tag value: tagname]
+watch console
+  ("warn" "#{{tagname}}")
+end
+~~~
+
+~~~ eve
+search
+  [#db-explorer/client-tag value: tagname]
+watch client/websocket
+  ("editor/blurgh" "#{{tagname}}")
+end
+~~~
+
+~~~ eve
+commit
+  [#html/div text: "SERVER"]
+end
+~~~
+
+~~~ eve
+watch console
+  ("error" "OHHHHH")
+end
+~~~

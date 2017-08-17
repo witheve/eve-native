@@ -1,0 +1,35 @@
+# DB Explorer Client
+
+Send tags in the system to the server.
+~~~ eve
+search
+  [#editor/program name]
+  [tag]
+bind
+  lookup-remote[to: name for: "all-tags" entity: "tag:db-explorer/all-tags|" attribute: "tagname" value: tag]
+end
+~~~
+
+Send attributes in the system to the server.
+~~~ eve
+search
+  [#editor/program name]
+  lookup[attribute]
+bind
+  lookup-remote[to: name for: "all-attributes" entity: "tag:db-explorer/all-attributes|" attribute: "attribute" value: attribute]
+end
+~~~
+
+~~~ eve
+commit
+  [#html/div text: "CLIENT"]
+end
+~~~
+
+~~~ eve
+search
+  [#editor/program name]
+bind
+  [#html/div text: "client's editor name: {{name}}"]
+end
+~~~

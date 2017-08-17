@@ -20,6 +20,7 @@ use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
+use eve::watchers::editor::EditorWatcher;
 use eve::watchers::remote::{Router, RemoteWatcher};
 use eve::watchers::websocket::WebsocketClientWatcher;
 
@@ -72,6 +73,9 @@ impl ClientHandler {
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().unwrap().deref())));
+
+            let editor_watcher = EditorWatcher::new(&mut runner, router.clone(), out.clone(), eve_paths.libraries_path.clone(), eve_paths.programs_path.clone());
+            runner.program.attach(Box::new(editor_watcher));
         }
 
         if let &Some(path) = &eve_paths.libraries_path {
