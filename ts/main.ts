@@ -4,6 +4,8 @@ import {Connection, Message} from "./connection";
 export interface DiffMessage extends Message { type: "diff"; adds?:RawTuple[]; removes?:RawTuple[]; }
 export interface LoadBundleMessage extends Message { type: "load-bundle"; bundle: string }
 
+interface Bundle { users: string[], css?: HTMLLinkElement, js?: HTMLScriptElement }
+
 const EMPTY:never[] = [];
 
 class RemoteProgram implements Program {
@@ -66,6 +68,8 @@ class RemoteProgram implements Program {
 
 class MultiplexedConnection extends Connection {
   programs:{[client:string]: RemoteProgram} = {};
+  bundles:{[name:string]: Bundle} = {};
+
   handlers = {
     "init": ({client}:Message) => {
       if(this.programs[client]) throw new Error(`Unable to initialize existing program: '${client}'.`);
@@ -78,16 +82,39 @@ class MultiplexedConnection extends Connection {
       let program = this.programs[diff.client];
       if(!program) throw new Error(`Unable to handle diff for unitialized program: '${diff.client}'.`);
       program.handleDiff(diff);
+    },
+    "load-bundle": ({bundle, client}:LoadBundleMessage) => {
+      this.loadBundle(bundle, client);
     }
   };
+
+  loadBundle(name:string, user:string) {
+    let bundle = this.bundles[name];
+    if(bundle) {
+      if(bundle.users.indexOf(user) === -1) {
+        bundle.users.push(user);
+      }
+    } else {
+      let css = document.createElement("link");
+      css.setAttribute("rel", "stylesheet");
+      css.setAttribute("type", "text/css");
+      css.setAttribute("href", `/dist/${name}.css`);
+      document.head.appendChild(css);
+
+      let js = document.createElement("script");
+      js.setAttribute("src", `/dist/${name}.js`);
+      document.head.appendChild(js);
+
+      bundle = {
+        users: [user],
+        css,
+        js
+      };
+      this.bundles[name] = bundle;
+    }
+  }
 }
 
 let connection = new MultiplexedConnection(new WebSocket(`ws://${location.hostname}:3012`));
-
-// let program = new RemoteProgram();
-// program.attach("html");
-// program.attach("canvas");
-// program.attach("console");
-
 
 console.log(connection);
