@@ -2295,6 +2295,7 @@ pub enum RunLoopMessage {
 }
 
 pub struct Program {
+    pub name: String,
     pub state: RuntimeState,
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher + Send>>,
@@ -2303,7 +2304,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new() -> Program {
+    pub fn new(name:&str) -> Program {
         let index = HashIndex::new();
         let distinct_index = DistinctIndex::new();
         let remote_index = RemoteIndex::new();
@@ -2321,7 +2322,7 @@ impl Program {
         let (outgoing, incoming) = mpsc::channel();
         let state = RuntimeState { debug:false, rounds, remote_index, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, remote_pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
-        Program { state, block_info, watchers, incoming, outgoing }
+        Program { name: name.to_owned(), state, block_info, watchers, incoming, outgoing }
     }
 
     pub fn clear(&mut self) {
@@ -2417,7 +2418,7 @@ impl Program {
 
     pub fn attach(&mut self, watcher:Box<Watcher + Send>) {
         let name = watcher.get_name();
-        println!("{} {}", BrightCyan.paint("Loaded Watcher:"), name);
+        println!("[{}] {} {}", &self.name, BrightCyan.paint("Loaded Watcher:"), name);
         self.watchers.insert(name, watcher);
     }
 
@@ -2880,14 +2881,15 @@ impl RunLoop {
 
 pub struct ProgramRunner {
     pub program: Program,
+    pub name: String,
     paths: Vec<String>,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
 }
 
 impl ProgramRunner {
-    pub fn new() -> ProgramRunner {
-        ProgramRunner {paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
+    pub fn new(name:&str) -> ProgramRunner {
+        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![] }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -2912,7 +2914,7 @@ impl ProgramRunner {
                 blocks.extend(parse_file(&mut program.state.interner, &path, true));
             }
             let mut end_ns = time::precise_time_ns();
-            println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+            println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
 
             start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
@@ -2921,10 +2923,10 @@ impl ProgramRunner {
             }
             txn.exec(&mut program, blocks, vec![]);
             end_ns = time::precise_time_ns();
-            println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+            println!("[{}] Load took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
 
             let mut iter_pool = EstimateIterPool::new();
-            println!("Starting run loop.");
+            println!("[{}] Starting run loop.", &program.name);
 
             'outer: loop {
                 match program.incoming.recv() {
@@ -2937,7 +2939,7 @@ impl ProgramRunner {
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
                     Ok(RunLoopMessage::RemoteTransaction(v)) => {
                         let start_ns = time::precise_time_ns();
@@ -2948,7 +2950,7 @@ impl ProgramRunner {
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
                     Ok(RunLoopMessage::Stop) => {
                         break 'outer;

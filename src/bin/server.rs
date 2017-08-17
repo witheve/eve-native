@@ -62,7 +62,7 @@ pub struct ClientHandler {
 
 impl ClientHandler {
     pub fn new(out:Sender, router: Arc<Mutex<Router>>, files:&Vec<&str>, clean: bool, client_name:&str) -> ClientHandler {
-        let mut runner = ProgramRunner::new();
+        let mut runner = ProgramRunner::new(client_name);
         let outgoing = runner.program.outgoing.clone();
         router.lock().unwrap().register(&client_name, outgoing.clone());
         if !clean {
@@ -192,7 +192,7 @@ fn websocket_server(address: String, server_file:Option<&str>, files:&Vec<&str>,
     println!("{} Websocket Server at {}... ", BrightGreen.paint("Starting:"), address);
 
     // create a server program
-    let mut runner = ProgramRunner::new();
+    let mut runner = ProgramRunner::new("server");
     let outgoing = runner.program.outgoing.clone();
     let router = Arc::new(Mutex::new(Router::new(outgoing.clone())));
     router.lock().unwrap().register("server", outgoing.clone());
