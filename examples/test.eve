@@ -1,14 +1,53 @@
+Get the auth
+
+disabled
 search
-  client_id = "3354b6a98e3c4fb3b804c5a9e064a3df"
-  response_type = "code"
-  redirect_uri = "http://google.com"
-  address = "https://accounts.spotify.com/authorize/?client_id={{client_id}}&response_type=code&redirect_uri=http%3A%2F%2Flocalhost:8080%2Fcallback&scope=user-read-private%20user-read-email&state=34fFs29kd09"
-  //address = "https://jsonplaceholder.typicode.com/comments"
-  //address = "http://echo.jsontest.com/key/shenberger/one/manifold"
+  [#html/event/click element: [#login]]
+  client-id = "3354b6a98e3c4fb3b804c5a9e064a3df"
+  response-type = "code"
+  redirect-uri = "http%3A%2F%2Flocalhost%3A8081%2F%23spotify-callback"
+  address = "https://accounts.spotify.com/authorize/?client_id={{client-id}}&response_type={{response-type}}&redirect_uri={{redirect-uri}}&scope=user-read-private%20user-read-email&state=34fFs29kd09"
 commit
-  //[#foo bar: 10]
   [#html/redirect #req url: address]
 end
+
+Display a button to login
+
+disabled
+search
+  not([#logged-in])
+bind
+  [#ui/button #login text: "Login to Spotify"]
+end
+
+When a code is received, the user is logged in
+
+disabled
+search
+  [#html/event/page-show url: [#html/url query: [key: "code" value index]]]
+commit
+  [#ui/text text: "Logged in"]
+  [#logged-in]
+end
+
+//search
+  //address = "https://accounts.spotify.com/api/token?grant_type={{grant-type}}&code={{code}}&redirec_uri={{redirect-uri}}"
+  //grant-type = []
+commit
+  //[#http/request #goog address: "http://echo.jsontest.com/key/shenberger/one/manifold" method: "GET"]
+  [#http/request address: "http://echo.jsontest.com/key/value" method: "GET" headers: [#http/header key: "foo" value: "bar"] [#http/header key: "baz" value: "bin"]]
+  [#http/request address: "http://test2.com/" method: "PUT" body: "Goodbye" headers: [#http/header key: "a" value: "b"] [#http/header key: "c" value: "d"] [#http/header key: "e" value: "f"]]
+  [#http/request address: "foo.com" headers: [#http/header key: "Authorization" value: "Basic 3354b6a98e3c4fb3b804c5a9e064a3df:b431c961f8d1457a91e0b90857bc8fa0"]]
+end
+
+search
+  [#http/request response: [#http/response status]]
+commit
+  [#ui/text text: status]
+end
+
+
+
 
 
 disabled
@@ -41,11 +80,3 @@ Cookie:remember=cmontella%40live.com; sp_dc=AQD2mtOZxGK5uVMFom_yG9Nx6CPebAlDZWqf
 Host:accounts.spotify.com
 Upgrade-Insecure-Requests:1
 User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36
-
-
-
-commit
-  //[#html/redirect url: "http://bing.com"]
-  [#console/log text: "This is a test"]
-  [#ui/text text: "This is also a test"]
-end

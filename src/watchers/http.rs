@@ -4,6 +4,7 @@ use std::sync::mpsc::{Sender};
 use watchers::json::{new_change};
 use super::Watcher;
 
+extern crate data_encoding;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_tls;
@@ -20,6 +21,8 @@ use std::io::{Write};
 extern crate iron;
 use self::iron::prelude::*;
 use self::iron::status;
+use self::data_encoding::base64;
+use std::collections::HashMap;
 
 pub struct HttpWatcher {
     name: String,
@@ -28,6 +31,7 @@ pub struct HttpWatcher {
 
 impl HttpWatcher {
     pub fn new(outgoing: Sender<RunLoopMessage>) -> HttpWatcher {
+        println!("{:?}",base64::encode(b"Hello world"));
         HttpWatcher { name: "http".to_string(), outgoing }
     }
 }
@@ -39,28 +43,63 @@ impl Watcher for HttpWatcher {
     fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
     }
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {       
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) { 
+        println!("DIFF");
+        let mut requests: HashMap<String,hyper::Request> = HashMap::new();
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
             let id = Internable::to_string(interner.get_value(add[1]));
-            let address = Internable::to_string(interner.get_value(add[2]));
-            let mut changes = vec![];
+            let address = Internable::to_string(interner.get_value(add[2]));   
             match &kind[..] {
                 "request" => {
-                    send_http_request(address, id, &mut changes);
+                    let body = Internable::to_string(interner.get_value(add[3]));
+                    let key = Internable::to_string(interner.get_value(add[4]));
+                    let value = Internable::to_string(interner.get_value(add[5])); 
+                    if !requests.contains_key(&id) {
+                        let url = address.parse::<hyper::Uri>().unwrap();
+                        let method = Internable::to_string(interner.get_value(add[3]));
+                        let rmethod: Method = match &method.to_lowercase()[..] {
+                            "get"     => Method::Get,
+                            "put"     => Method::Put,
+                            "post"    => Method::Post,
+                            "delete"  => Method::Delete,
+                            "head"    => Method::Head,
+                            "trace"   => Method::Trace,
+                            "connect" => Method::Connect,
+                            "patch"   => Method::Patch,
+                            _         => Method::Get
+                        };
+                        let mut req = hyper::Request::new(rmethod, url);
+                        requests.insert(id.clone(),req);
+                    }
+                    let req = requests.get_mut(&id).unwrap();
+                    if key != "" {
+                        req.headers_mut().set_raw(key, vec![value.into_bytes().to_vec()]);
+                    }
+                    if body != "" {
+                        req.set_body(body);
+                    }                    
                 },
                 "server" => {
-                    println!("Starting HTTP Server at {:?}",address);
+                    println!("Starting HTTP Server at {:?}", address);
                     http_server(address);
                     println!("HTTP Server started");
                 },
                 _ => {},
-            }           
-            match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
-                Err(_) => break,
-                _ => (),
-            }
+            }      
         }
+        // Send the HTTP request and package response in the changevec
+        let mut changes: Vec<RawChange> = vec![];
+        for (id, request) in requests.drain() {
+          send_http_request(&id,request,&mut changes);
+        }
+        println!("{:?}",changes);
+
+
+        match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
+            Err(_) => (),
+            _ => (),
+        };
     }
 }
 
@@ -74,15 +113,13 @@ fn http_server(address: String) -> thread::JoinHandle<()> {
     })
 }
 
-fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) {
+fn send_http_request(id: &String, request: hyper::Request, changes: &mut Vec<RawChange>) {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let client = Client::configure()
         .connector(HttpsConnector::new(4,&handle).unwrap())
         .build(&handle);
-    let url = address.parse::<hyper::Uri>().unwrap();
-    let req = hyper::Request::new(Method::Get, url);
-    let work = client.request(req).and_then(|res| {
+    let work = client.request(request).and_then(|res| {
         let status = res.status().as_u16();
         let response_id = format!("http/response|{:?}",id);
         changes.push(new_change(&response_id, "tag", Internable::from_str("http/response"), "http/request"));
@@ -93,12 +130,12 @@ fn send_http_request(address: String, id: String, changes: &mut Vec<RawChange>) 
             let response_id = format!("http/response|{:?}",id);
             let mut vector: Vec<u8> = Vec::new();
             vector.write_all(&chunk).unwrap();
+            // Something is going wrong here
             let body_string = String::from_utf8(vector).unwrap();
             changes.push(new_change(&response_id, "body", Internable::String(body_string), "http/request"));
             Ok(())
         })
     });
-
     match core.run(work) {
         Ok(_) => (),
         Err(e) => {
