@@ -91,7 +91,7 @@ impl Watcher for HttpWatcher {
         // Send the HTTP request and package response in the changevec
         let mut changes: Vec<RawChange> = vec![];
         for (id, request) in requests.drain() {
-          send_http_request(&id,request,&mut changes);
+          send_http_request(&id,request,&self.outgoing);
         }
         println!("{:?}",changes);
 
@@ -113,40 +113,43 @@ fn http_server(address: String) -> thread::JoinHandle<()> {
     })
 }
 
-fn send_http_request(id: &String, request: hyper::Request, changes: &mut Vec<RawChange>) {
+fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<RunLoopMessage>) {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let client = Client::configure()
         .connector(HttpsConnector::new(4,&handle).unwrap())
         .build(&handle);
     let work = client.request(request).and_then(|res| {
+        let mut response_changes: Vec<RawChange> = vec![];
         let status = res.status().as_u16();
         let response_id = format!("http/response|{:?}",id);
-        changes.push(new_change(&response_id, "tag", Internable::from_str("http/response"), "http/request"));
-        changes.push(new_change(&response_id, "status", Internable::String(status.to_string()), "http/request"));
-        changes.push(new_change(&response_id, "request", Internable::String(id.clone()), "http/request"));
+        response_changes.push(new_change(&response_id, "tag", Internable::from_str("http/response"), "http/request"));
+        response_changes.push(new_change(&response_id, "status", Internable::String(status.to_string()), "http/request"));
+        response_changes.push(new_change(&response_id, "request", Internable::String(id.clone()), "http/request"));
         println!("Response: {}", res.status());
+        outgoing.send(RunLoopMessage::Transaction(response_changes)).unwrap();
         res.body().for_each(|chunk| {
             let response_id = format!("http/response|{:?}",id);
             let mut vector: Vec<u8> = Vec::new();
             vector.write_all(&chunk).unwrap();
             // Something is going wrong here
             let body_string = String::from_utf8(vector).unwrap();
-            changes.push(new_change(&response_id, "body", Internable::String(body_string), "http/request"));
+            println!("{:?}",body_string);
+            outgoing.send(RunLoopMessage::Transaction(vec![new_change(&response_id, "body", Internable::String(body_string), "http/request")])).unwrap();
             Ok(())
         })
+        
     });
     match core.run(work) {
         Ok(_) => (),
         Err(e) => {
             // Form an HTTP Error
-            /*
-            let error_id = format!("http/request/error|{:?}|{:?}",&id,address);
-            let mut changes = vec![];
-            changes.push(new_change(&error_id, "tag", Internable::from_str("http/request/error"), "http/request"));
-            changes.push(new_change(&error_id, "request", Internable::String(id.clone()), "http/request"));
-            changes.push(new_change(&error_id, "error", Internable::String(format!("{:?}",e)), "http/request"));
-            */
+            let error_id = format!("http/request/error|{:?}",&id);
+            let mut error_changes: Vec<RawChange> = vec![];
+            error_changes.push(new_change(&error_id, "tag", Internable::from_str("http/request/error"), "http/request"));
+            error_changes.push(new_change(&error_id, "request", Internable::String(id.clone()), "http/request"));
+            error_changes.push(new_change(&error_id, "error", Internable::String(format!("{:?}",e)), "http/request"));
+            outgoing.send(RunLoopMessage::Transaction(error_changes)).unwrap();
             println!("Not OK {:?}",e)
         },
     }

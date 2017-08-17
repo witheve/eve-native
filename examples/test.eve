@@ -41,9 +41,16 @@ commit
 end
 
 search
-  [#http/request response: [#http/response status]]
+  [#http/request response: [#http/response body]]
 commit
-  [#ui/text text: status]
+  [#html/div text: body]
+end
+
+
+search
+  [#http/request/error error]
+commit
+  [#html/div text: error]
 end
 
 
