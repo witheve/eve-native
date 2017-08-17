@@ -34,13 +34,13 @@ impl Domain {
             (_, &Domain::Unknown) => true,
             (&Domain::String, &Domain::String) => true,
             (&Domain::Number(a, b), &Domain::Number(x, y)) => {
-                a.lte(&x) && b.gte(&y)
+                a.lte(&y) && x.lte(&b)
             },
             _ => false,
         }
     }
 
-    pub fn merge(&mut self, other: &Domain) {
+    pub fn merge(&mut self, other: &Domain) -> bool {
         let neue = match (self.clone(), other) {
             (Domain::Unknown, _) => other.clone(),
             (_, &Domain::Unknown) => self.clone(),
@@ -57,7 +57,9 @@ impl Domain {
                 }
             },
         };
+        let changed = self != &neue;
         *self = neue;
+        changed
     }
 }
 
@@ -110,8 +112,20 @@ impl BoundMath for Bound {
     fn multiply(&self, b: &Bound) -> Bound {
         match (self, b) {
             (&NegativeInfinity, &NegativeInfinity) => Infinity,
-            (&NegativeInfinity, _) => NegativeInfinity,
-            (_, &NegativeInfinity) => NegativeInfinity,
+            (&NegativeInfinity, _) => {
+                if to_float(b.unwrap()) < 0.0 {
+                    Infinity
+                } else {
+                    NegativeInfinity
+                }
+            },
+            (_, &NegativeInfinity) => {
+                if to_float(self.unwrap()) < 0.0 {
+                    Infinity
+                } else {
+                    NegativeInfinity
+                }
+            },
             (&Infinity, &Infinity) => Infinity,
             (&Infinity, _) => {
                 if to_float(b.unwrap()) < 0.0 {
@@ -283,12 +297,10 @@ pub fn subtract_domain(a: &Domain, b: &Domain) -> Domain {
 }
 
 pub fn multiply_domain(a: &Domain, b: &Domain) -> Domain {
-    println!("MULTIPLYING! {:?} {:?}", a, b);
     match (a, b) {
         (&Domain::Unknown, _) => b.clone(),
         (_, &Domain::Unknown) => a.clone(),
         (&Domain::Number(a, b), &Domain::Number(x, y)) => {
-            println!("({:?}, {:?}) * ({:?}, {:?})", a.print(), b.print(), x.print(), y.print());
             let left = a.multiply(&x);
             let right = b.multiply(&y);
             if left.lte(&right) {
@@ -429,147 +441,150 @@ impl BlockInfo {
         //              set changed
         // go through the scans
         //      set the domain for (tag, attribute) pairs for inputs and outputs
-        for scan in self.constraints.iter() {
-            match scan {
-                &Constraint::Scan {ref e, ref a, ref v, ..} |
-                &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
-                    merge_field_domain(e, &mut field_domains, Domain::Record);
-                    merge_field_domain(a, &mut field_domains, Domain::String);
-                    merge_field_domain(v, &mut field_domains, Domain::Unknown);
-                },
-                &Constraint::Function { ref params, ref output, ref op, .. } => {
-                    match op.as_str() {
-                        "+" | "-" | "*" | "/" => {
-                            println!("In math ops!");
-                            let left = &params[0];
-                            let right = &params[1];
-                            merge_field_domain(left, &mut field_domains, Domain::Number(NegativeInfinity, Infinity));
-                            merge_field_domain(right, &mut field_domains, Domain::Number(NegativeInfinity, Infinity));
-                            let left_domain = field_to_domain(interner, left, &field_domains);
-                            let right_domain = field_to_domain(interner, right, &field_domains);
-                            let output_domain = match op.as_str() {
-                                "+" => add_domain(&left_domain, &right_domain),
-                                "-" => subtract_domain(&left_domain, &right_domain),
-                                "*" => multiply_domain(&left_domain, &right_domain),
-                                "/" => divide_domain(&left_domain, &right_domain),
-                                _ => unreachable!()
-                            };
-                            merge_field_domain(output, &mut field_domains, output_domain);
-                        },
-                        _ => { }
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for scan in self.constraints.iter() {
+                match scan {
+                    &Constraint::Scan {ref e, ref a, ref v, ..} |
+                    &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
+                        merge_field_domain(e, &mut field_domains, Domain::Record, &mut changed);
+                        merge_field_domain(a, &mut field_domains, Domain::String, &mut changed);
+                        merge_field_domain(v, &mut field_domains, Domain::Unknown, &mut changed);
+                    },
+                    &Constraint::Function { ref params, ref output, ref op, .. } => {
+                        match op.as_str() {
+                            "+" | "-" | "*" | "/" => {
+                                let left = &params[0];
+                                let right = &params[1];
+                                merge_field_domain(left, &mut field_domains, Domain::Number(NegativeInfinity, Infinity), &mut changed);
+                                merge_field_domain(right, &mut field_domains, Domain::Number(NegativeInfinity, Infinity), &mut changed);
+                                let left_domain = field_to_domain(interner, left, &field_domains);
+                                let right_domain = field_to_domain(interner, right, &field_domains);
+                                let output_domain = match op.as_str() {
+                                    "+" => add_domain(&left_domain, &right_domain),
+                                    "-" => subtract_domain(&left_domain, &right_domain),
+                                    "*" => multiply_domain(&left_domain, &right_domain),
+                                    "/" => divide_domain(&left_domain, &right_domain),
+                                    _ => unreachable!()
+                                };
+                                merge_field_domain(output, &mut field_domains, output_domain, &mut changed);
+                            },
+                            _ => { }
+                        }
                     }
-                }
-                &Constraint::Filter { ref left, ref right, ref op, .. } => {
-                    match op.as_str() {
-                        "=" => {
-                            let to_merge = field_to_domain(interner, right, &field_domains);
-                            merge_field_domain(left, &mut field_domains, to_merge);
-                        }
-                        ">" => {
-                            match (left.is_register(), right.is_register()) {
-                                (true, false) => {
-                                    let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Infinity),
-                                        a => a,
-                                    };
-                                    merge_field_domain(left, &mut field_domains, to_merge);
-                                }
-                                (false, true) => {
-                                    let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Excluded(start.unwrap())),
-                                        a => a,
-                                    };
-                                    merge_field_domain(right, &mut field_domains, to_merge);
-                                }
-                                (true, true) => {
-                                    // @TODO
-                                    unimplemented!()
-                                }
-                                (false, false) => {
-                                    // huh?
+                    &Constraint::Filter { ref left, ref right, ref op, .. } => {
+                        match op.as_str() {
+                            "=" => {
+                                let to_merge = field_to_domain(interner, right, &field_domains);
+                                merge_field_domain(left, &mut field_domains, to_merge, &mut changed);
+                            }
+                            ">" => {
+                                match (left.is_register(), right.is_register()) {
+                                    (true, false) => {
+                                        let to_merge = match field_to_domain(interner, right, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Infinity),
+                                            a => a,
+                                        };
+                                        merge_field_domain(left, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (false, true) => {
+                                        let to_merge = match field_to_domain(interner, left, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Excluded(start.unwrap())),
+                                            a => a,
+                                        };
+                                        merge_field_domain(right, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (true, true) => {
+                                        // @TODO
+                                        unimplemented!()
+                                    }
+                                    (false, false) => {
+                                        // huh?
+                                    }
                                 }
                             }
-                        }
-                        "<" => {
-                            match (left.is_register(), right.is_register()) {
-                                (true, false) => {
-                                    let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Excluded(start.unwrap())),
-                                        a => a,
-                                    };
-                                    merge_field_domain(left, &mut field_domains, to_merge);
-                                }
-                                (false, true) => {
-                                    let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Infinity),
-                                        a => a,
-                                    };
-                                    merge_field_domain(right, &mut field_domains, to_merge);
-                                }
-                                (true, true) => {
-                                    // @TODO
-                                    unimplemented!()
-                                }
-                                (false, false) => {
-                                    // huh?
-                                }
-                            }
-                        }
-                        ">=" => {
-                            match (left.is_register(), right.is_register()) {
-                                (true, false) => {
-                                    let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Infinity),
-                                        a => a,
-                                    };
-                                    merge_field_domain(left, &mut field_domains, to_merge);
-                                }
-                                (false, true) => {
-                                    let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Included(start.unwrap())),
-                                        a => a,
-                                    };
-                                    merge_field_domain(right, &mut field_domains, to_merge);
-                                }
-                                (true, true) => {
-                                    // @TODO
-                                    unimplemented!()
-                                }
-                                (false, false) => {
-                                    // huh?
+                            "<" => {
+                                match (left.is_register(), right.is_register()) {
+                                    (true, false) => {
+                                        let to_merge = match field_to_domain(interner, right, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Excluded(start.unwrap())),
+                                            a => a,
+                                        };
+                                        merge_field_domain(left, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (false, true) => {
+                                        let to_merge = match field_to_domain(interner, left, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Infinity),
+                                            a => a,
+                                        };
+                                        merge_field_domain(right, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (true, true) => {
+                                        // @TODO
+                                        unimplemented!()
+                                    }
+                                    (false, false) => {
+                                        // huh?
+                                    }
                                 }
                             }
-                        }
-                        "<=" => {
-                            match (left.is_register(), right.is_register()) {
-                                (true, false) => {
-                                    let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Included(start.unwrap())),
-                                        a => a,
-                                    };
-                                    merge_field_domain(left, &mut field_domains, to_merge);
-                                }
-                                (false, true) => {
-                                    let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Infinity),
-                                        a => a,
-                                    };
-                                    merge_field_domain(right, &mut field_domains, to_merge);
-                                }
-                                (true, true) => {
-                                    // @TODO
-                                    unimplemented!()
-                                }
-                                (false, false) => {
-                                    // huh?
+                            ">=" => {
+                                match (left.is_register(), right.is_register()) {
+                                    (true, false) => {
+                                        let to_merge = match field_to_domain(interner, right, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Infinity),
+                                            a => a,
+                                        };
+                                        merge_field_domain(left, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (false, true) => {
+                                        let to_merge = match field_to_domain(interner, left, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Included(start.unwrap())),
+                                            a => a,
+                                        };
+                                        merge_field_domain(right, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (true, true) => {
+                                        // @TODO
+                                        unimplemented!()
+                                    }
+                                    (false, false) => {
+                                        // huh?
+                                    }
                                 }
                             }
+                            "<=" => {
+                                match (left.is_register(), right.is_register()) {
+                                    (true, false) => {
+                                        let to_merge = match field_to_domain(interner, right, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Included(start.unwrap())),
+                                            a => a,
+                                        };
+                                        merge_field_domain(left, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (false, true) => {
+                                        let to_merge = match field_to_domain(interner, left, &field_domains) {
+                                            Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Infinity),
+                                            a => a,
+                                        };
+                                        merge_field_domain(right, &mut field_domains, to_merge, &mut changed);
+                                    }
+                                    (true, true) => {
+                                        // @TODO
+                                        unimplemented!()
+                                    }
+                                    (false, false) => {
+                                        // huh?
+                                    }
+                                }
 
+                            }
+                            _ => { }
                         }
-                        _ => { }
                     }
+                    _ => (),
                 }
-                _ => (),
             }
         }
         field_domains
@@ -668,10 +683,11 @@ pub fn field_to_domain(interner:&Interner, field:&Field, field_domains:&HashMap<
     }
 }
 
-pub fn merge_field_domain(field:&Field, field_domains:&mut HashMap<Field, Domain>, to_merge:Domain) {
+pub fn merge_field_domain(field:&Field, field_domains:&mut HashMap<Field, Domain>, to_merge:Domain, changed:&mut bool) {
     if field.is_register() {
         let domain = field_domains.entry(*field).or_insert_with(|| Domain::Unknown);
-        domain.merge(&to_merge);
+        let diff = domain.merge(&to_merge);
+        *changed = *changed || diff;
     }
 }
 
@@ -818,7 +834,8 @@ impl Analysis {
                                 Some(output_domains) => {
                                     for output_domain in output_domains {
                                         println!("      intersects?: {:?}", output_domain);
-                                        if output_domain.intersects(&domain) {
+                                        if domain.intersects(&output_domain) {
+                                            println!("        accepted!");
                                             keep.insert(next);
                                             continue 'outer;
                                         }
