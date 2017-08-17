@@ -50,7 +50,6 @@ pub enum ClientMessage {
     Block { id:String, code:String },
     RemoveBlock { id:String },
     Transaction { adds: Vec<(JSONInternable, JSONInternable, JSONInternable)>, removes: Vec<(JSONInternable, JSONInternable, JSONInternable)> },
-    Yo { message:String },
 }
 
 pub struct ClientHandler {
@@ -113,7 +112,6 @@ impl Handler for ClientHandler {
                 }
                 _ => { }
             }
-            // self.out.send(Message::text(serde_json::to_string(&ClientMessage::Yo {message: format!("{} - yo", s)}).unwrap()))
             Ok(())
         } else {
             Ok(())
