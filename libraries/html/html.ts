@@ -19,10 +19,6 @@ export interface StyleElement extends HTMLStyleElement {__style: RawValue}
 ////////////////////////////////////////////////////////////////////////////////
 // Helpers
 ////////////////////////////////////////////////////////////////////////////////
-function isFocusable(x:any) {
-  return x instanceof HTMLInputElement ||
-    x instanceof HTMLTextAreaElement;
-}
 
 let naturalComparator = new Intl.Collator("en", {numeric: true}).compare;
 
@@ -79,6 +75,8 @@ export class HTML extends Library {
   _syntheticStyles:RawMap<StyleElement> = {};
   /** Dummy used for converting style properties to CSS strings. */
   _dummy:HTMLElement;
+  /** Map of currently checked radio buttons (used to uncheck them when their siblings are checked). */
+  _checkedRadios:{[name:string]: RawValue, [name:number]: RawValue} = {};
 
   setup() {
     if(typeof document === "undefined") {
@@ -103,6 +101,7 @@ export class HTML extends Library {
     document.body.addEventListener("mouseleave", this._hoverEventHandler("hover-out"), true);
 
     // Form events
+    window.addEventListener("change", this._changeEventHandler("change"));
     window.addEventListener("input", this._inputEventHandler("change"));
     window.addEventListener("focus", this._focusEventHandler("focus"), true);
     window.addEventListener("blur", this._focusEventHandler("blur"), true);
@@ -245,6 +244,36 @@ export class HTML extends Library {
     styleElem.textContent = `.${klass} {${this.toCSS(style)}}`;
   }
 
+  protected focusElement(id:RawValue) {
+    let instances = this.getInstances(id);
+    if(!instances || !instances.length) throw new Error(`Unable to focus nonexistent element: '${id}'.`);
+    if(instances.length > 1) throw new Error(`Cannot assign focus to element with multiple instances: '${id}'.`);
+    if(instances[0].focus) instances[0].focus();
+    else console.warn(`Unable to focus element: '${id}' (element not focusable).`);
+    let eventId = createId();
+    this.program.inputEAVs([
+      [eventId, "tag", "html/event"],
+      [eventId, "tag", "html/event/trigger"],
+      [eventId, "trigger", "html/trigger/focus"],
+      [eventId, "element", id]
+    ]);
+  }
+
+  protected blurElement(id:RawValue) {
+    let instances = this.getInstances(id);
+    for(let instance of instances || EMPTY) {
+      if(instance.blur) instance.blur();
+      else console.warn(`Unable to blur element: '${id}' (element not focusable).`);
+    }
+    let eventId = createId();
+    this.program.inputEAVs([
+      [eventId, "tag", "html/event"],
+      [eventId, "tag", "html/event/trigger"],
+      [eventId, "trigger", "html/trigger/blur"],
+      [eventId, "element", id]
+    ]);
+  }
+
 
   //////////////////////////////////////////////////////////////////////
   // Handlers
@@ -261,6 +290,7 @@ export class HTML extends Library {
     }),
     "export roots": handleTuples(({adds}) => {
       for(let [instanceId] of adds || EMPTY) {
+        if(!this._instances[instanceId]) throw new Error(`Instance '${instanceId}' cannot be promoted to root: no longer exists.`);
         this.insertRoot(this._instances[instanceId]);
       }
     }),
@@ -324,12 +354,10 @@ export class HTML extends Library {
         else instance.setAttribute(""+a, ""+v);
       }
     }),
-    "export triggers": handleTuples(({adds, removes}) => {
-      for(let [instanceId, trigger] of adds || EMPTY) {
-        let instance = this._instances[instanceId];
-        if(!instance) throw new Error(`Unable to trigger '${trigger}' on nonexistent instance '${instanceId}'.`);
-        else if(trigger === "html/trigger/focus" && isFocusable(instance)) setImmediate(() => instance.focus());
-        else if(trigger === "html/trigger/blur" && isFocusable(instance)) setImmediate(() => instance.blur());
+    "export triggers": handleTuples(({adds}) => {
+      for(let [elemId, trigger] of adds || EMPTY) {
+        if(trigger === "html/trigger/focus") setImmediate(() => this.focusElement(elemId));
+        if(trigger === "html/trigger/blur") setImmediate(() => this.blurElement(elemId));
       }
     }),
     "export listeners": handleTuples(({adds, removes}) => {
@@ -434,6 +462,41 @@ export class HTML extends Library {
           [eventId, "value", target.value]
         ];
         if(eavs.length) this._sendEvent(eavs);
+      }
+    }
+  }
+
+  _changeEventHandler(tagname:string) {
+    return (event:Event) => {
+      let target = event.target as (Instance & HTMLInputElement);
+      if(!(target instanceof HTMLInputElement)) return;
+      if(target.type == "checkbox" || target.type == "radio") {
+        let elementId = target.__element;
+        if(elementId) {
+          let eventId = createId();
+          let eavs:RawEAV[] = [
+            [eventId, "tag", "html/event"],
+            [eventId, "tag", `html/event/${tagname}`],
+            [eventId, "element", elementId],
+            [eventId, "checked", ""+target.checked]
+          ];
+          let name = target.name;
+          if(target.type == "radio" && name !== undefined) {
+            let prev = this._checkedRadios[name];
+            if(prev && prev !== target.__element) {
+              // @NOTE: This is two events in one TX, a bit dangerous.
+              let event2Id = createId();
+              eavs.push(
+                [event2Id, "tag", "html/event"],
+                [event2Id, "tag", `html/event/${tagname}`],
+                [event2Id, "element", prev],
+                [event2Id, "checked", "false"]
+              );
+            }
+            this._checkedRadios[name] = elementId;
+          }
+          if(eavs.length) this._sendEvent(eavs);
+        }
       }
     }
   }
