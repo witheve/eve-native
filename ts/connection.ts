@@ -1,10 +1,17 @@
 import {RawValue, RawTuple, Diff} from "./library";
 
-type Tuple = [string]|RawValue[];
+export type Tuple = [string]|RawValue[];
 
-interface Message {
+export interface Message {
+  type:string;
+  client:string;
+}
+
+export interface DiffMessage extends Message {
+  type: "diff";
   adds?:Tuple[];
   removes?:Tuple[];
+
 }
 
 const EMPTY:any[] = [];
@@ -13,7 +20,7 @@ export class Connection {
   _queue:string[] = [];
   connected = false;
 
-  handlers:{[type:string]: (data:any) => void} = {};
+  handlers:{[type:string]: (data:Message) => void} = {};
 
   constructor(public ws:WebSocket) {
     ws.addEventListener("open", () => this._opened());
@@ -21,12 +28,12 @@ export class Connection {
     ws.addEventListener("message", (event) => this._messaged(event.data));
 
   }
-  send(type:string, data:any) {
+  send(type:string, data:any, client?: string) {
     // console.groupCollapsed("Sent");
-    // console.log(type, data);
+    // console.log(type, data, client);
     // console.groupEnd();
     // This... feels weird. Do we actually expect to pack multiple message types in very frequently?
-    let payload = JSON.stringify({[type]: data});
+    let payload = JSON.stringify({[type]: data, client});
     this._queue.push(payload);
     this._trySend();
   }
@@ -52,7 +59,6 @@ export class Connection {
   }
 
   protected _messaged = (payload:string) => {
-    // console.groupCollapsed("Received");
     let parsed:Message;
     try {
       parsed = JSON.parse(payload);
@@ -60,39 +66,11 @@ export class Connection {
       console.error("Received malformed WS message: '" + payload + "'.");
       return;
     }
-    let types:{[type:string]: Diff<RawTuple[]>} = {};
-    for(let add of parsed.adds || EMPTY) {
-      let type = add[0];
-      let rest = add.slice(1);
-      if(!types[type]) types[type] = {adds: [rest], removes: []};
-      else types[type].adds!.push(rest);
+
+    if(this.handlers[parsed.type]) {
+      // console.group(`Received ${parsed.type} from ${parsed.client}`);
+      this.handlers[parsed.type](parsed);
+      // console.groupEnd();
     }
-    for(let remove of parsed.removes || EMPTY) {
-      let type = remove[0];
-      let rest = remove.slice(1);
-      if(!types[type]) types[type] = {adds: [], removes: [rest]};
-      else types[type].removes!.push(rest);
-    }
-    for(let type in this.handlers) {
-      if(types[type]) {
-        let diff = types[type];
-        // console.log(`Received '${type}' with data:`, diff);
-        try {
-          this.handlers[type](diff);
-          types[type] = undefined as any;
-        } catch(err) {
-          this.send("notice", {type: "error", name: err.name, message: err.message});
-          console.error(err);
-          return;
-        }
-      }
-    }
-    for(let type in types) {
-      let diff = types[type];
-      if(diff) {
-        console.warn(`Received unhandled message '${type}' with data:`, diff);
-      }
-    }
-    // console.groupEnd();
   }
 }
