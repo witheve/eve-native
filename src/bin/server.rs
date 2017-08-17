@@ -17,7 +17,7 @@ use std::sync::mpsc::Sender;
 
 extern crate eve;
 extern crate time;
-use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Persister, JSONInternable};
+use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Persister, JSONInternable};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
