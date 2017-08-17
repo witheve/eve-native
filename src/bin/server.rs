@@ -9,21 +9,19 @@ use ws::{listen, Message, Sender, Handler, CloseCode};
 #[macro_use]
 extern crate serde_derive;
 
-#[macro_use]
 extern crate serde_json;
 extern crate serde;
 use serde_json::{Error};
 
 extern crate eve;
 extern crate time;
-use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
-use eve::indexes::{WatchDiff};
-use eve::watchers::{Watcher};
+use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Persister, JSONInternable};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
 use eve::watchers::remote::{Router, RemoteWatcher};
+use eve::watchers::websocket::WebsocketClientWatcher;
 
 extern crate iron;
 extern crate staticfile;
@@ -68,8 +66,8 @@ impl ClientHandler {
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
-            runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
+            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone(), client_name)));
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().unwrap().deref())));
@@ -121,40 +119,6 @@ impl Handler for ClientHandler {
         println!("WebSocket closing for ({:?}) {}", code, reason);
         self.router.lock().unwrap().unregister(&self.client_name);
         self.running.close();
-    }
-}
-
-//-------------------------------------------------------------------------
-// Websocket client watcher
-//-------------------------------------------------------------------------
-
-pub struct WebsocketClientWatcher {
-    name: String,
-    outgoing: Sender,
-}
-
-impl WebsocketClientWatcher {
-    pub fn new(outgoing: Sender) -> WebsocketClientWatcher {
-        WebsocketClientWatcher { name: "client/websocket".to_string(), outgoing }
-    }
-}
-
-impl Watcher for WebsocketClientWatcher {
-    fn get_name(& self) -> String {
-        self.name.clone()
-    }
-    fn set_name(&mut self, name: &str) {
-        self.name = name.to_string();
-    }
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        let adds:Vec<Vec<JSONInternable>> = diff.adds.iter().map(|row| {
-            row.iter().map(|v| interner.get_value(*v).into()).collect()
-        }).collect();
-        let removes:Vec<Vec<JSONInternable>> = diff.removes.iter().map(|row| {
-            row.iter().map(|v| interner.get_value(*v).into()).collect()
-        }).collect();
-        let text = serde_json::to_string(&json!({"adds": adds, "removes": removes})).unwrap();
-        self.outgoing.send(Message::Text(text)).unwrap();
     }
 }
 

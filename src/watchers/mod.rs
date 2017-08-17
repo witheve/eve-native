@@ -13,3 +13,4 @@ pub mod system;
 pub mod compiler;
 pub mod compiler2;
 pub mod remote;
+pub mod websocket;
