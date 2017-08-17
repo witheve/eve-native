@@ -6,6 +6,7 @@ const EMPTY:never[] = [];
 
 export interface Instance extends HTMLElement {
   __element: RawValue,
+  __source: HTML,
   __styles?: RawValue[],
   __sort?:RawValue,
   __autoSort?:RawValue,
@@ -53,7 +54,7 @@ export class HTML extends Library {
   isInstance(elem?:any): elem is Instance {
     if(!elem || !(elem instanceof Element)) return false;
     let instance = elem as Instance;
-    return instance && !!instance["__element"];
+    return instance && !!instance["__element"] && instance.__source == this;
   }
 
   //////////////////////////////////////////////////////////////////////
@@ -112,6 +113,7 @@ export class HTML extends Library {
   protected decorate(elem:Element, elemId:RawValue): Instance {
     let e = elem as Instance;
     e.__element = elemId;
+    e.__source = this;
     return e;
   }
   protected decorateStyle(styleElem:HTMLStyleElement, styleId:RawValue): StyleElement {
