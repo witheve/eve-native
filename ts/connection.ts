@@ -33,7 +33,8 @@ export class Connection {
     // console.log(type, data, client);
     // console.groupEnd();
     // This... feels weird. Do we actually expect to pack multiple message types in very frequently?
-    let payload = JSON.stringify({[type]: data, client});
+    data.client = client;
+    let payload = JSON.stringify({[type]: data});
     this._queue.push(payload);
     this._trySend();
   }
