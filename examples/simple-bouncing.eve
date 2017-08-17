@@ -24,12 +24,12 @@
 /*   boid.vx := boid.vx * -0.9 */
 /* end */
 
-/* search */
-/*   boid = [#boid y > 490] */
-/*   boid.vy > 0 */
-/* commit */
-/*   boid.vy := boid.vy * -0.9 */
-/* end */
+search
+  boid = [#boid y > 490]
+  boid.vy > 0
+commit
+  boid.vy := boid.vy * -0.9
+end
 
 /* search */
 /*   boid = [#boid y < 10] */

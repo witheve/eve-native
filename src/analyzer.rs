@@ -1,16 +1,25 @@
 use ops::{Field, Interned, Constraint, Block, TAG_INTERNED_ID, Interner, Internable};
-use std::collections::{HashSet, HashMap, Bound};
-use std::collections::Bound::{Unbounded, Excluded, Included};
+use std::collections::{HashSet, HashMap};
 use std::mem::transmute;
+use self::Bound::{Excluded, Included, Infinity, NegativeInfinity};
 
 //-------------------------------------------------------------------------
 // Domain
 //-------------------------------------------------------------------------
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum Bound {
+    Excluded(u64),
+    Included(u64),
+    Infinity,
+    NegativeInfinity,
+}
+
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Domain {
     Unknown,
-    Number(Bound<u64>, Bound<u64>),
+    Number(Bound, Bound),
     String,
     Record,
     MultiType,
@@ -61,47 +70,92 @@ fn from_float(num: f64) -> u64 {
 }
 
 trait BoundMath {
-    fn add(&self, b: f64) -> Self;
-    fn subtract(&self, b: f64) -> Self;
-    fn multiply(&self, b: f64) -> Self;
-    fn divide(&self, b: f64) -> Self;
+    fn add(&self, b: &Self) -> Self;
+    fn subtract(&self, b: &Self) -> Self;
+    fn multiply(&self, b: &Self) -> Self;
+    fn divide(&self, b: &Self) -> Self;
     fn unwrap(&self) -> u64;
+    fn print(&self) -> String;
     fn shrink_left(&self, other: &Self) -> Self;
     fn shrink_right(&self, other: &Self) -> Self;
     fn lte(&self, other: &Self) -> bool;
     fn gte(&self, other: &Self) -> bool;
 }
 
-impl BoundMath for Bound<u64> {
-    fn add(&self, b: f64) -> Bound<u64> {
-        match self {
-            &Included(v) => Included(from_float(to_float(v) + b)),
-            &Excluded(v) => Excluded(from_float(to_float(v) + b)),
-            &Unbounded => Unbounded,
+impl BoundMath for Bound {
+    fn add(&self, b: &Bound) -> Bound {
+        match (self, b) {
+            (&Infinity, _) => Infinity,
+            (_, &Infinity) => Infinity,
+            (&NegativeInfinity, _) => NegativeInfinity,
+            (_, &NegativeInfinity) => NegativeInfinity,
+            (&Excluded(v), _) => Excluded(from_float(to_float(v) + to_float(b.unwrap()))),
+            (_, &Excluded(v)) => Excluded(from_float(to_float(v) + to_float(b.unwrap()))),
+            _ => Included(from_float(to_float(self.unwrap()) + to_float(b.unwrap()))),
         }
     }
 
-    fn subtract(&self, b: f64) -> Bound<u64> {
-        match self {
-            &Included(v) => Included(from_float(to_float(v) - b)),
-            &Excluded(v) => Excluded(from_float(to_float(v) - b)),
-            &Unbounded => Unbounded,
+    fn subtract(&self, b: &Bound) -> Bound {
+        match (self, b) {
+            (&Infinity, _) => Infinity,
+            (_, &Infinity) => NegativeInfinity,
+            (&NegativeInfinity, _) => NegativeInfinity,
+            (_, &NegativeInfinity) => Infinity,
+            (&Excluded(v), _) => Excluded(from_float(to_float(v) - to_float(b.unwrap()))),
+            (_, &Excluded(v)) => Excluded(from_float(to_float(v) - to_float(b.unwrap()))),
+            _ => Included(from_float(to_float(self.unwrap()) - to_float(b.unwrap()))),
         }
     }
 
-    fn multiply(&self, b: f64) -> Bound<u64> {
-        match self {
-            &Included(v) => Included(from_float(to_float(v) * b)),
-            &Excluded(v) => Excluded(from_float(to_float(v) * b)),
-            &Unbounded => Unbounded,
+    fn multiply(&self, b: &Bound) -> Bound {
+        match (self, b) {
+            (&NegativeInfinity, &NegativeInfinity) => Infinity,
+            (&NegativeInfinity, _) => NegativeInfinity,
+            (_, &NegativeInfinity) => NegativeInfinity,
+            (&Infinity, &Infinity) => Infinity,
+            (&Infinity, _) => {
+                if to_float(b.unwrap()) < 0.0 {
+                    NegativeInfinity
+                } else {
+                    Infinity
+                }
+            },
+            (_, &Infinity) => {
+                if to_float(self.unwrap()) < 0.0 {
+                    NegativeInfinity
+                } else {
+                    Infinity
+                }
+            },
+            (&Excluded(v), _) => Excluded(from_float(to_float(v) * to_float(b.unwrap()))),
+            (_, &Excluded(v)) => Excluded(from_float(to_float(v) * to_float(b.unwrap()))),
+            _ => Included(from_float(to_float(self.unwrap()) * to_float(b.unwrap()))),
         }
     }
 
-    fn divide(&self, b: f64) -> Bound<u64> {
-        match self {
-            &Included(v) => Included(from_float(to_float(v) / b)),
-            &Excluded(v) => Excluded(from_float(to_float(v) / b)),
-            &Unbounded => Unbounded,
+    fn divide(&self, b: &Bound) -> Bound {
+        match (self, b) {
+            (&NegativeInfinity, &NegativeInfinity) => Infinity,
+            (&NegativeInfinity, _) => NegativeInfinity,
+            (_, &NegativeInfinity) => NegativeInfinity,
+            (&Infinity, &Infinity) => Infinity,
+            (&Infinity, _) => {
+                if to_float(b.unwrap()) < 0.0 {
+                    NegativeInfinity
+                } else {
+                    Infinity
+                }
+            },
+            (_, &Infinity) => {
+                if to_float(self.unwrap()) < 0.0 {
+                    NegativeInfinity
+                } else {
+                    Infinity
+                }
+            },
+            (&Excluded(v), _) => Excluded(from_float(to_float(v) / to_float(b.unwrap()))),
+            (_, &Excluded(v)) => Excluded(from_float(to_float(v) / to_float(b.unwrap()))),
+            _ => Included(from_float(to_float(self.unwrap()) / to_float(b.unwrap()))),
         }
     }
 
@@ -109,14 +163,25 @@ impl BoundMath for Bound<u64> {
         match self {
             &Included(v) => v,
             &Excluded(v) => v,
-            &Unbounded => panic!("Unwrapped an unbounded"),
+            &Infinity => panic!("Unwrapped an Infinity"),
+            &NegativeInfinity => panic!("Unwrapped an Infinity"),
+        }
+    }
+
+    fn print(&self) -> String {
+        match self {
+            &Included(v) => format!("Included({:?})", to_float(v)),
+            &Excluded(v) => format!("Excluded({:?})", to_float(v)),
+            &Infinity => "Infinity".to_owned(),
+            &NegativeInfinity => "NegativeInfinity".to_owned(),
         }
     }
 
     fn shrink_left(&self, other: &Self) -> Self {
         match (self, other) {
-            (&Unbounded, _) => other.clone(),
-            (_, &Unbounded) => self.clone(),
+            (&Infinity, _) | (_, &Infinity)  => panic!("Infinity as the lower bound"),
+            (&NegativeInfinity, _) => other.clone(),
+            (_, &NegativeInfinity) => self.clone(),
             (&Included(a), &Included(b)) => {
                 if to_float(a) >= to_float(b) {
                    self.clone()
@@ -143,8 +208,9 @@ impl BoundMath for Bound<u64> {
 
     fn shrink_right(&self, other: &Self) -> Self {
         match (self, other) {
-            (&Unbounded, _) => other.clone(),
-            (_, &Unbounded) => self.clone(),
+            (&NegativeInfinity, _) | (_, &NegativeInfinity)  => panic!("NegativeInfinity as the upper bound"),
+            (&Infinity, _) => other.clone(),
+            (_, &Infinity) => self.clone(),
             (&Included(a), &Included(b)) => {
                 if to_float(a) <= to_float(b) {
                    self.clone()
@@ -171,8 +237,11 @@ impl BoundMath for Bound<u64> {
 
     fn lte(&self, other: &Self) -> bool {
         match (self, other) {
-            (&Unbounded, _) => true,
-            (_, &Unbounded) => true,
+            (&Infinity, &NegativeInfinity) => false,
+            (&NegativeInfinity, _) => true,
+            (_, &NegativeInfinity) => false,
+            (_, &Infinity) => true,
+            (&Infinity, _) => false,
             (&Included(a), &Included(b)) => { to_float(a) <= to_float(b) }
             _ => { to_float(self.unwrap()) < to_float(other.unwrap()) }
         }
@@ -180,43 +249,72 @@ impl BoundMath for Bound<u64> {
 
     fn gte(&self, other: &Self) -> bool {
         match (self, other) {
-            (&Unbounded, _) => true,
-            (_, &Unbounded) => true,
+            (&NegativeInfinity, &Infinity) => false,
+            (&Infinity, _) => true,
+            (_, &Infinity) => false,
+            (_, &NegativeInfinity) => true,
+            (&NegativeInfinity, _) => false,
             (&Included(a), &Included(b)) => { to_float(a) >= to_float(b) }
             _ => { to_float(self.unwrap()) > to_float(other.unwrap()) }
         }
     }
 }
 
-pub fn add_domain(a: &Domain, b: f64) -> Domain {
-    if let &Domain::Number(start, stop) = a {
-        Domain::Number(start.add(b), stop.add(b))
-    } else {
-        panic!("Domain math on non-number");
+pub fn add_domain(a: &Domain, b: &Domain) -> Domain {
+    match (a, b) {
+        (&Domain::Unknown, _) => b.clone(),
+        (_, &Domain::Unknown) => a.clone(),
+        (&Domain::Number(a, b), &Domain::Number(x, y)) => {
+            Domain::Number(a.add(&x), b.add(&y))
+        },
+        _ => panic!("Domain math on non-number"),
     }
 }
 
-pub fn subtract_domain(a: &Domain, b: f64) -> Domain {
-    if let &Domain::Number(start, stop) = a {
-        Domain::Number(start.subtract(b), stop.subtract(b))
-    } else {
-        panic!("Domain math on non-number");
+pub fn subtract_domain(a: &Domain, b: &Domain) -> Domain {
+    match (a, b) {
+        (&Domain::Unknown, _) => b.clone(),
+        (_, &Domain::Unknown) => a.clone(),
+        (&Domain::Number(a, b), &Domain::Number(x, y)) => {
+            Domain::Number(a.subtract(&x), b.subtract(&y))
+        },
+        _ => panic!("Domain math on non-number"),
     }
 }
 
-pub fn multiply_domain(a: &Domain, b: f64) -> Domain {
-    if let &Domain::Number(start, stop) = a {
-        Domain::Number(start.multiply(b), stop.multiply(b))
-    } else {
-        panic!("Domain math on non-number");
+pub fn multiply_domain(a: &Domain, b: &Domain) -> Domain {
+    println!("MULTIPLYING! {:?} {:?}", a, b);
+    match (a, b) {
+        (&Domain::Unknown, _) => b.clone(),
+        (_, &Domain::Unknown) => a.clone(),
+        (&Domain::Number(a, b), &Domain::Number(x, y)) => {
+            println!("({:?}, {:?}) * ({:?}, {:?})", a.print(), b.print(), x.print(), y.print());
+            let left = a.multiply(&x);
+            let right = b.multiply(&y);
+            if left.lte(&right) {
+                Domain::Number(left, right)
+            } else {
+                Domain::Number(right, left)
+            }
+        },
+        _ => panic!("Domain math on non-number"),
     }
 }
 
-pub fn divide_domain(a: &Domain, b: f64) -> Domain {
-    if let &Domain::Number(start, stop) = a {
-        Domain::Number(start.divide(b), stop.divide(b))
-    } else {
-        panic!("Domain math on non-number");
+pub fn divide_domain(a: &Domain, b: &Domain) -> Domain {
+    match (a, b) {
+        (&Domain::Unknown, _) => b.clone(),
+        (_, &Domain::Unknown) => a.clone(),
+        (&Domain::Number(a, b), &Domain::Number(x, y)) => {
+            let left = a.divide(&x);
+            let right = b.divide(&y);
+            if left.lte(&right) {
+                Domain::Number(left, right)
+            } else {
+                Domain::Number(right, left)
+            }
+        },
+        _ => panic!("Domain math on non-number"),
     }
 }
 
@@ -335,16 +433,32 @@ impl BlockInfo {
             match scan {
                 &Constraint::Scan {ref e, ref a, ref v, ..} |
                 &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
-                    if e.is_register() {
-                        merge_field_domain(e, &mut field_domains, Domain::Record);
-                    }
-                    if a.is_register() {
-                        merge_field_domain(a, &mut field_domains, Domain::String);
-                    }
-                    if v.is_register() {
-                        merge_field_domain(v, &mut field_domains, Domain::Unknown);
-                    }
+                    merge_field_domain(e, &mut field_domains, Domain::Record);
+                    merge_field_domain(a, &mut field_domains, Domain::String);
+                    merge_field_domain(v, &mut field_domains, Domain::Unknown);
                 },
+                &Constraint::Function { ref params, ref output, ref op, .. } => {
+                    match op.as_str() {
+                        "+" | "-" | "*" | "/" => {
+                            println!("In math ops!");
+                            let left = &params[0];
+                            let right = &params[1];
+                            merge_field_domain(left, &mut field_domains, Domain::Number(NegativeInfinity, Infinity));
+                            merge_field_domain(right, &mut field_domains, Domain::Number(NegativeInfinity, Infinity));
+                            let left_domain = field_to_domain(interner, left, &field_domains);
+                            let right_domain = field_to_domain(interner, right, &field_domains);
+                            let output_domain = match op.as_str() {
+                                "+" => add_domain(&left_domain, &right_domain),
+                                "-" => subtract_domain(&left_domain, &right_domain),
+                                "*" => multiply_domain(&left_domain, &right_domain),
+                                "/" => divide_domain(&left_domain, &right_domain),
+                                _ => unreachable!()
+                            };
+                            merge_field_domain(output, &mut field_domains, output_domain);
+                        },
+                        _ => { }
+                    }
+                }
                 &Constraint::Filter { ref left, ref right, ref op, .. } => {
                     match op.as_str() {
                         "=" => {
@@ -355,14 +469,14 @@ impl BlockInfo {
                             match (left.is_register(), right.is_register()) {
                                 (true, false) => {
                                     let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Unbounded),
+                                        Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Infinity),
                                         a => a,
                                     };
                                     merge_field_domain(left, &mut field_domains, to_merge);
                                 }
                                 (false, true) => {
                                     let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Unbounded, Excluded(start.unwrap())),
+                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Excluded(start.unwrap())),
                                         a => a,
                                     };
                                     merge_field_domain(right, &mut field_domains, to_merge);
@@ -380,14 +494,14 @@ impl BlockInfo {
                             match (left.is_register(), right.is_register()) {
                                 (true, false) => {
                                     let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Unbounded, Excluded(start.unwrap())),
+                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Excluded(start.unwrap())),
                                         a => a,
                                     };
                                     merge_field_domain(left, &mut field_domains, to_merge);
                                 }
                                 (false, true) => {
                                     let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Unbounded),
+                                        Domain::Number(start, stop) => Domain::Number(Excluded(start.unwrap()), Infinity),
                                         a => a,
                                     };
                                     merge_field_domain(right, &mut field_domains, to_merge);
@@ -405,14 +519,14 @@ impl BlockInfo {
                             match (left.is_register(), right.is_register()) {
                                 (true, false) => {
                                     let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Unbounded),
+                                        Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Infinity),
                                         a => a,
                                     };
                                     merge_field_domain(left, &mut field_domains, to_merge);
                                 }
                                 (false, true) => {
                                     let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Unbounded, Included(start.unwrap())),
+                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Included(start.unwrap())),
                                         a => a,
                                     };
                                     merge_field_domain(right, &mut field_domains, to_merge);
@@ -430,14 +544,14 @@ impl BlockInfo {
                             match (left.is_register(), right.is_register()) {
                                 (true, false) => {
                                     let to_merge = match field_to_domain(interner, right, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Unbounded, Included(start.unwrap())),
+                                        Domain::Number(start, stop) => Domain::Number(NegativeInfinity, Included(start.unwrap())),
                                         a => a,
                                     };
                                     merge_field_domain(left, &mut field_domains, to_merge);
                                 }
                                 (false, true) => {
                                     let to_merge = match field_to_domain(interner, left, &field_domains) {
-                                        Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Unbounded),
+                                        Domain::Number(start, stop) => Domain::Number(Included(start.unwrap()), Infinity),
                                         a => a,
                                     };
                                     merge_field_domain(right, &mut field_domains, to_merge);
@@ -543,8 +657,9 @@ pub fn field_to_domain(interner:&Interner, field:&Field, field_domains:&HashMap<
     if let &Field::Value(v) = field {
         match interner.get_value(v) {
             &Internable::String(_) => { Domain::String },
-            &Internable::Number(num) => {
-                Domain::Number(Included(num as u64), Included(num as u64))
+            me @ &Internable::Number(_) => {
+                let val = Internable::to_number(me);
+                Domain::Number(Included(from_float(val as f64)), Included(from_float(val as f64)))
             },
             &Internable::Null => { panic!("Got a null field!") }
         }
@@ -554,8 +669,10 @@ pub fn field_to_domain(interner:&Interner, field:&Field, field_domains:&HashMap<
 }
 
 pub fn merge_field_domain(field:&Field, field_domains:&mut HashMap<Field, Domain>, to_merge:Domain) {
-    let domain = field_domains.entry(*field).or_insert_with(|| Domain::Unknown);
-    domain.merge(&to_merge);
+    if field.is_register() {
+        let domain = field_domains.entry(*field).or_insert_with(|| Domain::Unknown);
+        domain.merge(&to_merge);
+    }
 }
 
 pub fn merge_tag_domain(interner:&Interner, tag_domains:&mut HashMap<(Interned, Interned), Domain>, field_domains:&HashMap<Field, Domain>, tag:Interned, attribute:Interned, field:&Field) {
@@ -677,9 +794,11 @@ impl Analysis {
     pub fn optimize_chain(&mut self, chain_id:usize) {
         let mut keep = HashSet::new();
         let mut parents = vec![chain_id];
-        let mut parents_next = vec![];
-        let mut frame_state:HashMap<(Interned, Interned), Vec<Domain>> = HashMap::new();
-        frame_state.insert((self.nodes[chain_id].input, TAG_INTERNED_ID), vec![Domain::String]);
+        let mut parents_next:Vec<usize> = vec![];
+        let mut initial_state:HashMap<(Interned, Interned), Vec<Domain>> = HashMap::new();
+        initial_state.insert((self.nodes[chain_id].input, TAG_INTERNED_ID), vec![Domain::String]);
+
+        let mut frame_ix = 0;
 
         println!("OPTIMIZING ---------------------------------------");
 
@@ -688,7 +807,7 @@ impl Analysis {
                 keep.clear();
                 {
                     let parent = &self.nodes[*parent_id];
-                    let output_domains = self.blocks.get(&parent.block).map(|x| &x.output_domains).unwrap_or(&frame_state);
+                    let output_domains = self.blocks.get(&parent.block).map(|x| &x.output_domains).unwrap_or(&initial_state);
                     'outer: for next in parent.next.iter().chain(parent.back_edges.iter()).cloned() {
                         println!("CHECKING: {:?}", next);
                         let node = &self.nodes[next];
@@ -713,27 +832,12 @@ impl Analysis {
                 let parent = self.nodes.get_mut(*parent_id).unwrap();
                 parent.next.retain(|x| keep.contains(x));
                 parent.back_edges.retain(|x| keep.contains(x));
-            }
-
-            frame_state.clear();
-
-            for parent_id in parents.iter() {
-                let parent = &self.nodes[*parent_id];
-                for next in parent.next.iter().cloned() {
-                    parents_next.push(next);
-                    let node = &self.nodes[next];
-                    let block = self.blocks.get(&node.block).unwrap();
-                    for (output, domains) in block.output_domains.iter() {
-                        let entry = frame_state.entry(output.clone()).or_insert_with(|| vec![]);
-                        for domain in domains {
-                            entry.push(domain.clone());
-                        }
-                    }
-                }
+                parents_next.extend(parent.next.iter());
             }
 
             parents.clear();
             parents.extend(parents_next.drain(..));
+            frame_ix += 1;
 
             println!("  FRAME --------------------------------------------");
 
