@@ -1,17 +1,6 @@
-import {RawValue, RawTuple, Diff} from "./library";
-
-export type Tuple = [string]|RawValue[];
-
 export interface Message {
   type:string;
   client:string;
-}
-
-export interface DiffMessage extends Message {
-  type: "diff";
-  adds?:Tuple[];
-  removes?:Tuple[];
-
 }
 
 const EMPTY:any[] = [];

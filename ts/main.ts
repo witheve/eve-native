@@ -1,5 +1,8 @@
 import {Program, Library, Diff, RawEAV, RawTuple, libraries} from ".";
-import {Connection, Message, DiffMessage} from "./connection";
+import {Connection, Message} from "./connection";
+
+export interface DiffMessage extends Message { type: "diff"; adds?:RawTuple[]; removes?:RawTuple[]; }
+export interface LoadBundleMessage extends Message { type: "load-bundle"; bundle: string }
 
 const EMPTY:never[] = [];
 
