@@ -37,25 +37,15 @@ commit
   //[#http/request #goog address: "http://echo.jsontest.com/key/shenberger/one/manifold" method: "GET"]
   [#http/request address: "http://echo.jsontest.com/key/value" method: "GET" headers: [#http/header key: "foo" value: "bar"] [#http/header key: "baz" value: "bin"]]
   [#http/request address: "http://test2.com/" method: "PUT" body: "Goodbye" headers: [#http/header key: "a" value: "b"] [#http/header key: "c" value: "d"] [#http/header key: "e" value: "f"]]
-  [#http/request address: "foo.com" headers: [#http/header key: "Authorization" value: "Basic 3354b6a98e3c4fb3b804c5a9e064a3df:b431c961f8d1457a91e0b90857bc8fa0"]]
+  [#http/request address: "https://accounts.spotify.com/authorize/" headers: [#http/header key: "Authorization" value: "Basic 3354b6a98e3c4fb3b804c5a9e064a3df:b431c961f8d1457a91e0b90857bc8fa0"]]
 end
 
 search
-  [#http/request response: [#http/response body]]
+  (address, text) = if [#http/request address response] then (address, response.body)
+                    else if [#http/request address error] then (address, error.error)
 commit
-  [#html/div text: body]
+  [#html/div text: "{{address}} {{text}}"]
 end
-
-
-search
-  [#http/request/error error]
-commit
-  [#html/div text: error]
-end
-
-
-
-
 
 disabled
 search

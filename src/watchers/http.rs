@@ -31,7 +31,6 @@ pub struct HttpWatcher {
 
 impl HttpWatcher {
     pub fn new(outgoing: Sender<RunLoopMessage>) -> HttpWatcher {
-        println!("{:?}",base64::encode(b"Hello world"));
         HttpWatcher { name: "http".to_string(), outgoing }
     }
 }
@@ -44,7 +43,6 @@ impl Watcher for HttpWatcher {
         self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) { 
-        println!("DIFF");
         let mut requests: HashMap<String,hyper::Request> = HashMap::new();
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
@@ -52,9 +50,9 @@ impl Watcher for HttpWatcher {
             let address = Internable::to_string(interner.get_value(add[2]));   
             match &kind[..] {
                 "request" => {
-                    let body = Internable::to_string(interner.get_value(add[3]));
-                    let key = Internable::to_string(interner.get_value(add[4]));
-                    let value = Internable::to_string(interner.get_value(add[5])); 
+                    let body = Internable::to_string(interner.get_value(add[4]));
+                    let key = Internable::to_string(interner.get_value(add[5]));
+                    let value = Internable::to_string(interner.get_value(add[6])); 
                     if !requests.contains_key(&id) {
                         let url = address.parse::<hyper::Uri>().unwrap();
                         let method = Internable::to_string(interner.get_value(add[3]));
@@ -69,7 +67,7 @@ impl Watcher for HttpWatcher {
                             "patch"   => Method::Patch,
                             _         => Method::Get
                         };
-                        let mut req = hyper::Request::new(rmethod, url);
+                        let req = hyper::Request::new(rmethod, url);
                         requests.insert(id.clone(),req);
                     }
                     let req = requests.get_mut(&id).unwrap();
@@ -81,35 +79,24 @@ impl Watcher for HttpWatcher {
                     }                    
                 },
                 "server" => {
-                    println!("Starting HTTP Server at {:?}", address);
-                    http_server(address);
-                    println!("HTTP Server started");
+                    let body = Internable::to_string(interner.get_value(add[3]));
+                    http_server(address, body);
                 },
                 _ => {},
             }      
         }
         // Send the HTTP request and package response in the changevec
-        let mut changes: Vec<RawChange> = vec![];
         for (id, request) in requests.drain() {
           send_http_request(&id,request,&self.outgoing);
         }
-        println!("{:?}",changes);
-
-
-        match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
-            Err(_) => (),
-            _ => (),
-        };
     }
 }
 
-fn hello_world(_: &mut Request) -> IronResult<Response> {
-    Ok(Response::with((status::Ok, "Hello World!")))
-}
-
-fn http_server(address: String) -> thread::JoinHandle<()> {
+fn http_server(address: String, body: String) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let server = Iron::new(hello_world).http(address).unwrap();
+        Iron::new(|req: &mut Request| {
+            Ok(Response::with((status::Ok, "Hello")))
+        }).http(address).unwrap();
     })
 }
 
@@ -126,15 +113,12 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
         response_changes.push(new_change(&response_id, "tag", Internable::from_str("http/response"), "http/request"));
         response_changes.push(new_change(&response_id, "status", Internable::String(status.to_string()), "http/request"));
         response_changes.push(new_change(&response_id, "request", Internable::String(id.clone()), "http/request"));
-        println!("Response: {}", res.status());
         outgoing.send(RunLoopMessage::Transaction(response_changes)).unwrap();
         res.body().for_each(|chunk| {
             let response_id = format!("http/response|{:?}",id);
             let mut vector: Vec<u8> = Vec::new();
             vector.write_all(&chunk).unwrap();
-            // Something is going wrong here
             let body_string = String::from_utf8(vector).unwrap();
-            println!("{:?}",body_string);
             outgoing.send(RunLoopMessage::Transaction(vec![new_change(&response_id, "body", Internable::String(body_string), "http/request")])).unwrap();
             Ok(())
         })
@@ -150,7 +134,6 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
             error_changes.push(new_change(&error_id, "request", Internable::String(id.clone()), "http/request"));
             error_changes.push(new_change(&error_id, "error", Internable::String(format!("{:?}",e)), "http/request"));
             outgoing.send(RunLoopMessage::Transaction(error_changes)).unwrap();
-            println!("Not OK {:?}",e)
         },
     }
 }

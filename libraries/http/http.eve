@@ -9,7 +9,7 @@ resolved to avoid duplicate requests.
 search
   request = [#http/request address method body headers: [#http/header key value]]
 watch http
-  ("request", request, address, method, key, value)
+  ("request", request, address, method, body, key, value)
 end
 
 Default method
@@ -39,9 +39,7 @@ commit
   request.headers := [#http/header key: "" value: ""]
 end
 
-
-
-Associate response with the request
+Associate response with its request
 
 search
   response = [#http/response request]
@@ -50,10 +48,19 @@ commit
   request.response := response
 end
 
+Associate an error with its request
+
+search
+  error = [#http/request/error request]
+  request = [#http/request]
+commit
+  request.error := error
+end
+
 ## Process HTTP Requests
 
 search
-  server = [#http/server address]
+  server = [#http/server address body]
 watch http
-  ("server", server, address)
+  ("server", server, address, body)
 end

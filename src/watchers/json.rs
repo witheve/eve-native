@@ -50,7 +50,7 @@ impl Watcher for JsonWatcher {
                         _ => Value::Null,
                     };
                     if record_map.contains_key(&e) {
-                        let mut record = record_map.get_mut(&e).unwrap();
+                        let record = record_map.get_mut(&e).unwrap();
                         let sub_record = record.as_object_mut().unwrap();
                         sub_record.insert(a, v);
                     } else {
