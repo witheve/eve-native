@@ -110,7 +110,8 @@ impl Handler for ClientHandler {
                 }
                 _ => { }
             }
-            self.out.send(Message::text(serde_json::to_string(&ClientMessage::Yo {message: format!("{} - yo", s)}).unwrap()))
+            // self.out.send(Message::text(serde_json::to_string(&ClientMessage::Yo {message: format!("{} - yo", s)}).unwrap()))
+            Ok(())
         } else {
             Ok(())
         }
