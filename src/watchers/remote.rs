@@ -73,6 +73,20 @@ impl Router {
     pub fn get_channel(&self) -> Sender<Vec<RawRemoteChange>> {
         self.outgoing.clone()
     }
+
+    // @FIXME: Usage of this needs to be behind a channel.
+    pub fn send_to(&self, client:&str, message:RunLoopMessage) -> Result<(), String> {
+        match self.clients.lock() {
+            Ok(clients) => {
+                if let Some(channel) = clients.get(client) {
+                    channel.send(message).map_err(|e| e.to_string())
+                } else {
+                    Err(format!("Error: Unable to find channel for client '{}'.", client))
+                }
+            }
+            Err(e) => Err(e.to_string())
+        }
+    }
 }
 
 
@@ -140,4 +154,3 @@ impl Watcher for RemoteWatcher {
         self.router_channel.send(changes).unwrap();
     }
 }
-

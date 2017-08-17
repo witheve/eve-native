@@ -50,7 +50,7 @@ use self::term_painter::Color::*;
 pub enum ClientMessage {
     Block { id:String, code:String },
     RemoveBlock { id:String },
-    Transaction { adds: Vec<(JSONInternable, JSONInternable, JSONInternable)>, removes: Vec<(JSONInternable, JSONInternable, JSONInternable)> },
+    Transaction { client:String, adds: Vec<(JSONInternable, JSONInternable, JSONInternable)>, removes: Vec<(JSONInternable, JSONInternable, JSONInternable)> },
 }
 
 pub struct ClientHandler {
@@ -104,7 +104,7 @@ impl Handler for ClientHandler {
             let deserialized: Result<ClientMessage, Error> = serde_json::from_str(&s);
             // println!("deserialized = {:?}", deserialized);
             match deserialized {
-                Ok(ClientMessage::Transaction { adds, removes }) => {
+                Ok(ClientMessage::Transaction { client, adds, removes }) => {
                     let mut raw_changes = vec![];
                     raw_changes.extend(adds.into_iter().map(|(e,a,v)| {
                         RawChange { e:e.into(), a:a.into(), v:v.into(), n:Internable::String("input".to_string()),count:1 }
@@ -112,7 +112,12 @@ impl Handler for ClientHandler {
                     raw_changes.extend(removes.into_iter().map(|(e,a,v)| {
                         RawChange { e:e.into(), a:a.into(), v:v.into(), n:Internable::String("input".to_string()),count:-1 }
                     }));
-                    self.running.send(RunLoopMessage::Transaction(raw_changes));
+
+                    // @FIXME: This needs to be behind a channel too. :/
+                    self.router.lock().expect("ERROR: Unable to lock router. This is a known issue, this line needs to be put behind a channel.")
+                        .send_to(&client, RunLoopMessage::Transaction(raw_changes))
+                        .expect("ERROR: Unable to send Transaction to client for some reason.");
+                    // self.running.send(RunLoopMessage::Transaction(raw_changes));
                 }
                 _ => { }
             }
