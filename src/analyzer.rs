@@ -301,8 +301,11 @@ pub fn multiply_domain(a: &Domain, b: &Domain) -> Domain {
         (&Domain::Unknown, _) => b.clone(),
         (_, &Domain::Unknown) => a.clone(),
         (&Domain::Number(a, b), &Domain::Number(x, y)) => {
-            let left = a.multiply(&x);
+            let mut left = a.multiply(&x);
             let right = b.multiply(&y);
+            if left == Infinity && right == Infinity {
+                left = Included(from_float(0.0));
+            }
             if left.lte(&right) {
                 Domain::Number(left, right)
             } else {
@@ -318,8 +321,11 @@ pub fn divide_domain(a: &Domain, b: &Domain) -> Domain {
         (&Domain::Unknown, _) => b.clone(),
         (_, &Domain::Unknown) => a.clone(),
         (&Domain::Number(a, b), &Domain::Number(x, y)) => {
-            let left = a.divide(&x);
+            let mut left = a.divide(&x);
             let right = b.divide(&y);
+            if left == Infinity && right == Infinity {
+                left = Included(from_float(0.0));
+            }
             if left.lte(&right) {
                 Domain::Number(left, right)
             } else {
@@ -367,7 +373,7 @@ pub struct TagInfo {
     other_tags: HashSet<String>,
     tag_relationships: HashSet<String>,
     external: bool,
-    event: bool,
+    is_pulse: bool,
 }
 
 impl TagInfo {
@@ -376,8 +382,8 @@ impl TagInfo {
         let other_tags = HashSet::new();
         let tag_relationships = HashSet::new();
         let external = false;
-        let event = false;
-        TagInfo { attributes, other_tags, tag_relationships, external, event }
+        let is_pulse = false;
+        TagInfo { attributes, other_tags, tag_relationships, external, is_pulse }
     }
 }
 
@@ -394,6 +400,7 @@ pub struct BlockInfo {
     outputs: Vec<(Interned, Interned, Interned)>,
     input_domains: HashMap<(Interned, Interned), Domain>,
     output_domains: HashMap<(Interned, Interned), Vec<Domain>>,
+    is_pulse: bool,
 }
 
 impl BlockInfo {
@@ -406,7 +413,8 @@ impl BlockInfo {
         let input_domains = HashMap::new();
         let output_domains = HashMap::new();
         let has_scans = false;
-        BlockInfo { id, has_scans, constraints, field_to_tags, inputs, outputs, input_domains, output_domains }
+        let is_pulse = false;
+        BlockInfo { id, has_scans, constraints, field_to_tags, inputs, outputs, input_domains, output_domains, is_pulse }
     }
 
     pub fn gather_tags(&mut self) {
@@ -445,6 +453,7 @@ impl BlockInfo {
         while changed {
             changed = false;
             for scan in self.constraints.iter() {
+                println!("Scan? {:?}", scan);
                 match scan {
                     &Constraint::Scan {ref e, ref a, ref v, ..} |
                     &Constraint::LookupCommit { ref e, ref a, ref v, ..} => {
@@ -661,6 +670,27 @@ impl BlockInfo {
                 _ => (),
             }
         }
+
+        // conservative guess for wether or not something is a pulse
+        if self.constraints.len() == 2 {
+            let mut scan_e = Field::Value(0);
+            let mut remove_e = Field::Value(1);
+            for scan in self.constraints.iter() {
+                match scan {
+                    &Constraint::Scan {ref e, ..} => {
+                        scan_e = e.clone();
+                    }
+                    &Constraint::RemoveEntity {ref e, ..} => {
+                        remove_e = e.clone();
+                    }
+                    _ => (),
+                }
+            }
+            if scan_e == remove_e {
+                self.is_pulse = true;
+            }
+        }
+
         println!("INPUTS: {:?}", self.inputs);
         println!("OUTPUTS: {:?}", self.outputs);
         println!("INPUT DOMAINS: {:?}", self.input_domains);
@@ -728,7 +758,7 @@ pub struct Analysis {
     inputs: HashMap<(Interned, Interned, Interned), HashSet<Interned>>,
     setup_blocks: Vec<Interned>,
     root_blocks: HashMap<Interned, HashSet<Interned>>,
-    tags: HashMap<String, TagInfo>,
+    tags: HashMap<Interned, TagInfo>,
     externals: HashSet<Interned>,
     chains: Vec<usize>,
     nodes: Vec<Node>,
@@ -777,6 +807,11 @@ impl Analysis {
             if !block.has_scans {
                 self.setup_blocks.push(block.id);
             }
+            if block.is_pulse {
+                let tag = block.output_domains.keys().next().unwrap().0;
+                let entry = self.tags.entry(tag).or_insert_with(|| TagInfo::new());
+                entry.is_pulse = true;
+            }
         }
 
         let mut chains = vec![];
@@ -811,6 +846,7 @@ impl Analysis {
         let mut keep = HashSet::new();
         let mut parents = vec![chain_id];
         let mut parents_next:Vec<usize> = vec![];
+        let mut initial_input_domains:HashMap<(Interned, Interned), Domain> = HashMap::new();
         let mut initial_state:HashMap<(Interned, Interned), Vec<Domain>> = HashMap::new();
         initial_state.insert((self.nodes[chain_id].input, TAG_INTERNED_ID), vec![Domain::String]);
 
@@ -824,24 +860,63 @@ impl Analysis {
                 {
                     let parent = &self.nodes[*parent_id];
                     let output_domains = self.blocks.get(&parent.block).map(|x| &x.output_domains).unwrap_or(&initial_state);
+                    let input_domains = self.blocks.get(&parent.block).map(|x| &x.input_domains).unwrap_or(&initial_input_domains);
                     'outer: for next in parent.next.iter().chain(parent.back_edges.iter()).cloned() {
                         println!("CHECKING: {:?}", next);
                         let node = &self.nodes[next];
                         let block = self.blocks.get(&node.block).unwrap();
+                        let mut found = false;
                         for (input, domain) in block.input_domains.iter() {
-                            println!("   input: {:?} {:?}", input, domain);
-                            match output_domains.get(&input) {
-                                Some(output_domains) => {
-                                    for output_domain in output_domains {
-                                        println!("      intersects?: {:?}", output_domain);
-                                        if domain.intersects(&output_domain) {
-                                            println!("        accepted!");
-                                            keep.insert(next);
-                                            continue 'outer;
+                            match self.tags.get(&input.0) {
+                                Some(info) => {
+                                    if info.is_pulse {
+                                        let mut added = false;
+                                        if let Some(domains) = output_domains.get(&(input.0, TAG_INTERNED_ID)) {
+                                            for domain in domains {
+                                                if domain.intersects(&Domain::Unknown) {
+                                                    added = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if !added {
+                                            keep.remove(&next);
+                                            break;
                                         }
                                     }
                                 }
-                                _ => {  }
+                                _ => {}
+                            }
+                            println!("   input: {:?} {:?}", input, domain);
+                            if !found {
+                                match output_domains.get(&input) {
+                                    Some(output_domains) => {
+                                        for output_domain in output_domains {
+                                            println!("      intersects?: {:?}", output_domain);
+                                            if domain.intersects(&output_domain) {
+                                                // walk through all the related parent input constraints for
+                                                // that tag and make sure that they intersect with this
+                                                // node's input constraints. If they don't, then we'd
+                                                // be modifying a thing that the next node couldn't
+                                                // possibly touch and there's no reason to execute it.
+                                                for (input, domain) in block.input_domains.iter().filter(|x| (x.0).0 == input.0) {
+                                                    match input_domains.get(input) {
+                                                        Some(input_domain) => {
+                                                            if !domain.intersects(input_domain) {
+                                                                continue 'outer;
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                println!("        accepted!");
+                                                keep.insert(next);
+                                                found = true;
+                                            }
+                                        }
+                                    }
+                                    _ => {  }
+                                }
                             }
                         }
                     }
