@@ -5,7 +5,7 @@ search
   [#html/event/click element: [#login]]
   client-id = "3354b6a98e3c4fb3b804c5a9e064a3df"
   response-type = "code"
-  redirect-uri = "http%3A%2F%2Flocalhost%3A8081%2F%23spotify-callback"
+  redirect-uri = string/url-encode[text: "http://localhost:8081/#spotify-callback"]
   address = "https://accounts.spotify.com/authorize/?client_id={{client-id}}&response_type={{response-type}}&redirect_uri={{redirect-uri}}&scope=user-read-private%20user-read-email&state=34fFs29kd09"
 commit
   [#html/redirect #req url: address]
@@ -30,14 +30,13 @@ commit
   [#logged-in]
 end
 
-//search
+search
   //address = "https://accounts.spotify.com/api/token?grant_type={{grant-type}}&code={{code}}&redirec_uri={{redirect-uri}}"
+  //encoded-authorization = string/encode[text: "3354b6a98e3c4fb3b804c5a9e064a3df:b431c961f8d1457a91e0b90857bc8fa0"]
   //grant-type = []
 commit
   //[#http/request #goog address: "http://echo.jsontest.com/key/shenberger/one/manifold" method: "GET"]
-  [#http/request address: "http://echo.jsontest.com/key/value" method: "GET" headers: [#http/header key: "foo" value: "bar"] [#http/header key: "baz" value: "bin"]]
-  [#http/request address: "http://test2.com/" method: "PUT" body: "Goodbye" headers: [#http/header key: "a" value: "b"] [#http/header key: "c" value: "d"] [#http/header key: "e" value: "f"]]
-  [#http/request address: "https://accounts.spotify.com/authorize/" headers: [#http/header key: "Authorization" value: "Basic 3354b6a98e3c4fb3b804c5a9e064a3df:b431c961f8d1457a91e0b90857bc8fa0"]]
+  //[#http/request address: "https://accounts.spotify.com/authorize/" headers: [#http/header key: "Authorization" value: "Basic {{encoded-authorization}}"]]
 end
 
 search
@@ -69,11 +68,10 @@ commit
   [#http/server address: "127.0.0.1:8080"]
 end
 
-Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8
-Accept-Encoding:gzip, deflate, br
-Accept-Language:en-US,en;q=0.8
-Connection:keep-alive
-Cookie:remember=cmontella%40live.com; sp_dc=AQD2mtOZxGK5uVMFom_yG9Nx6CPebAlDZWqfJF-G0sbHXVI-5cjSxQoSyD5VW-IHgLhNIobci3nTrIUq2cryJCKQ; BOOTSTRAP_CONFIG=%7B%22FB_APP_ID%22%3A%22174829003346%22%2C%22GOOGLE_ANALYTICS_ID%22%3A%22UA-5784146-31%22%2C%22TINDER_ADJUST_TRACKER_ID%22%3A%22szcgk1_dn83gr%22%2C%22TINDER_CLIENT_ID%22%3A%22b06a803d686e4612bdc074e786e94062%22%2C%22client%22%3A%7B%22name%22%3A%22Spotify%20Developer%22%7D%2C%22country%22%3A%22US%22%2C%22locales%22%3A%5B%22en_US%22%2C%22en%22%5D%2C%22BON%22%3A%5B%220%22%2C%220%22%2C-1744276953%5D%2C%22user%22%3A%7B%22displayName%22%3A%22cmontella%22%7D%2C%22redirect%22%3Anull%7D; sp_ac=AQB_BTskkac5q-RpyZq7_nnS1-_aYgwlfwYBaKpmxVCevYGZHNF_1JUlrlGBg3gzB93sVVRSvwl4T5LMul5V0mKNaEcthgazQIhNPICjC8wsBvz10snCrorB_ZwW_DI-j1nAOdmmoP51jlyjJsh0KiB9mFoaQ9uMPFim4Q66lni0kzsAW8V0zXUcq0lA-XL-RR9Auycu5fo; csrf_token=AQBEr6KFRYrRb-PliLvnoJduz3nsImku4nRSkEhsDyrXj-Mwj8XcqVXqMd1eNruxEw2p8cw1UOxOzWrz; _ga=GA1.2.389876630.1502400017; _gid=GA1.2.745352553.1502400017; _gat=1
-Host:accounts.spotify.com
-Upgrade-Insecure-Requests:1
-User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36
+
+
+search
+  encoded-string = string/url-encode[text: "http://localhost:8081/#spotify-callback"]
+commit
+  [#ui/text text: encoded-string]
+end

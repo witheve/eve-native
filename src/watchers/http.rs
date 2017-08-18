@@ -4,7 +4,6 @@ use std::sync::mpsc::{Sender};
 use watchers::json::{new_change};
 use super::Watcher;
 
-extern crate data_encoding;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_tls;
@@ -21,7 +20,6 @@ use std::io::{Write};
 extern crate iron;
 use self::iron::prelude::*;
 use self::iron::status;
-use self::data_encoding::base64;
 use std::collections::HashMap;
 
 pub struct HttpWatcher {
