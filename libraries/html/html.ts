@@ -645,6 +645,7 @@ export class HTML extends Library {
           let queryId = createId();
           eavs.push(
             [urlId, "query", `${queryId}`],
+            [queryId, "tag", `html/url/query`],
             [queryId, "index", `${ix}`],
             [queryId, "key", key],
             [queryId, "value", value],
