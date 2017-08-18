@@ -60,7 +60,9 @@ end
 ## Process HTTP Requests
 
 search
-  server = [#http/server address body]
+  server = [#http/server address]
+  body = if server.body then server.body
+         else ""
 watch http
   ("server", server, address, body)
 end
