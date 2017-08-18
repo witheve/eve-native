@@ -2,9 +2,6 @@ use super::super::indexes::{WatchDiff};
 use super::super::ops::{Internable, Interner, RawChange, RunLoopMessage};
 use std::sync::mpsc::{Sender};
 use super::Watcher;
-//use serde::de::{self, Deserialize, Deserializer, DeserializeSeed, Visitor, SeqAccess,
-//                MapAccess, EnumAccess, VariantAccess, IntoDeserializer};
-//use serde::ser::{Serialize, Serializer};
 
 extern crate serde_json;
 extern crate serde;
@@ -111,10 +108,10 @@ pub fn value_to_changes(id: &str, attribute: &str, value: Value, node: &str, cha
     match value {
         Value::Number(n) => {    
             if n.is_u64() { 
-                let v = Internable::Number(n.as_u64().unwrap() as u32); 
+                let v = Internable::from_number(n.as_u64().unwrap() as f32); 
                 changes.push(new_change(id,attribute,v,node));
             } else if n.is_i64() {
-                let v = Internable::Number(n.as_i64().unwrap() as u32); 
+                let v = Internable::from_number(n.as_i64().unwrap() as f32); 
                 changes.push(new_change(id,attribute,v,node));
             } else if n.is_f64() { 
                 let v = Internable::from_number(n.as_f64().unwrap() as f32); 
