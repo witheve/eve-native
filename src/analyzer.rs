@@ -2,6 +2,26 @@ use ops::{Field, Interned, Constraint, Block, TAG_INTERNED_ID, Interner, Interna
 use std::collections::{HashSet, HashMap};
 use std::mem::transmute;
 use self::Bound::{Excluded, Included, Infinity, NegativeInfinity};
+use std::slice::SliceConcatExt;
+
+//-------------------------------------------------------------------------
+// util
+//-------------------------------------------------------------------------
+
+pub fn int_as_string(interner:&Interner, v:Interned) -> String {
+    Internable::to_string(interner.get_value(v))
+}
+
+pub fn field_as_string(interner:&Interner, field:&Field, node_id:usize) -> String {
+    match field {
+        &Field::Value(v) => {
+            int_as_string(interner, v)
+        }
+        &Field::Register(ix) => {
+            format!("reg{}_{}", ix, node_id)
+        }
+    }
+}
 
 //-------------------------------------------------------------------------
 // Domain
@@ -340,17 +360,10 @@ pub fn divide_domain(a: &Domain, b: &Domain) -> Domain {
 // Attribute Info
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum ValueType {
-    Number,
-    String,
-    Record,
-    Any,
-}
-
+#[derive(Debug)]
 pub struct AttributeInfo {
     singleton: bool,
-    types: HashSet<ValueType>,
+    domains: HashSet<Domain>,
     constraints: HashSet<(usize, Constraint)>,
     // outputs: HashSet<Constraint>,
 }
@@ -358,9 +371,26 @@ pub struct AttributeInfo {
 impl AttributeInfo {
     pub fn new() -> AttributeInfo {
         let singleton = false;
-        let types = HashSet::new();
+        let domains = HashSet::new();
         let constraints = HashSet::new();
-        AttributeInfo { singleton, types, constraints }
+        AttributeInfo { singleton, domains, constraints }
+    }
+
+    pub fn get_type(&self) -> Domain {
+        let mut cur_domain = Domain::Unknown;
+        for domain in self.domains.iter() {
+            cur_domain = match (&cur_domain, domain) {
+                (&Domain::Unknown, &Domain::String) => domain.clone(),
+                (&Domain::String, &Domain::String) => cur_domain,
+                (&Domain::Unknown, &Domain::Record) => domain.clone(),
+                (&Domain::Record, &Domain::Record) => cur_domain,
+                (&Domain::Unknown, &Domain::Number(..)) => domain.clone(),
+                (&Domain::Number(..), &Domain::Number(..)) => cur_domain,
+                (_, &Domain::Removed) => cur_domain,
+                _ => { Domain::MultiType }
+            }
+        }
+        cur_domain.clone()
     }
 }
 
@@ -368,10 +398,10 @@ impl AttributeInfo {
 // Tag Info
 //-------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct TagInfo {
-    attributes: HashMap<String, AttributeInfo>,
-    other_tags: HashSet<String>,
-    tag_relationships: HashSet<String>,
+    attributes: HashMap<Interned, AttributeInfo>,
+    other_tags: HashSet<Interned>,
     external: bool,
     is_pulse: bool,
 }
@@ -380,10 +410,9 @@ impl TagInfo {
     pub fn new() -> TagInfo {
         let attributes = HashMap::new();
         let other_tags = HashSet::new();
-        let tag_relationships = HashSet::new();
         let external = false;
         let is_pulse = false;
-        TagInfo { attributes, other_tags, tag_relationships, external, is_pulse }
+        TagInfo { attributes, other_tags, external, is_pulse }
     }
 }
 
@@ -396,6 +425,7 @@ pub struct BlockInfo {
     has_scans: bool,
     constraints: Vec<Constraint>,
     field_to_tags: HashMap<Field, Vec<Interned>>,
+    tags: HashSet<Interned>,
     inputs: Vec<(Interned, Interned, Interned)>,
     outputs: Vec<(Interned, Interned, Interned)>,
     input_domains: HashMap<(Interned, Interned), Domain>,
@@ -408,13 +438,83 @@ impl BlockInfo {
         let id = block.block_id;
         let constraints = block.constraints.clone();
         let field_to_tags = HashMap::new();
+        let tags = HashSet::new();
         let inputs = vec![];
         let outputs = vec![];
         let input_domains = HashMap::new();
         let output_domains = HashMap::new();
         let has_scans = false;
         let is_pulse = false;
-        BlockInfo { id, has_scans, constraints, field_to_tags, inputs, outputs, input_domains, output_domains, is_pulse }
+        BlockInfo { id, has_scans, constraints, field_to_tags, tags, inputs, outputs, input_domains, output_domains, is_pulse }
+    }
+
+    pub fn to_ir_categories(&self, interner:&Interner, loop_stack:&mut HashMap<Interned, LoopInfo>, node_id:usize) -> (Vec<IRNode>, Vec<IRNode>, Vec<IRNode>) {
+        let mut conditionals = vec![];
+        let mut scans = vec![];
+        let mut functions = vec![];
+        let mut multi_functions = vec![];
+        let mut outputs = vec![];
+
+        for scan in self.constraints.iter() {
+            match scan {
+                &Constraint::Scan {ref e, ref a, ref v, ..} => {
+                    // skip static tags because they're already accounted for by the loops
+                    if a.to_value() == TAG_INTERNED_ID && !v.is_register() { continue; }
+
+                    let tags = self.field_to_tags.get(e).unwrap();
+
+                    let mut symbol = None;
+                    for tag in tags.iter() {
+                        if let Some(info) = loop_stack.get(tag) {
+                            symbol = Some(info.symbol.to_owned());
+                        }
+                    }
+
+                    if v.is_register() {
+                        let name = field_as_string(interner, v, node_id);
+                        scans.push(IRNode::Let(name, Box::new(IRNode::Get(symbol.unwrap(), field_as_string(interner, a, node_id)))));
+                    } else {
+                        conditionals.push(IRNode::Infix("==".to_string(), Box::new(IRNode::Get(symbol.unwrap(), field_as_string(interner, a, node_id))), Box::new(field_to_ir(interner, v, node_id))))
+                    }
+                }
+                &Constraint::Filter {ref op, ref left, ref right, ..} => {
+                    let ir_left = field_to_ir(interner, left, node_id);
+                    let ir_right = field_to_ir(interner, right, node_id);
+                    conditionals.push(IRNode::Infix(op.to_owned(), Box::new(ir_left), Box::new(ir_right)));
+                }
+                &Constraint::Function {ref op, ref params, ref output, ..} => {
+                    match op.as_str() {
+                        "+" | "-" | "/" | "*" => {
+                            let left = field_to_ir(interner, &params[0], node_id);
+                            let right = field_to_ir(interner, &params[1], node_id);
+                            let out = field_as_string(interner, output, node_id);
+                            functions.push(IRNode::Let(out, Box::new(IRNode::Infix(op.to_owned(), Box::new(left), Box::new(right)))));
+                        }
+                        _ => { println!("Unknown func: {:?}", op); }
+                    }
+                }
+                &Constraint::MultiFunction {ref op, ref params, ref outputs, ..} => {
+                    match op.as_str() {
+                        "math/range" => {
+                            let name = field_as_string(interner, &outputs[0], node_id);
+                            let start = Internable::to_number(interner.get_value(params[0].to_value()));
+                            let stop = Internable::to_number(interner.get_value(params[1].to_value()));
+                            multi_functions.push(IRNode::Range(name, start as f64, stop as f64, vec![]));
+                        }
+                        _ => unimplemented!()
+                    }
+                }
+                &Constraint::Insert {ref e, ref a, ref v, ..} => {
+                }
+                _ => (),
+            }
+        }
+
+        let mut body = vec![];
+        body.extend(scans.drain(..));
+        body.extend(functions.drain(..));
+        body.extend(outputs.drain(..));
+        (multi_functions, conditionals, body)
     }
 
     pub fn gather_tags(&mut self) {
@@ -430,6 +530,9 @@ impl BlockInfo {
                         if actual_a == tag && actual_v != 0 {
                             let mut tags = self.field_to_tags.entry(e.clone()).or_insert_with(|| vec![]);
                             tags.push(actual_v);
+                            if let &Constraint::Scan {..} = scan {
+                                self.tags.insert(actual_v);
+                            }
                         }
                     }
                 _ => (),
@@ -793,7 +896,7 @@ impl Analysis {
         println!("\nAnalysis starting...");
         println!("  Dirty blocks: {:?}", self.dirty_blocks);
 
-        for block_id in self.dirty_blocks.drain(..) {
+        for block_id in self.dirty_blocks.clone() {
             let block = self.blocks.get_mut(&block_id).unwrap();
             block.gather_inputs_outputs(interner);
             for input in block.inputs.iter() {
@@ -802,6 +905,13 @@ impl Analysis {
                 if self.externals.contains(&input.0) {
                     let entry = self.root_blocks.entry(input.0).or_insert_with(|| HashSet::new());
                     entry.insert(block.id);
+                }
+            }
+            for (&(tag, attribute), domains) in block.output_domains.iter() {
+                for domain in domains.iter().cloned() {
+                    let tag_info = self.tags.entry(tag).or_insert_with(|| TagInfo::new());
+                    let entry = tag_info.attributes.entry(attribute).or_insert_with(|| AttributeInfo::new());
+                    entry.domains.insert(domain);
                 }
             }
             if !block.has_scans {
@@ -813,6 +923,8 @@ impl Analysis {
                 entry.is_pulse = true;
             }
         }
+
+        self.dirty_blocks.clear();
 
         let mut chains = vec![];
         let mut nodes = vec![];
@@ -965,6 +1077,143 @@ impl Analysis {
         id
     }
 
+    //-------------------------------------------------------------------------
+    // Chain to IR
+    //-------------------------------------------------------------------------
+
+    pub fn chain_to_ir(&self, interner:&Interner, chain_id:usize) -> IRNode {
+        let root = &self.nodes[chain_id];
+        if root.block != 0 {
+            // setup
+            let mut loop_stack = HashMap::new();
+            self.walk_chain_for_ir(interner, chain_id, &mut loop_stack)
+        } else {
+            // event
+            let mut items = vec![];
+            let tag_name = Internable::to_string(interner.get_value(root.input));
+            for next in root.next.iter().cloned() {
+                let mut loop_stack = HashMap::new();
+                loop_stack.insert(root.input, LoopInfo::new(0, tag_name.clone()));
+                self.walk_chain_for_ir(interner, next, &mut loop_stack);
+                items.extend(loop_stack.remove(&root.input).unwrap().items)
+            }
+            IRNode::On(tag_name.clone(), tag_name, items)
+        }
+    }
+
+    pub fn walk_chain_for_ir(&self, interner:&Interner, node_id:usize, loop_stack: &mut HashMap<Interned, LoopInfo>) -> IRNode {
+        // for any tag that isn't in the loop_stack, add a loop
+        // in the inner-most loop, add all the conditionals
+        // inside the conditional
+        //    add all the functions
+        //    then add outputs
+        let node = &self.nodes[node_id];
+        let block = &self.blocks[&node.block];
+
+        if block.is_pulse {
+            return IRNode::Empty
+        }
+
+        let mut needs_loop = vec![];
+        let mut parent_loop = (0, 0);
+        for tag in block.tags.iter().cloned() {
+            match loop_stack.get(&tag) {
+                Some(info) => {
+                    if info.ix > parent_loop.0 {
+                        parent_loop.0 = info.ix;
+                        parent_loop.1 = tag;
+                    }
+                },
+                None => { needs_loop.push(tag); }
+            }
+        }
+
+        let mut stack = vec![];
+
+        for tag in needs_loop.iter().cloned() {
+            let ix = loop_stack.len();
+            let symbol = int_as_string(interner, tag);
+            loop_stack.insert(tag, LoopInfo::new(ix, symbol));
+        }
+
+        // run children
+        for next in node.next.iter() {
+            self.walk_chain_for_ir(interner, *next, loop_stack);
+        }
+
+        // gather ourselves, given the current stack
+        let (multi_functions, conditionals, body) = block.to_ir_categories(interner, loop_stack, node_id);
+
+        // pop our loops
+        for tag in needs_loop.iter().cloned() {
+            let info = loop_stack.remove(&tag).unwrap();
+            stack.push(IRNode::For(int_as_string(interner, tag), int_as_string(interner, tag), info.items))
+        }
+
+        stack.extend(multi_functions);
+
+        // If we have conditionals, we need to wrap the body in an if
+        if conditionals.len() > 0 {
+            stack.push(IRNode::If(Box::new(IRNode::And(conditionals)), body));
+        } else {
+            stack.push(IRNode::Do(body));
+        }
+
+
+        let mut thing = stack.pop().unwrap();
+        while stack.len() > 0 {
+            let mut parent = stack.pop().unwrap();
+            match parent {
+                IRNode::Range(_, _, _, ref mut items) => {
+                    items.insert(0, thing);
+                }
+                IRNode::For(_, _, ref mut items) => {
+                    items.insert(0, thing);
+                }
+                _ => { unimplemented!() }
+            }
+            thing = parent;
+        }
+
+        if parent_loop.0 > 0 {
+            // we have an actual parent, add it to them
+            loop_stack.get_mut(&parent_loop.1).unwrap().items.push(thing);
+            IRNode::Empty
+        } else {
+            thing
+        }
+    }
+
+    pub fn tag_to_struct_ir(&self, interner:&Interner, tag:Interned, info:&TagInfo) -> IRNode {
+        println!("Tag: {:?}", info);
+        if info.attributes.len() == 1 {
+            // we don't need to create structs for things that are just a tag
+            return IRNode::Empty;
+        }
+        let mut ordered_attributes:Vec<Interned> = info.attributes.keys().cloned().collect::<Vec<_>>();
+        ordered_attributes.sort();
+        let mut fields = vec![];
+        for attribute in ordered_attributes {
+            // we ignore tag, it doesn't need to be part of the struct
+            if attribute == TAG_INTERNED_ID { continue; }
+            let ir_type = IRType::from_domain(&info.attributes.get(&attribute).unwrap().get_type());
+            fields.push((Internable::to_string(interner.get_value(attribute)), ir_type));
+        }
+        IRNode::DefineStruct(Internable::to_string(interner.get_value(tag)), fields)
+    }
+
+    pub fn program_to_ir(&self, interner:&Interner) -> IRNode {
+        let mut items = vec![];
+        // @TODO: define all the structs
+        items.extend(self.tags.iter().map(|(tag, info)| self.tag_to_struct_ir(interner, *tag, info)));
+        items.extend(self.chains.iter().cloned().map(|x| self.chain_to_ir(interner, x)));
+        IRNode::Main(items)
+    }
+
+    //-------------------------------------------------------------------------
+    // Graph drawing
+    //-------------------------------------------------------------------------
+
     pub fn dot_chain_link(&self, node_id:usize, graph:&mut String) {
         let me = &self.nodes[node_id];
         graph.push_str(&format!("{:?} [label=\"{:?}\"]\n", me.id, me.block));
@@ -1002,5 +1251,181 @@ impl Analysis {
         }
         graph.push_str("}");
         graph
+    }
+}
+
+//-------------------------------------------------------------------------
+// IR
+//-------------------------------------------------------------------------
+
+pub struct LoopInfo {
+    ix: usize,
+    symbol: String,
+    items: Vec<IRNode>,
+}
+
+impl LoopInfo {
+    pub fn new(ix:usize, symbol:String) -> LoopInfo {
+        LoopInfo { ix: ix + 1, symbol, items: vec![] }
+    }
+}
+
+#[derive(Debug)]
+pub enum IRType {
+    Int,
+    Float,
+    String,
+    Any,
+}
+
+impl IRType {
+    pub fn from_domain(domain: &Domain) -> IRType {
+        match domain {
+            &Domain::Number(..) => IRType::Float,
+            &Domain::String => IRType::String,
+            &Domain::Record => IRType::Int,
+            _ => IRType::Any,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum IRNode {
+    Empty,
+
+    Symbol(String),
+    Number(f64),
+    String(String),
+
+    Infix(String, Box<IRNode>, Box<IRNode>), // op, left, right
+
+    Let(String, Box<IRNode>), // symbol, value
+    Set(String, String, Box<IRNode>), // symbol, attribute, value
+    Get(String, String), // symbol, attribute
+
+    DefineStruct(String, Vec<(String, IRType)>), // struct-type, field, value, type
+    CreateStruct(String, Vec<(String, IRNode)>), // struct-type, field, value
+
+    Do(Vec<IRNode>),
+
+    If(Box<IRNode>, Vec<IRNode>), // condition, then
+    And(Vec<IRNode>),
+    Or(Vec<IRNode>),
+
+    Range(String, f64, f64, Vec<IRNode>), // symbol, start, stop
+    For(String, String, Vec<IRNode>), // tag, symbol
+
+    On(String, String, Vec<IRNode>), // tag, symbol
+
+    Main(Vec<IRNode>)
+}
+
+pub fn field_to_ir(interner:&Interner, field:&Field, node_id:usize) -> IRNode {
+    match field {
+        &Field::Register(ix) => {
+            IRNode::Symbol(format!("reg{}_{}", ix, node_id))
+        },
+        &Field::Value(id) => {
+            match interner.get_value(id) {
+                &Internable::String(ref s) => { IRNode::String(s.to_string()) }
+                me @ &Internable::Number(_) => { IRNode::Number(Internable::to_number(me) as f64) }
+                _ => panic!("Null value in field_to_ir")
+            }
+        }
+    }
+}
+
+pub fn to_javascript_symbol(s:&str) -> String {
+    s.replace("/", "_").replace("-", "_").replace(" ", "_")
+}
+
+pub fn to_javascript(node: &IRNode) -> String {
+    match node {
+        &IRNode::Empty => "".to_owned(),
+        &IRNode::Symbol(ref s) => to_javascript_symbol(s),
+        &IRNode::Number(ref n) => n.to_string(),
+        &IRNode::String(ref s) => format!("{:?}", s),
+        &IRNode::Infix(ref op, ref left, ref right) => {
+            format!("{} {} {}", to_javascript(left), op, to_javascript(right))
+        }
+        &IRNode::Let(ref name, ref value) => {
+            format!("var {} = {};", to_javascript_symbol(name), to_javascript(value))
+        }
+        &IRNode::Set(ref symbol, ref attribute, ref value) => {
+            format!("{}.{} = {};", to_javascript_symbol(symbol), to_javascript_symbol(attribute), to_javascript(value))
+        }
+        &IRNode::Get(ref symbol, ref attribute) => {
+            format!("{}.{}", to_javascript_symbol(symbol), to_javascript_symbol(attribute))
+        }
+        &IRNode::DefineStruct(ref name, ref fields) => {
+            let field_args = fields.iter().map(|&(ref field, _)| to_javascript_symbol(field.as_str())).collect::<Vec<_>>().join(", ");
+            let field_setters = fields.iter().map(|&(ref field, _)| {
+                format!("  this.{} = {}", to_javascript_symbol(field), to_javascript_symbol(field))
+            }).collect::<Vec<_>>().join(";\n");
+            format!("var all_{} = [];\nfunction {}_struct({}) {{\n{}\n  return this;\n}}", to_javascript_symbol(name), to_javascript_symbol(name), field_args, field_setters)
+        }
+        &IRNode::CreateStruct(ref name, ref fields) => {
+            let field_args = fields.iter().map(|&(_, ref value)| to_javascript(value)).collect::<Vec<_>>().join(", ");
+            format!("{}_struct({})", to_javascript_symbol(name), field_args)
+        }
+        &IRNode::Do(ref items) => {
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            compiled_items.join("\n")
+        }
+        &IRNode::If(ref cond, ref items) => {
+            let mut cond = to_javascript(cond);
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            format!("  if({}) {{\n{}\n  }}", cond, compiled_items.join("\n"))
+        }
+        &IRNode::And(ref items) => {
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            format!("({})", compiled_items.join(" && "))
+        }
+        &IRNode::Or(ref items) => {
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            format!("({})", compiled_items.join(" || "))
+        }
+        &IRNode::Range(ref name, start, stop, ref items) => {
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            let symbol = to_javascript_symbol(name);
+            format!("  for(var {} = {}; {} <= {}; {}++) {{\n{}\n  }}", symbol, start, symbol, stop, symbol, compiled_items.join("\n"))
+        }
+        &IRNode::For(ref tag, ref name, ref items) => {
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            format!("  for(var {} of all_{}) {{\n{}\n  }}", to_javascript_symbol(name), tag, compiled_items.join("\n"))
+        }
+        &IRNode::On(ref tag, ref name, ref items) => {
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            format!("function on_{}({}) {{\n{}\n}}", to_javascript_symbol(tag), to_javascript_symbol(name), compiled_items.join("\n"))
+        }
+        &IRNode::Main(ref items) => {
+            let mut compiled_items = vec![];
+            for item in items.iter() {
+                compiled_items.push(to_javascript(item));
+            }
+            format!("(function main() {{\n{}\n}})();", compiled_items.join("\n"))
+        }
+        _ => unimplemented!()
     }
 }

@@ -8,7 +8,7 @@ use clap::{Arg, App};
 
 use eve::ops::{Program};
 use eve::compiler::{parse_file};
-use eve::analyzer::{Analysis};
+use eve::analyzer::{Analysis, to_javascript};
 use std::fs::File;
 use std::io::prelude::*;
 use std::process::Command;
@@ -45,6 +45,11 @@ fn main() {
         analysis.block(block);
     }
     analysis.analyze(&program.state.interner);
+    let ir = analysis.program_to_ir(&program.state.interner);
+    println!("\n IR ------------------------------------------------------ ");
+    println!("{:?}", ir);
+    println!("\n JS ------------------------------------------------------ ");
+    println!("{}", to_javascript(&ir));
 
     let mut file = File::create("graph.dot").unwrap();
     file.write_all(analysis.make_dot_chains().as_bytes()).unwrap();

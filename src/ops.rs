@@ -569,6 +569,14 @@ impl Field {
             false
         }
     }
+
+    pub fn to_value(&self) -> Interned {
+        if let &Field::Value(v) = self {
+            v
+        } else {
+            0
+        }
+    }
 }
 
 pub fn register(ix: usize) -> Field {
