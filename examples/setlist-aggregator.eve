@@ -1,0 +1,190 @@
+# Setlist Aggregator
+
+This app takes a set of concerts, and accesses the setlist.fm api to retrieve
+the setlist that was played at that concert. This is cross-referenced with
+the MS Groove API to create playlists for those concerts.
+
+The app configuration
+
+commit
+  [#setlist-app
+    groove-client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba"
+    groove-client-secret: "UskJMTfCRNffOLbuBnGSBb2"
+    setlist-api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275"]
+end
+
+## Logging in to setlist
+
+Logging in is kicked off by clicking the login button.
+
+search
+  not([#setlist-app user])
+bind
+  [#ui/button #groove-login text: "Login to Groove"]
+end
+
+Clicking this button redirects to a setlist login portal, where the user is 
+prompted to give the app access to his or her account.
+
+search
+  [#html/event/click element: [#groove-login]]
+  [#setlist-app groove-client-id]
+  response-type = "token"
+  scopes = string/url-encode[text: "MicrosoftMediaServices.GrooveApiAccess offline_access"]
+  redirect-uri = string/url-encode[text: "http://localhost:8081"]
+  address = "https://login.live.com/oauth20_authorize.srf/?client_id={{groove-client-id}}&response_type={{response-type}}&redirect_uri={{redirect-uri}}&scope={{scopes}}"
+commit
+  [#html/redirect #req url: address]
+end
+
+A successful login will return to the app a code. This is exchanged for an
+access token with a POST request.
+
+search
+  [#html/event/page-show url: [#html/url query: [#html/url/query key: "code" value: code]]]
+  [#setlist-app groove-client-id groove-client-secret]
+  redirect-uri = string/url-encode[text: "http://localhost:8081/#setlist-callback"]
+  auth-token = string/encode[text: "{{groove-client-id}}:{{groove-client-secret}}"]
+  body = "grant_type=authorization_code&code={{code}}&redirect_uri={{redirect-uri}}"
+  content-length = string/length[text: body]
+commit
+  [#http/request #setlist-token address: "https://accounts.setlist.com/api/token" method: "POST" body headers: 
+    [#http/header key: "Authorization" value: "Basic {{auth-token}}"]
+    [#http/header key: "Content-Type" value: "application/x-www-form-urlencoded"]
+    [#http/header key: "Content-Length" value: "{{content-length}}"]]
+end
+
+Parse the response body, which contains the access token
+
+search
+  [#setlist-token response: [body]]
+commit
+  [#json/decode #setlist-auth-token json: body]
+end
+
+Place the access token in the app record, so we can use it to fetch data from
+the user's account.
+
+search
+  [#setlist-auth-token json-object: auth]
+  setlist = [#setlist-app]
+commit
+  setlist.access-token := auth.access_token
+  setlist.refresh-token := auth.refresh_token
+end
+
+## Getting User Data
+
+With an access token in hand, we can use that to get user-specific information
+like username and email address.
+
+search
+  [#setlist-app access-token]
+commit
+  [#http/request #profile-content address: "https://api.setlist.com/v1/me" method: "GET" headers: 
+    [#http/header key: "Authorization" value: "Bearer  {{access-token}}"]]
+end
+
+search
+  [#profile-content response: [body]]
+commit
+  [#json/decode #setlist-profile json: body]
+end
+
+Save this info in the setlist app
+
+search
+  [#setlist-profile json-object: profile]
+  setlist = [#setlist-app]
+commit
+  setlist.user := [#setlist/user name: profile.id e-mail: profile.email]
+end
+
+## The User Interface
+
+search
+  [#setlist-app user: [name e-mail]]
+bind
+  [#html/div text: "Welcome {{name}}!"]
+end
+
+commit
+  [#ui/input #artist-name]
+  [#ui/button #search-artist text: "Search"]
+end
+
+
+## Get Data From setlist
+
+
+search
+  [#setlist-app access-token]
+  address = "https://api.setlist.com/v1/search?q=incubus+glitterbomb+8&type=track"
+commit
+  [#http/request #search-setlist address headers: 
+      [#http/header key: "Authorization" value: "Bearer {{access-token}}"]
+      [#http/header key: "Accept" value: "application/json"]]
+end
+
+search
+  [#search-setlist response: [body]]
+commit
+  [#json/decode #search-setlist json: body]
+end
+
+search
+  [#search-setlist json-object: spotsearch]
+  track-id = spotsearch.tracks.items.value.id
+commit
+  [#html/div text: track-id] 
+end
+
+
+
+## Get Data From Setlist.fm 
+
+search
+  [#setlist-app setlist-api-key]
+  [#html/event/click element: [#search-artist]]
+  [#artist-name value]
+  artist = string/replace[text: value replace: " " with: "+"]
+  //address = "https://api.setlist.fm/rest/1.0/search/artists?artistName={{artist}}"
+  address = "https://api.setlist.fm/rest/1.0/search/setlists?artistName=Incubus&date=16-08-2017&p=1"
+commit
+  [#http/request #setlist-fm artist: value, address headers: 
+      [#http/header key: "x-api-key" value: setlist-api-key]
+      [#http/header key: "Accept" value: "application/json"]]
+end
+
+search
+  [#setlist-fm response: [body]]
+commit
+  [#json/decode #setlist-fm json: body]
+end
+
+search
+  [#setlist-fm json-object: setlistsearch]
+  //setlistsearch.artist.value.name = artist
+  //artist = setlistsearch.artist.value
+commit
+  [#html/div text: "{{setlistsearch.setlist.value.sets.set.value.song.index}} - {{setlistsearch.setlist.value.sets.set.value.song.value.name}}"] 
+end
+
+e3e0abcd-7671-4482-a9d8-462f5acc9be5
+
+
+## Misc Diagnostics
+
+disabled
+search
+  [#http/request/error error]
+commit
+  [#html/div text: error]
+end
+
+disabled
+search
+  [#http/response body]
+commit
+  [#html/div text: body]
+end

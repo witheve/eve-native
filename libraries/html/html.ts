@@ -639,6 +639,7 @@ export class HTML extends Library {
           [urlId, "port", `${port}`],
           [urlId, "protocol", `${protocol}`],
         );
+        // Parse Query String
         let ix = 1;
         for (var key in query) {
           let value = query[key];
@@ -651,6 +652,24 @@ export class HTML extends Library {
             [queryId, "value", value],
           )
           ix++;
+        }
+        // Parse Hash String
+        if (hash !== undefined && hash !== null) {
+          let pairs = hash.substring(1).split('&');  
+          for (var pair of pairs) {
+            let queryId = createId();
+            let parts = pair.split('=');
+            if (parts.length == 2) {
+              eavs.push(
+                [urlId, "query", `${queryId}`],
+                [queryId, "tag", `html/url/query`],
+                [queryId, "index", `${ix}`],
+                [queryId, "key", parts[0]],
+                [queryId, "value", parts[1]],
+              )
+            }
+            ix++;
+          }
         }
         this._sendEvent(eavs);
       }
