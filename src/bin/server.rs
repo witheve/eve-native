@@ -1,5 +1,7 @@
 extern {}
 
+use std::path::{Path};
+
 extern crate clap;
 use clap::{Arg, App};
 
@@ -15,8 +17,10 @@ use serde_json::{Error};
 
 use std::sync::mpsc::Sender;
 
-extern crate eve;
 extern crate time;
+
+extern crate eve;
+use eve::paths::EvePaths;
 use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Persister, JSONInternable};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
@@ -30,9 +34,6 @@ extern crate iron;
 extern crate staticfile;
 extern crate mount;
 
-use std::env::current_exe;
-use std::fs::canonicalize;
-use std::path::{Path, PathBuf};
 use iron::{Iron, Chain, status, Request, Response, IronResult, IronError, AfterMiddleware};
 use staticfile::Static;
 use mount::Mount;
@@ -78,11 +79,11 @@ impl ClientHandler {
             runner.program.attach(Box::new(PanicWatcher::new()));
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().expect("ERROR: Failed to lock router: Cannot init RemoteWatcher.").deref())));
 
-            let editor_watcher = EditorWatcher::new(&mut runner, router.clone(), out.clone(), eve_paths.libraries_path.clone(), eve_paths.programs_path.clone());
+            let editor_watcher = EditorWatcher::new(&mut runner, router.clone(), out.clone(), eve_paths.libraries(), eve_paths.programs());
             runner.program.attach(Box::new(editor_watcher));
         }
 
-        if let &Some(path) = &eve_paths.libraries_path {
+        if let Some(path) = eve_paths.libraries() {
             runner.load(path);
         }
         for file in eve_paths.files.iter() {
@@ -183,7 +184,7 @@ fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool) {
         runner.program.attach(Box::new(RemoteWatcher::new("server", &router.lock().unwrap().deref())));
     }
 
-    if let &Some(persist_file) = &eve_paths.persist_file {
+    if let &Some(persist_file) = &eve_paths.persist() {
         let mut persister = Persister::new(persist_file);
         persister.load(persist_file);
         runner.persist(&mut persister);
@@ -205,47 +206,6 @@ fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool) {
         Err(why) => println!("{} Failed to start Websocket Server: {}", BrightRed.paint("Error:"), why),
     };
 }
-
-//-------------------------------------------------------------------------
-// Path Management
-//-------------------------------------------------------------------------
-
-pub struct EvePaths<'a> {
-    pub files: Vec<&'a str>,
-    pub server_files: Vec<&'a str>,
-    pub libraries_path: Option<&'a str>,
-    pub programs_path: Option<&'a str>,
-    pub persist_file: Option<&'a str>
-}
-
-impl<'a> EvePaths<'a> {
-    pub fn new(files:Vec<&'a str>, server_files:Vec<&'a str>, libraries_path: Option<&'a str>, programs_path: Option<&'a str>, persist_file: Option<&'a str>) -> EvePaths<'a> {
-        EvePaths{files, server_files, libraries_path, programs_path, persist_file}
-    }
-}
-
-fn find_root() -> Option<PathBuf> {
-    let current = current_exe().and_then(|path| canonicalize(path));
-    let mut result = None;
-    match current {
-        Ok(mut cur) => {
-            loop {
-                let lib_path = cur.join("libraries");
-                if lib_path.exists() {
-                    result = Some(cur); // cur.to_str().map(|guy| guy.to_owned());
-                    break;
-                }
-                if !cur.pop() { break; }
-            }
-        },
-        _ => {}
-    }
-    if result.is_none() {
-        println!("{} Unable to find library path and no library path specified. Running without libraries.", BrightYellow.paint("WARN:"));
-    }
-    result
-}
-
 
 //-------------------------------------------------------------------------
 // Main
@@ -305,28 +265,12 @@ fn main() {
 
     let clean = matches.is_present("clean");
 
-    let root = find_root();
-    let default_lib_path = root.clone().map(|root| root.join("libraries"));
-    let default_lib_path_str = if !clean {
-        match default_lib_path {
-            Some(ref path) => path.to_str(),
-            _ => None
-        }
-    } else {
-        None
-    };
-    let default_prog_path = root.map(|root| root.join("examples"));
-    let default_prog_path_str = match default_prog_path {
-        Some(ref path) => path.to_str(),
-        _ => None
-    };
-
-    let eve_paths = EvePaths::new(
-        matches.values_of("EVE_FILES").map_or(vec![], |files| files.collect()),
-        matches.value_of("server-file").map_or(vec![], |file| vec![file]),
-        matches.value_of("libraries-path").or(default_lib_path_str),
-        matches.value_of("programs-path").or(default_prog_path_str),
-        matches.value_of("persist"));
+    let eve_paths = EvePaths::new(clean,
+                                  matches.values_of("EVE_FILES").map_or(vec![], |files| files.collect()),
+                                  matches.value_of("server-file").map_or(vec![], |file| vec![file]),
+                                  matches.value_of("persist"),
+                                  matches.value_of("libraries-path"),
+                                  matches.value_of("programs-path"));
 
     let wport = matches.value_of("port").unwrap_or("3012");
     let hport = matches.value_of("http-port").unwrap_or("8081");

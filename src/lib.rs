@@ -27,6 +27,8 @@ pub mod ops;
 #[macro_use]
 pub mod combinators;
 
+pub mod paths;
+
 pub mod indexes;
 pub mod compiler;
 pub mod parser;
