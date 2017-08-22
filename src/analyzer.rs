@@ -448,12 +448,16 @@ impl BlockInfo {
         BlockInfo { id, has_scans, constraints, field_to_tags, tags, inputs, outputs, input_domains, output_domains, is_pulse }
     }
 
-    pub fn to_ir_categories(&self, interner:&Interner, loop_stack:&mut HashMap<Interned, LoopInfo>, node_id:usize) -> (Vec<IRNode>, Vec<IRNode>, Vec<IRNode>) {
+    pub fn to_ir_categories(&self, interner:&Interner, loop_stack:&mut HashMap<Interned, LoopInfo>, node_id:usize) -> (Vec<IRNode>, Vec<IRNode>, Vec<IRNode>, Vec<IRNode>) {
         let mut conditionals = vec![];
         let mut scans = vec![];
         let mut functions = vec![];
         let mut multi_functions = vec![];
         let mut outputs = vec![];
+
+        let mut creates:HashSet<Field> = HashSet::new();
+        let mut inserts:HashMap<Field, Vec<Constraint>> = HashMap::new();
+        let mut removes:HashMap<Field, Vec<Constraint>> = HashMap::new();
 
         for scan in self.constraints.iter() {
             match scan {
@@ -490,7 +494,15 @@ impl BlockInfo {
                             let out = field_as_string(interner, output, node_id);
                             functions.push(IRNode::Let(out, Box::new(IRNode::Infix(op.to_owned(), Box::new(left), Box::new(right)))));
                         }
-                        _ => { println!("Unknown func: {:?}", op); }
+                        "gen_id" => {
+                            creates.insert(output.clone());
+                        }
+                        _ => {
+                            let ir_params = params.iter().map(|p| field_to_ir(interner, p, node_id)).collect();
+                            let out = field_as_string(interner, output, node_id);
+                            functions.push(IRNode::Let(out, Box::new(IRNode::Call(op.to_owned(), ir_params))));
+
+                        }
                     }
                 }
                 &Constraint::MultiFunction {ref op, ref params, ref outputs, ..} => {
@@ -505,16 +517,64 @@ impl BlockInfo {
                     }
                 }
                 &Constraint::Insert {ref e, ref a, ref v, ..} => {
+                    inserts.entry(e.clone()).or_insert_with(|| vec![]).push(scan.clone());
+                }
+                &Constraint::Remove {ref e, ref a, ref v, ..} => {
+                    removes.entry(e.clone()).or_insert_with(|| vec![]).push(scan.clone());
+                }
+                &Constraint::RemoveAttribute {ref e, ref a, ..} => {
+                    removes.entry(e.clone()).or_insert_with(|| vec![]).push(scan.clone());
+                }
+                &Constraint::RemoveEntity {ref e, ..} => {
+                    removes.entry(e.clone()).or_insert_with(|| vec![]).push(scan.clone());
                 }
                 _ => (),
             }
         }
 
+        for (e, mut cur_inserts) in inserts.iter_mut() {
+            if creates.contains(e) {
+                cur_inserts.sort_by(|x, y| {
+                    match (x, y) {
+                        (&Constraint::Insert { ref a, .. }, &Constraint::Insert { a: ref b, .. }) => a.to_value().partial_cmp(&b.to_value()).unwrap(),
+                        _ => unreachable!()
+                    }
+                });
+                let mut fields = vec![];
+                for insert in cur_inserts {
+                    match insert {
+                        &mut Constraint::Insert { ref a, ref v, .. } => {
+                            if a.to_value() == TAG_INTERNED_ID { continue; }
+                            fields.push((field_as_string(interner, a, node_id), field_to_ir(interner, v, node_id)));
+                        },
+                        _ => unreachable!()
+                    }
+                }
+                // @TODO: this assumes there's only one tag per created object
+                let tag = self.field_to_tags.get(e).unwrap().get(0).unwrap();
+                outputs.push(IRNode::CreateStruct(int_as_string(interner, *tag), fields))
+            } else {
+                // @TODO For now we're just assuming all inserts are sets
+                let tags = self.field_to_tags.get(e).unwrap();
+
+                let mut symbol = None;
+                for tag in tags.iter() {
+                    if let Some(info) = loop_stack.get(tag) {
+                        symbol = Some(info.symbol.to_owned());
+                    }
+                }
+                for insert in cur_inserts {
+                    if let &mut Constraint::Insert { ref a, ref v, .. } = insert {
+                        outputs.push((IRNode::Set(symbol.clone().unwrap(), field_as_string(interner, a, node_id), Box::new(field_to_ir(interner, v, node_id)))));
+                    }
+                }
+            }
+        }
+
         let mut body = vec![];
-        body.extend(scans.drain(..));
         body.extend(functions.drain(..));
         body.extend(outputs.drain(..));
-        (multi_functions, conditionals, body)
+        (scans, multi_functions, conditionals, body)
     }
 
     pub fn gather_tags(&mut self) {
@@ -1142,12 +1202,16 @@ impl Analysis {
         }
 
         // gather ourselves, given the current stack
-        let (multi_functions, conditionals, body) = block.to_ir_categories(interner, loop_stack, node_id);
+        let (scans, multi_functions, conditionals, body) = block.to_ir_categories(interner, loop_stack, node_id);
 
         // pop our loops
         for tag in needs_loop.iter().cloned() {
             let info = loop_stack.remove(&tag).unwrap();
             stack.push(IRNode::For(int_as_string(interner, tag), int_as_string(interner, tag), info.items))
+        }
+
+        if scans.len() > 0 {
+            stack.push(IRNode::Do(scans));
         }
 
         stack.extend(multi_functions);
@@ -1169,6 +1233,9 @@ impl Analysis {
                 }
                 IRNode::For(_, _, ref mut items) => {
                     items.insert(0, thing);
+                }
+                IRNode::Do(ref mut items) => {
+                    items.push(thing);
                 }
                 _ => { unimplemented!() }
             }
@@ -1315,6 +1382,8 @@ pub enum IRNode {
     Range(String, f64, f64, Vec<IRNode>), // symbol, start, stop
     For(String, String, Vec<IRNode>), // tag, symbol
 
+    Call(String, Vec<IRNode>), // name, params
+
     On(String, String, Vec<IRNode>), // tag, symbol
 
     Main(Vec<IRNode>)
@@ -1362,7 +1431,7 @@ pub fn to_javascript(node: &IRNode) -> String {
             let field_setters = fields.iter().map(|&(ref field, _)| {
                 format!("  this.{} = {}", to_javascript_symbol(field), to_javascript_symbol(field))
             }).collect::<Vec<_>>().join(";\n");
-            format!("var all_{} = [];\nfunction {}_struct({}) {{\n{}\n  return this;\n}}", to_javascript_symbol(name), to_javascript_symbol(name), field_args, field_setters)
+            format!("var all_{} = [];\nfunction {}_struct({}) {{\n{}\n  all_{}.push(this);\n  return this;\n}}", to_javascript_symbol(name), to_javascript_symbol(name), field_args, field_setters, to_javascript_symbol(name))
         }
         &IRNode::CreateStruct(ref name, ref fields) => {
             let field_args = fields.iter().map(|&(_, ref value)| to_javascript(value)).collect::<Vec<_>>().join(", ");
@@ -1425,6 +1494,19 @@ pub fn to_javascript(node: &IRNode) -> String {
                 compiled_items.push(to_javascript(item));
             }
             format!("(function main() {{\n{}\n}})();", compiled_items.join("\n"))
+        }
+        &IRNode::Call(ref name, ref params) => {
+            let mut compiled_params = vec![];
+            for param in params.iter() {
+                compiled_params.push(to_javascript(param));
+            }
+            let func = match name.as_str() {
+                "random/number" => "Math.random".to_owned(),
+                "math/sin" => "Math.sin".to_owned(),
+                "math/cos" => "Math.cos".to_owned(),
+                _ => to_javascript_symbol(name),
+            };
+            format!("{}({})", func, compiled_params.join(", "))
         }
         _ => unimplemented!()
     }
