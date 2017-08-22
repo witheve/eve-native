@@ -121,7 +121,10 @@ pub fn value_to_changes(id: &str, attribute: &str, value: Value, node: &str, cha
         Value::String(ref n) => {
             changes.push(new_change(id,attribute,Internable::String(n.clone()),node));
         },
-        Value::Bool(ref n) => println!("Bool: {}",n),
+        Value::Bool(ref n) => {
+            let b = format!("{:?}", n);
+            changes.push(new_change(id,attribute,Internable::String(b),node));
+        },
         Value::Array(ref n) => {
             for (ix, value) in n.iter().enumerate() {
                 let ix = ix + 1;
