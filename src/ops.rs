@@ -573,6 +573,13 @@ pub fn is_register(field:&Field) -> bool {
     }
 }
 
+pub fn format_field(interner:&Interner, field:&Field) -> String{
+    match field {
+        &Field::Register(reg) => format!("Register({})", reg),
+        &Field::Value(interned) => format!("Value({})", format_interned(interner, interned))
+    }
+}
+
 //-------------------------------------------------------------------------
 // Interner
 //-------------------------------------------------------------------------
@@ -838,6 +845,14 @@ impl Interner {
     #[allow(dead_code)]
     pub fn get_value(&self, id:u32) -> &Internable {
         &self.value_to_id[id as usize]
+    }
+
+    #[allow(dead_code)]
+    pub fn get_string(&self, id:u32) -> Option<String> {
+        match self.get_value(id) {
+            &Internable::String(ref str) => Some(str.to_owned()),
+            _ => None
+        }
     }
 }
 
@@ -2291,7 +2306,8 @@ pub enum RunLoopMessage {
     Stop,
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
-    CodeTransaction(Vec<Block>, Vec<String>)
+    CodeTransaction(Vec<Block>, Vec<String>),
+    RemoteCodeTransaction(Vec<PortableBlock>, Vec<String>)
 }
 
 pub struct Program {
@@ -2766,6 +2782,98 @@ impl CodeTransaction {
 }
 
 //-------------------------------------------------------------------------
+// Portable Code Transaction
+//-------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub enum PortableField {
+    Register(usize),
+    Value(Internable)
+}
+impl PortableField {
+    pub fn intern(&self, interner:&mut Interner) -> Field {
+        match self {
+            &PortableField::Register(ix) => Field::Register(ix),
+            &PortableField::Value(ref internable) => Field::Value(interner.internable_to_id(internable.clone()))
+        }
+    }
+}
+impl Field {
+    pub fn to_portable(&self, interner:&Interner) -> PortableField {
+        match self {
+            &Field::Register(ix) => PortableField::Register(ix),
+            &Field::Value(interned) => PortableField::Value(interner.get_value(interned).clone())
+        }
+    }
+}
+
+pub enum PortableConstraint {
+    Scan(PortableField, PortableField, PortableField),
+    Output(PortableField, PortableField, PortableField, bool),
+    Watch(String, Vec<PortableField>),
+    Function(String, PortableField, Vec<PortableField>),
+    Variadic(String, PortableField, Vec<PortableField>),
+    GenId(PortableField, HashMap<String, PortableField>),
+}
+
+impl PortableConstraint {
+    pub fn intern(&self, interner:&mut Interner) -> Constraint {
+        match self {
+            &PortableConstraint::Scan(ref e, ref a, ref v) => make_scan(e.intern(interner), a.intern(interner), v.intern(interner)),
+            &PortableConstraint::Output(ref e, ref a, ref v, commit) => Constraint::Insert{e: e.intern(interner), a: a.intern(interner), v: v.intern(interner), commit},
+            &PortableConstraint::Watch(ref name, ref registers) => {
+                Constraint::Watch {name: name.to_owned(), registers: registers.iter().map(|v| v.intern(interner)).collect()}
+            },
+            &PortableConstraint::Function(ref name, ref output, ref args) => {
+                let params = args.iter().map(|v| v.intern(interner)).collect();
+                make_function(name, params, output.intern(interner))
+            },
+
+            _ => unimplemented!()
+        }
+    }
+}
+
+impl Constraint {
+    pub fn to_portable(&self, i:&Interner) -> PortableConstraint {
+        match self {
+            &Constraint::Scan{ref e, ref a, ref v, ..} => PortableConstraint::Scan(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
+            &Constraint::Insert{ref e, ref a, ref v, commit} => PortableConstraint::Output(e.to_portable(i), a.to_portable(i), v.to_portable(i), commit),
+            &Constraint::Watch{ref name, ref registers} => {
+                PortableConstraint::Watch(name.to_owned(), registers.iter().map(|v| v.to_portable(i)).collect())
+            },
+            &Constraint::Function{ref op, ref output, ref params, ..} => {
+                PortableConstraint::Function(op.to_owned(), output.to_portable(i), params.iter().map(|v| v.to_portable(i)).collect())
+            },
+
+            _ => unimplemented!()
+        }
+    }
+}
+
+pub struct PortableBlock {
+    pub name: String,
+    pub block_id: Internable,
+    pub constraints: Vec<PortableConstraint>
+}
+
+impl PortableBlock {
+    pub fn intern(&self, interner:&mut Interner) -> Block {
+        let constraints = self.constraints.iter().map(|c| c.intern(interner)).collect();
+        let block_id = interner.internable_to_id(self.block_id.clone());
+        Block::new(interner, &self.name, block_id, constraints)
+    }
+}
+
+impl Block {
+    pub fn to_portable(&self, interner:&Interner) -> PortableBlock {
+        let constraints = self.constraints.iter().map(|c| c.to_portable(interner)).collect();
+        let block_id = interner.get_value(self.block_id);
+        PortableBlock{name: self.name.clone(), block_id: interner.get_value(self.block_id).clone(), constraints}
+    }
+}
+
+//-------------------------------------------------------------------------
 // Persister
 //-------------------------------------------------------------------------
 
@@ -2931,9 +3039,11 @@ impl ProgramRunner {
             'outer: loop {
                 match program.incoming.recv() {
                     Ok(RunLoopMessage::Transaction(v)) => {
+                        println!("[{}] Txn started", &program.name);
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new(&mut iter_pool);
                         for cur in v {
+                            // println!("  -> {:?}", cur);
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
                         txn.exec(&mut program, &mut persistence_channel);
@@ -2943,6 +3053,7 @@ impl ProgramRunner {
                     }
                     Ok(RunLoopMessage::RemoteTransaction(v)) => {
                         let start_ns = time::precise_time_ns();
+                        println!("[{}] Remote txn started", &program.name);
                         let mut txn = RemoteTransaction::new(&mut iter_pool);
                         for cur in v {
                             txn.input_change(cur.to_change(&mut program.state.interner));
@@ -2956,21 +3067,50 @@ impl ProgramRunner {
                         break 'outer;
                     }
                     Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                        let start_ns = time::precise_time_ns();
                         let mut tx = CodeTransaction::new();
-                        println!("------ Got Code Transaction! ------");
+                        println!("[{}] Code Txn started", &program.name);
                         if adds.len() > 0 {
-                            println!("### ADDS: ###");
+                            println!("  ADDS:");
                             for block in adds.iter() {
                                 print_block_constraints(&block);
                             }
                         }
                         if removes.len() > 0 {
-                            println!("### REMOVES: ###");
+                            println!("  REMOVES:");
                             for block in removes.iter() {
-                                println!("  - {:?}", block);
+                                println!("    - {:?}", block);
                             }
                         }
                         tx.exec(&mut program, adds, removes);
+                        let end_ns = time::precise_time_ns();
+                        let time = (end_ns - start_ns) as f64;
+                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
+                    }
+                    Ok(RunLoopMessage::RemoteCodeTransaction(adds, removes)) => {
+                        let start_ns = time::precise_time_ns();
+                        let mut tx = CodeTransaction::new();
+                        println!("[{}] Remote Code Txn started", &program.name);
+                        let added_blocks:Vec<Block> = adds.iter().map(|b| b.intern(&mut program.state.interner)).collect();
+
+                        if adds.len() > 0 {
+                            println!("  ADDS:");
+                            for block in added_blocks.iter() {
+                                print_block_constraints(&block);
+                            }
+                        }
+                        if removes.len() > 0 {
+                            println!("  REMOVES:");
+                            for block in removes.iter() {
+                                println!("    - {:?}", block);
+                            }
+                        }
+
+                        tx.exec(&mut program, added_blocks, removes);
+                        let end_ns = time::precise_time_ns();
+                        let time = (end_ns - start_ns) as f64;
+                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
+
                     }
                     Err(_) => { break; }
                 }
