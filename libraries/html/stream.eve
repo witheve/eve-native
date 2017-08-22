@@ -1,0 +1,20 @@
+# Stream Element
+
+search
+  stream = [#html/stream source] 
+watch client/websocket 
+  ("stream/create", stream, source) 
+end
+
+search
+  stream = [#html/stream]
+bind 
+  stream <- [#html/video id: stream]
+end
+
+search
+  stream = [#html/stream play]
+watch client/websocket 
+  ("stream/play", stream, play) 
+end
+
