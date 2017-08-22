@@ -233,7 +233,9 @@ impl Block {
                     let actual_e = if let &Field::Value(val) = e { val } else { 0 };
                     let actual_a = if let &Field::Value(val) = a { val } else { 0 };
                     let actual_v = if let &Field::Value(val) = v { val } else { 0 };
-                    if actual_a == tag {
+                    if actual_e != 0 {
+                        scan_shapes.push(PipeShape::Scan(actual_e, 0, 0));
+                    } else if actual_a == tag {
                         scan_shapes.push(PipeShape::Scan(0, actual_a, actual_v));
                     } else {
                         match tag_mappings.get(e) {
@@ -2424,7 +2426,7 @@ impl Program {
     pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut HashSet<&'a Solver>) {
         let ref pipe_lookup = block_info.pipe_lookup;
         let mut tuple = (0,0,0);
-        // look for (0,0,0), (0, a, 0) and (0, a, v) pipes
+        // look for (0,0,0), (e, 0, 0), (0, a, 0) and (0, a, v) pipes
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
@@ -2433,6 +2435,16 @@ impl Program {
             },
             None => {},
         }
+        tuple.0 = input.e;
+        match pipe_lookup.get(&tuple) {
+            Some(found) => {
+                for pipe in found.iter() {
+                    pipes.insert(pipe);
+                }
+            },
+            None => {},
+        }
+        tuple.0 = 0;
         tuple.1 = input.a;
         match pipe_lookup.get(&tuple) {
             Some(found) => {
