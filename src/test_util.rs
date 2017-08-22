@@ -53,7 +53,7 @@ macro_rules! blocks (($info:tt) => ({
         .replace(": =", ":=")
         .replace(" . ", ".");
     println!("{}", stringy);
-    let blocks = parse_string(&mut program.state.interner, &stringy, "test");
+    let blocks = parse_string(&mut program.state.interner, &stringy, "test", false);
     let mut txn = CodeTransaction::new();
     txn.exec(&mut program, blocks, vec![]);
 

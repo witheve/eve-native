@@ -2999,17 +2999,23 @@ impl RunLoop {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DebugMode {
+    Compile
+}
+
 pub struct ProgramRunner {
     pub program: Program,
     pub name: String,
     paths: Vec<String>,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
+    debug_modes: HashSet<DebugMode>
 }
 
 impl ProgramRunner {
     pub fn new(name:&str) -> ProgramRunner {
-        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![] }
+        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![], debug_modes: HashSet::new() }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -3021,17 +3027,23 @@ impl ProgramRunner {
         self.initial_commits = persister.get_commits();
     }
 
+    pub fn debug(&mut self, mode:DebugMode) {
+        self.debug_modes.insert(mode);
+    }
+
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
         let initial_commits = self.initial_commits;
+        let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
+
         let thread = thread::spawn(move || {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                blocks.extend(parse_file(&mut program.state.interner, &path, true));
+                blocks.extend(parse_file(&mut program.state.interner, &path, true, debug_compile));
             }
             let mut end_ns = time::precise_time_ns();
             println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
