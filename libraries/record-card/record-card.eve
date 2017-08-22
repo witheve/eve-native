@@ -17,15 +17,63 @@ bind
 end
 ~~~
 
+
+## Simple Cards
+
+Explode the AVs of simple record cards.
+~~~ eve
+search
+  card = [#record-card/card record]
+  lookup[entity: record attribute value]
+bind
+  card.entity += record
+  card.av += [attribute value]
+end
+~~~
+
+For simple cards, records are local and can be determined via lookup.
+~~~ eve
+search
+  card = [#record-card/card record]
+  attr-tile = [#record-card/attribute-tile card value]
+  lookup[entity: value]
+bind
+  attr-tile.type += "record"
+end
+~~~
+
+
+## Card Aliasing
+
+Alias record name to title.
+~~~ eve
+search
+  card = [#record-card/card av]
+  title = if av.attribute = "name" then av.value else "Unitled"
+bind
+  card.title += title
+end
+~~~
+
+Alias record tags to tag-set.
+~~~ eve
+search
+  card = [#record-card/card av: [attribute: "tag" value]]
+bind
+  card.tag-set += value
+end
+~~~
+
+
 ## Card
 
 Create a card wrapper for each record card.
 ~~~ eve
 search
-  card = [#record-card/card record]
+  card = [#record-card/card]
 
 bind
-  card <- [#html/element tagname: "card" id: "record-card-{{record}}" children:
+  card <- [#html/element tagname: "card" children:
     [#record-card/header sort: 1 card]
     [#record-card/tag-list sort: 2 card]
     [#record-card/attribute-list sort: 3 card]]
@@ -38,12 +86,9 @@ The card header contains its name and relevant controls.
 ~~~ eve
 search
   header = [#record-card/header card]
-  record = card.record
-  name = if n = record.name then n else "Untitled"
-
 bind
   header <- [#html/element tagname: "header" children:
-    [#html/element #record-card/name tagname: "h2" sort: 1 card text: name]
+    [#html/element #record-card/name tagname: "h2" sort: 1 card text: card.title]
     [#ui/spacer sort: 2 ]
     [#ui/row #record-card/controls sort: 3 card]
   ]
@@ -56,11 +101,10 @@ The tag list contains each tag on the record.
 ~~~ eve
 search
   tag-list = [#record-card/tag-list card]
-  record = card.record
 
 bind
   tag-list <- [#html/element tagname: "section" children:
-    [#ui/text #record-card/tag card text: record.tag]]
+    [#ui/text #record-card/tag card text: card.tag-set]]
 end
 ~~~
 
@@ -70,8 +114,7 @@ The attribute list contains a set of attribute tiles for each attribute on the r
 ~~~ eve
 search
   attr-list = [#record-card/attribute-list card]
-  record = card.record
-  lookup[entity: record attribute value]
+  card.av = [attribute value]
   attribute != "tag"
   attribute != "name"
 
@@ -85,8 +128,7 @@ Attribute tiles contain a set of values whose display is indicated by their type
 ~~~ eve
 search
   attr-tile = [#record-card/attribute-tile card attribute value]
-
-  type = if lookup[entity: value] then "record" else "default"
+  type = if t = attr-tile.type then t else "default"
 
 bind
   attr-tile <- [#ui/row sort: attribute children:
@@ -109,25 +151,25 @@ Record values are shown as record links.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "record" value]
-  name = value.name // if n = value.name then n else value
+  name = if n = value.name then n else value
 
 bind
-  attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" text: name]
+  attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" text: "{{name}}"]
 end
 ~~~
 
 Unnamed record links show the records tags and attributes.
 ~~~ eve
-search
-  attr-value = [#record-card/value type: "record" value]
-  not(value.name)
+// search
+//   attr-value = [#record-card/value type: "record" value]
+//   not(value.name)
 
-  lookup[entity: value attribute]
-  text = if t = value.tag then "#{{t}}"
-         if attribute != "tag" then attribute
+//   lookup[entity: value attribute]
+//   text = if t = value.tag then "#{{t}}"
+//          if attribute != "tag" then attribute
 
-bind
-  attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" | children:
-    [#ui/text sort: text text: "{{text}} "]]
-end
+// bind
+//   attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" | children:
+//     [#ui/text sort: text text: "{{text}} "]]
+// end
 ~~~
