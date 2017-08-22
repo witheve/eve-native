@@ -9,7 +9,7 @@ use eve::combinators::*;
 //--------------------------------------------------------------------
 
 macro_rules! parse_blocks (($info:tt) => ({
-    let mut program = Program::new();
+    let mut program = Program::new("parser test");
     let stringy = stringify!($info).replace("# ", "#")
         .replace("search", "\nsearch")
         .replace("commit", "\ncommit")
