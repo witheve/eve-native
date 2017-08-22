@@ -1,0 +1,180 @@
+# DB Explorer Imports
+
+## General Data from Client
+
+### Client Records
+
+Store client records.
+~~~ eve
+search
+  lookup-remote[for: "all-records" attribute: "record" value: record type: "add"]
+commit
+  [#db-explorer/client-record value: record]
+end
+~~~
+
+Nuke old client records.
+~~~ eve
+search
+  lookup-remote[for: "all-records" attribute: "record" value: record type: "remove"]
+  rec = [#db-explorer/client-record value: record]
+commit
+  rec := none
+end
+~~~
+
+### Client Tags
+
+Store client tags.
+~~~ eve
+search
+  lookup-remote[for: "all-tags" attribute: "tagname" value: tagname type: "add"]
+commit
+  [#db-explorer/client-tag value: tagname]
+end
+~~~
+
+Nuke old client tags.
+~~~ eve
+search
+  lookup-remote[for: "all-tags" attribute: "tagname" value: tagname type: "remove"]
+  rec = [#db-explorer/client-tag value: tagname]
+commit
+  rec := none
+end
+~~~
+
+
+### Client Attributes
+
+Store client attributes.
+~~~ eve
+search
+  lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute type: "add"]
+commit
+  [#db-explorer/client-attribute value: attribute]
+end
+~~~
+
+Nuke old client attributes.
+~~~ eve
+search
+  lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute type: "add"]
+  rec = [#db-explorer/client-attribute value: attribute]
+commit
+  rec := none
+end
+~~~
+
+
+## Completions from Client
+
+### Completion Records
+
+Dump completion records into the editor.
+~~~ eve
+search
+  lookup-remote[for: "completion-record" entity: pattern attribute: "record" value: record type: "add"]
+commit
+  [#db-explorer/completion-record pattern record]
+end
+~~~
+
+Nuke old completion records.
+~~~ eve
+search
+  lookup-remote[for: "completion-record" entity: pattern attribute: "record" value: record type: "remove"]
+  completion = [#db-explorer/completion-record pattern record]
+commit
+  completion := none
+end
+~~~
+
+### Completion Tags
+
+Dump completion tags into the editor.
+~~~ eve
+search
+  lookup-remote[for: "completion-tag" entity: record attribute: "value" value: tag type: "add"]
+commit
+  [#db-explorer/completion-tag record value: tag]
+end
+~~~
+
+Nuke old completion tags.
+~~~ eve
+search
+  lookup-remote[for: "completion-tag" entity: record attribute: "value" value: tag type: "remove"]
+  completion = [#db-explorer/completion-tag record value: tag]
+commit
+  completion := none
+end
+~~~
+
+### Completion Attributes
+
+Dump completion attributes into the editor.
+~~~ eve
+search
+  lookup-remote[for: "completion-attribute" entity: record attribute: "value" value: attribute type: "add"]
+commit
+  [#db-explorer/completion-attribute record value: attribute]
+end
+~~~
+
+Nuke old completion attributes.
+~~~ eve
+search
+  lookup-remote[for: "completion-attribute" entity: record attribute: "value" value: attribute type: "remove"]
+  completion = [#db-explorer/completion-attribute record value: attribute]
+commit
+  completion := none
+end
+~~~
+
+
+## Open Records from Client
+
+### Open Records
+
+When a record is opened, create an exploded representation of it.
+~~~ eve
+search
+  lookup-remote[for: "open-record" entity attribute: "tag" value: "db-explorer/open-record" type: "add"]
+commit
+  [#db-explorer/client-open-record record: entity]
+end
+~~~
+
+Nuke old open records.
+~~~ eve
+search
+  lookup-remote[for: "open-record" entity attribute: "tag" value: "db-explorer/open-record" type: "remove"]
+  open-rec = [#db-explorer/client-open-record record: entity]
+commit
+  open-rec := none
+end
+~~~
+
+### Open Record AVs
+
+Dump open record AVs into their exploded record.
+~~~ eve
+search
+  lookup-remote[for: "open-record-av" entity attribute value type: "add"]
+  open-record = [#db-explorer/client-open-record record: entity]
+commit
+  open-record.av += [attribute value]
+end
+~~~
+
+Nuke old open record AVs.
+~~~ eve
+search
+  lookup-remote[for: "open-record-av" entity attribute value type: "remove"]
+  open-record = [#db-explorer/client-open-record record: entity av]
+  av = [attribute value]
+commit
+  open-record.av -= av
+end
+~~~

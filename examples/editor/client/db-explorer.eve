@@ -1,6 +1,26 @@
 # DB Explorer Client
 
-Send tags in the system to the server.
+Send records in the system to the editor.
+~~~ eve
+search
+  [#editor/program name]
+  lookup[entity]
+  not(entity.tag = "html/instance")
+  not(entity.tag = "html/shortcut-tag")
+  not(entity.tag = "html/shortcut-tagname")
+  not(entity.tag = "html/listener-tag")
+  not(entity.tag = "html/trigger-tag")
+  not(entity.tag = "html/state-tag")
+  not(entity.tag = "ui/deprecated-shortcut-tag")
+  not(entity.tag = "ui/shortcut-tag")
+  not(entity.tag = "svg/shortcut-tag")
+  not(entity.tag = "svg/shortcut-tagname")
+bind
+  lookup-remote[to: name for: "all-records" entity: "tag:db-explorer/all-records|" attribute: "record" value: entity]
+end
+~~~
+
+Send tags in the system to the editor.
 ~~~ eve
 search
   [#editor/program name]
@@ -10,26 +30,12 @@ bind
 end
 ~~~
 
-Send attributes in the system to the server.
+Send attributes in the system to the editor.
 ~~~ eve
 search
   [#editor/program name]
   lookup[attribute]
 bind
   lookup-remote[to: name for: "all-attributes" entity: "tag:db-explorer/all-attributes|" attribute: "attribute" value: attribute]
-end
-~~~
-
-~~~ eve
-commit
-  [#html/div text: "CLIENT"]
-end
-~~~
-
-~~~ eve
-search
-  [#editor/program name]
-bind
-  [#html/div text: "client's editor name: {{name}}"]
 end
 ~~~

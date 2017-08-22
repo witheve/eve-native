@@ -1,77 +1,335 @@
-Add clients.
-~~~ eve
-// search
-//   event = [#router/event/add-client name]
-// commit
-//   event := none
-//   [#client name]
-// end
-~~~
+# DB Explorer
 
-Remove clients.
-~~~ eve
-// search
-//   event = [#router/event/remove-client name]
-//   client = [#client name]
-// commit
-//   client := none
-//   event := none
-// end
-~~~
-
-Store client tags.
-~~~ eve
-search
-  lookup-remote[for: "all-tags" attribute: "tagname" value: tagname]
-bind
-  [#db-explorer/client-tag value: tagname]
-end
-~~~
-
-Store client attributes.
-~~~ eve
-search
-  lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute]
-bind
-  [#db-explorer/client-attribute value: attribute]
-end
-~~~
-
-# DEBUG
-
-Show off tags.
-~~~ eve
-search
-  [#db-explorer/client-tag value: tagname]
-bind
-  [#html/div text: "#{{tagname}}"]
-end
-~~~
-
-~~~ eve
-search
-  [#db-explorer/client-tag value: tagname]
-watch console
-  ("warn" "#{{tagname}}")
-end
-~~~
-
-~~~ eve
-search
-  [#db-explorer/client-tag value: tagname]
-watch client/websocket
-  ("editor/blurgh" "#{{tagname}}")
-end
-~~~
+## Root
 
 ~~~ eve
 commit
-  [#html/div text: "SERVER"]
+  [#ui/row #db-explorer/root | children:
+    [#ui/row #db-explorer/query-box | children:
+      [#ui/token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
+      [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
+    [#ui/row #db-explorer/card-list]]
 end
 ~~~
 
+Draw each matching record as a record symbol.
 ~~~ eve
-watch console
-  ("error" "OHHHHH")
+search
+  [#db-explorer/root record]
+  card-list = [#db-explorer/card-list]
+bind
+  card-list.children += [#db-explorer/record-symbol record]
 end
+~~~
+
+If no records are specified, show any client record.
+~~~ eve
+search
+  not([#db-explorer/completion-record])
+  root = [#db-explorer/root]
+  [#db-explorer/client-record value: record]
+bind
+  root.record += record
+end
+~~~
+
+Otherwise, show the completion records.
+~~~ eve
+search
+  root = [#db-explorer/root]
+  [#db-explorer/completion-record record]
+bind
+  root.record += record
+end
+~~~
+
+
+## Record Symbol
+
+~~~ eve
+search
+  symbol = [#db-explorer/record-symbol record]
+bind
+  symbol <- [#html/div record sort: record | children:
+  [#ui/text record sort: 1 text: "⬢"]]
+end
+~~~
+
+If a record symbol is open, inject its card.
+~~~ eve
+search
+  symbol = [#db-explorer/record-symbol record]
+  root = [#db-explorer/root open: record]
+  [#db-explorer/client-open-record record av]
+bind
+  symbol.children +=
+  [#record-card/card #db-explorer/card sort: 2 entity: record | av]
+end
+~~~
+
+Check if a value tile is a remote record.
+~~~ eve
+search
+  card = [#db-explorer/card]
+  attr-tile = [#record-card/attribute-tile card value]
+  [#db-explorer/client-record value]
+bind
+  attr-tile.type += "record"
+end
+~~~
+
+
+Clicking a record symbol opens its card.
+~~~ eve
+search
+  [#html/event/click element: [#db-explorer/record-symbol record]]
+  root = [#db-explorer/root]
+commit
+  // root.open += record // @FIXME: Why doesn't this work if we do + and -
+  root.open := record
+end
+~~~
+
+Clicking a record link in a card opens its card too.
+~~~ eve
+search
+  [#html/event/click element: [#record-card/record value]]
+  root = [#db-explorer/root]
+commit
+  root.open := value
+end
+~~~
+
+
+~~~ eve
+search
+  root = [#db-explorer/root open: record]
+bind
+  attr-var = [#eve/compiler/variable name: "attribute"]
+  val-var = [#eve/compiler/variable name: "value"]
+  program-var = [#eve/compiler/variable name: "editor-program"]
+  editor-var = [#eve/compiler/variable name: "editor-name"]
+  [#eve/compiler/block #db-explorer/open-record type: "bind" record | constraint:
+    [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
+    [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
+    [#eve/compiler/scan entity: record attribute: attr-var value: val-var]
+    [#eve/compiler/remote-output to: editor-var for: "open-record" entity: record attribute: "tag" value: "db-explorer/open-record"]
+    [#eve/compiler/remote-output to: editor-var for: "open-record-av" entity: record attribute: attr-var value: val-var]]
+end
+~~~
+
+## Search
+
+### Completions
+
+Add tag completions to queries with no existing filters.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  not(string/contains[text: query.value substring: " "])
+  [#db-explorer/client-tag value: tag]
+bind
+  query.completion += [value: tag text: "#{{tag}}"]
+end
+~~~
+
+Add attribute completions to queries with no existing filters.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  not(string/contains[text: query.value substring: " "])
+  [#db-explorer/client-attribute value: attribute]
+bind
+  query.completion += [value: attribute text: attribute]
+end
+~~~
+
+Add tags that match possible completions.
+~~~ eve
+search
+  query = [#db-explorer/query completion-pattern]
+  [#db-explorer/completion-record record]
+  [#db-explorer/completion-tag record value: tag]
+  not(completion-pattern.attribute = [attribute: "tag" value: tag])
+bind
+  query.completion += [value: tag text: "#{{tag}}"]
+end
+~~~
+
+Add tags that match possible completions.
+~~~ eve
+search
+  query = [#db-explorer/query]
+  [#db-explorer/completion-record record]
+  [#db-explorer/completion-attribute record value: attribute]
+  not(completion-pattern.attribute = [attribute])
+bind
+  query.completion += [value: attribute text: attribute]
+end
+~~~
+
+### Token Parsing
+
+If multiple tokens exist, assume all but the last are fully formed tags or attributes to filter upon.
+~~~ eve
+search
+  query = [#db-explorer/query completion-pattern token last-ix]
+  token.ix != last-ix
+
+bind
+  [#db-explorer/tokens-to-pattern pattern: completion-pattern token: token.token]
+end
+~~~
+
+`#db-explorer/tokens-to-pattern` attaches AVs to the records attribute for each token.
+
+If the token starts with `#`, it's a tag.
+~~~ eve
+search
+  [#db-explorer/tokens-to-pattern pattern token]
+  1 = string/index-of[text: token substring: "#"]
+  value = string/substring[text: token from: 2 to: 0]
+bind
+  pattern.attribute += [attribute: "tag" value]
+end
+~~~
+
+If the token doesn't start with `#`, it's an attribute.
+~~~ eve
+search
+  [#db-explorer/tokens-to-pattern pattern token]
+  not(1 = string/index-of[text: token substring: "#"])
+  token != ""
+bind
+  pattern.attribute += [attribute: token]
+end
+~~~
+
+### Completer Generation
+
+Find records that match the current completer pattern.
+When the completion pattern has at least one attribute, create a completer block.
+~~~ eve
+search
+  [#db-explorer/query completion-pattern]
+  completion-pattern.attribute
+bind
+  record-var = [#eve/compiler/variable name: "record" completion-pattern]
+  attr-var = [#eve/compiler/variable name: "attribute" completion-pattern]
+  val-var = [#eve/compiler/variable name: "value-unused" completion-pattern]
+  tag-var = [#eve/compiler/variable name: "tag" completion-pattern]
+  program-var = [#eve/compiler/variable name: "editor-program"]
+  editor-var = [#eve/compiler/variable name: "editor-name"]
+  [#eve/compiler/block #db-explorer/completer type: "bind" | record-var constraint:
+    [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
+    [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
+    [#eve/compiler/scan entity: record-var attribute: attr-var value: val-var]
+    [#eve/compiler/scan entity: record-var attribute: "tag" value: tag-var] // @FIXME: This won't work on records with no tags **********
+    [#eve/compiler/remote-output to: editor-var for: "completion-record" entity: completion-pattern attribute: "record" value: record-var]
+    [#eve/compiler/remote-output to: editor-var for: "completion-attribute" entity: record-var attribute: "value" value: attr-var]
+    [#eve/compiler/remote-output to: editor-var for: "completion-tag" entity: record-var attribute: "value" value: tag-var]]
+end
+~~~
+
+Fully formed AVs translate into eAV scans.
+~~~ eve
+search
+  [#db-explorer/query completion-pattern: [attribute: [attribute value]]]
+  block = [#db-explorer/completer record-var]
+bind
+  block.constraint += [#eve/compiler/scan entity: record-var attribute value]
+end
+~~~
+
+AVs with only an A translate into eAv scans.
+~~~ eve
+search
+  [#db-explorer/query completion-pattern]
+  completion-pattern = [attribute]
+  not(attribute.value)
+  block = [#db-explorer/completer record-var]
+bind
+  value-var = [#eve/compiler/variable completion-pattern attribute]
+  block.constraint += [#eve/compiler/scan entity: record-var attribute: attribute.attribute value: value-var]
+end
+~~~
+
+
+# DEBUG
+
+Dump open records into the server for now...
+~~~ eve
+// search
+//   lookup-remote[for: "open-record" entity attribute value type]
+// commit
+//   lookup[entity attribute value type]
+// end
+~~~
+
+
+<!-- Nuke old open records into the server for now... -->
+<!-- ~~~ eve -->
+<!-- search -->
+<!--   lookup-remote[for: "open-record" entity attribute value type: "remove"] -->
+<!--   lookup[entity attribute value] -->
+<!-- commit -->
+<!--   lookup[entity attribute value] := none -->
+<!-- end -->
+<!-- ~~~ -->
+
+~~~ eve
+// search
+//   [#db-explorer/client-record value: record]
+// watch console
+//   ("warn" record)
+// end
+~~~
+
+~~~ eve
+// search
+//   root = [#db-explorer/root record]
+// bind
+//   root.open += record
+// end
+~~~
+
+
+~~~ eve
+// search
+//   root = [#db-explorer/root open: record]
+// bind
+//   output-var = [#eve/compiler/variable name: "output"]
+//   attr-row-var = [#eve/compiler/variable name: "attr-row"]
+//   attr-var = [#eve/compiler/variable name: "attribute"]
+//   val-var = [#eve/compiler/variable name: "value"]
+//   // program-var = [#eve/compiler/variable name: "editor-program"]
+//   // editor-var = [#eve/compiler/variable name: "editor-name"]
+//   [#eve/compiler/block #db-explorer/open-record type: "bind" record | constraint:
+//     // [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
+//     // [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
+//     [#eve/compiler/scan entity: record attribute: attr-var value: val-var]
+
+//     [#eve/compiler/gen-id entity: output-var | attribute: ("tag" "record")]
+//     [#eve/compiler/output entity: output-var attribute: "tag" value: "html/div"]
+//     [#eve/compiler/output entity: output-var attribute: "record" value: record]
+//     [#eve/compiler/output entity: output-var attribute: "children" value: attr-row-var]
+
+//     [#eve/compiler/gen-id entity: attr-row-var | attribute: ("tag" "record" "attribute" "text")]
+//     [#eve/compiler/output entity: attr-row-var attribute: "tag" value: "html/div"]
+//     [#eve/compiler/output entity: attr-row-var attribute: "record" value: record]
+//     [#eve/compiler/output entity: attr-row-var attribute: "attribute" value: attr-var]
+//     [#eve/compiler/output entity: attr-row-var attribute: "text" value: val-var]
+//     ]
+// end
+~~~
+
+~~~ eve
+// commit
+//   output-var = [#eve/compiler/variable name: "output"]
+//   [#eve/compiler/block #db-explorer/open-record type: "commit" | constraint:
+//     [#eve/compiler/gen-id entity: output-var | attribute: ("tag" "text")]
+//     [#eve/compiler/output entity: output-var attribute: "tag" value: "html/div"]
+//     [#eve/compiler/output entity: output-var attribute: "text" value: "kitteh???"]
+//     ]
+// end
 ~~~
