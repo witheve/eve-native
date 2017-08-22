@@ -440,8 +440,7 @@ export class HTML extends Library {
   _inputEventHandler(tagname:string) {
     return (event:Event) => {
       let target = event.target as (Instance & HTMLInputElement);
-      let elementId = target.__element;
-      if(elementId) {
+      if(this.isInstance(target)) {
         if(target.classList.contains("html-autosize-input")) {
           target.size = target.value.length || 1;
         }
@@ -449,7 +448,7 @@ export class HTML extends Library {
         let eavs:RawEAV[] = [
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "element", elementId],
+          [eventId, "element", target.__element],
           [eventId, "value", target.value]
         ];
         if(eavs.length) this._sendEvent(eavs);
@@ -462,13 +461,12 @@ export class HTML extends Library {
       let target = event.target as (Instance & HTMLInputElement);
       if(!(target instanceof HTMLInputElement)) return;
       if(target.type == "checkbox" || target.type == "radio") {
-        let elementId = target.__element;
-        if(elementId) {
+        if(this.isInstance(target)) {
           let eventId = createId();
           let eavs:RawEAV[] = [
             [eventId, "tag", "html/event"],
             [eventId, "tag", `html/event/${tagname}`],
-            [eventId, "element", elementId],
+            [eventId, "element", target.__element],
             [eventId, "checked", ""+target.checked]
           ];
           let name = target.name;
@@ -484,7 +482,7 @@ export class HTML extends Library {
                 [event2Id, "checked", "false"]
               );
             }
-            this._checkedRadios[name] = elementId;
+            this._checkedRadios[name] = target.__element;
           }
           if(eavs.length) this._sendEvent(eavs);
         }
@@ -540,13 +538,12 @@ export class HTML extends Library {
   _focusEventHandler(tagname:string) {
     return (event:FocusEvent) => {
       let target = event.target as (Instance & HTMLInputElement);
-      let elementId = target.__element;
-      if(elementId) {
+      if(this.isInstance(target)) {
         let eventId = createId();
         let eavs:RawEAV[] = [
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "element", elementId]
+          [eventId, "element", target.__element]
         ];
         if(target.value !== undefined) eavs.push([eventId, "value", target.value]);
         if(eavs.length) this._sendEvent(eavs);
