@@ -1659,16 +1659,24 @@ impl Compilation {
         let mut ix = 0;
         for c in self.constraints.iter() {
             for reg in c.get_registers() {
-                regs.entry(reg).or_insert_with(|| {
-                    match var_values.get(&reg) {
-                        Some(field @ &Field::Value(_)) => field.clone(),
-                        _ => {
+                if regs.contains_key(&reg) { continue; }
+
+                let val = match var_values.get(&reg) {
+                    Some(field @ &Field::Value(_)) => field.clone(),
+                    Some(field @ &Field::Register(_)) => {
+                        regs.entry(field.clone()).or_insert_with(|| {
                             let out = Field::Register(ix);
                             ix += 1;
                             out
-                        }
+                        }).clone()
                     }
-                });
+                    _ => {
+                        let out = Field::Register(ix);
+                        ix += 1;
+                        out
+                    }
+                };
+                regs.insert(reg, val);
             }
         }
         for c in self.constraints.iter_mut() {
