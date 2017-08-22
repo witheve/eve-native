@@ -65,18 +65,18 @@ pub struct ClientHandler {
 
 impl ClientHandler {
     pub fn new(out:WSSender, router: Arc<Mutex<Router>>, eve_paths:&EvePaths, clean: bool, client_name:&str) -> ClientHandler {
-        let router_channel = router.lock().unwrap().deref().get_channel();
+        let router_channel = router.lock().expect("ERROR: Failed to lock router: Cannot clone channel.").deref().get_channel();
         let mut runner = ProgramRunner::new(client_name);
         let outgoing = runner.program.outgoing.clone();
-        router.lock().unwrap().register(&client_name, outgoing.clone());
+        router.lock().expect("ERROR: Failed to lock router: Cannot register new client.").register(&client_name, outgoing.clone());
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone(), false)));
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone(), client_name)));
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
-            runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().unwrap().deref())));
+            runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().expect("ERROR: Failed to lock router: Cannot init RemoteWatcher.").deref())));
 
             let editor_watcher = EditorWatcher::new(&mut runner, router.clone(), out.clone(), eve_paths.libraries_path.clone(), eve_paths.programs_path.clone());
             runner.program.attach(Box::new(editor_watcher));
@@ -117,7 +117,7 @@ impl Handler for ClientHandler {
                         RawChange { e:e.into(), a:a.into(), v:v.into(), n:Internable::String("input".to_string()),count:-1 }
                     }));
 
-                    self.router_channel.send(RouterMessage::Local(client, raw_changes)).unwrap();
+                    self.router_channel.send(RouterMessage::Local(client, raw_changes)).expect("ERROR: Failed to send message to client");
                 }
                 _ => { }
             }
@@ -176,7 +176,7 @@ fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool) {
 
     if !clean {
         runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
-        runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
+        runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone(), false)));
         runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
         runner.program.attach(Box::new(ConsoleWatcher::new()));
         runner.program.attach(Box::new(PanicWatcher::new()));
@@ -297,17 +297,23 @@ fn main() {
                                .takes_value(true))
                           .arg(Arg::with_name("clean")
                                .short("C")
-                               .long("Clean")
+                               .long("clean")
                                .help("Starts Eve with a clean database and no watchers (false)"))
                           .get_matches();
 
     println!("");
 
+    let clean = matches.is_present("clean");
+
     let root = find_root();
     let default_lib_path = root.clone().map(|root| root.join("libraries"));
-    let default_lib_path_str = match default_lib_path {
-        Some(ref path) => path.to_str(),
-        _ => None
+    let default_lib_path_str = if !clean {
+        match default_lib_path {
+            Some(ref path) => path.to_str(),
+            _ => None
+        }
+    } else {
+        None
     };
     let default_prog_path = root.map(|root| root.join("examples"));
     let default_prog_path_str = match default_prog_path {
@@ -321,8 +327,6 @@ fn main() {
         matches.value_of("libraries-path").or(default_lib_path_str),
         matches.value_of("programs-path").or(default_prog_path_str),
         matches.value_of("persist"));
-
-    let clean = matches.is_present("clean");
 
     let wport = matches.value_of("port").unwrap_or("3012");
     let hport = matches.value_of("http-port").unwrap_or("8081");
