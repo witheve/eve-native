@@ -737,6 +737,25 @@ bind
 end
 ~~~
 
+Space-separated words are tokens of the completer.
+~~~ eve
+search
+  completer = [#ui/token-completer value]
+  (token, ix) = string/split[text: value by: " "]
+bind
+  completer.token += [#ui/token-completer/token token ix]
+end
+~~~
+
+Track the index of the last token.
+~~~ eve
+search
+  completer = [#ui/token-completer token: [ix]]
+  gather/top[for: ix per: completer limit: 1]
+bind
+  completer.last-ix += ix
+end
+~~~
 
 ### Handlers
 
