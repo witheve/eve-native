@@ -49,7 +49,9 @@ Alias record name to title.
 ~~~ eve
 search
   card = [#record-card/card]
-  title = if av = card.av av.attribute = "name" then av.value else "Unitled"
+  title = if t = card.title t != "Untitled" then t
+          else if av = card.av av.attribute = "name" then av.value
+          else "Untitled"
 bind
   card.title += title
 end
@@ -151,25 +153,10 @@ Record values are shown as record links.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "record" value]
-  name = if n = value.name then n else value
-
+  title = if t = attr-value.title then t
+          if n = value.name then n
+          else value
 bind
-  attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" text: "{{name}}"]
+  attr-value <- [#html/a #record-card/record rec: value href: "#" text: title]
 end
-~~~
-
-Unnamed record links show the records tags and attributes.
-~~~ eve
-// search
-//   attr-value = [#record-card/value type: "record" value]
-//   not(value.name)
-
-//   lookup[entity: value attribute]
-//   text = if t = value.tag then "#{{t}}"
-//          if attribute != "tag" then attribute
-
-// bind
-//   attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" | children:
-//     [#ui/text sort: text text: "{{text}} "]]
-// end
 ~~~

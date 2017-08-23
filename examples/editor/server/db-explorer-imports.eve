@@ -59,13 +59,33 @@ end
 Nuke old client attributes.
 ~~~ eve
 search
-  lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute type: "add"]
+  lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute type: "remove"]
   rec = [#db-explorer/client-attribute value: attribute]
 commit
   rec := none
 end
 ~~~
 
+### Client Names
+
+Store client names.
+~~~ eve
+search
+  lookup-remote[for: "all-names" entity attribute: "name" value: name type: "add"]
+commit
+  [#db-explorer/client-name entity name]
+end
+~~~
+
+Nuke old client names.
+~~~ eve
+search
+  lookup-remote[for: "all-names" entity attribute: "name" value: name type: "remove"]
+  rec = [#db-explorer/client-name entity name]
+commit
+  rec := none
+end
+~~~
 
 ## Completions from Client
 

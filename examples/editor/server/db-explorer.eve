@@ -8,6 +8,7 @@ commit
     [#ui/row #db-explorer/query-box | children:
       [#ui/token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
       [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
+    [#ui/row #db-explorer/symbol-list]
     [#ui/row #db-explorer/card-list]]
 end
 ~~~
@@ -16,9 +17,9 @@ Draw each matching record as a record symbol.
 ~~~ eve
 search
   [#db-explorer/root record]
-  card-list = [#db-explorer/card-list]
+  symbol-list = [#db-explorer/symbol-list]
 bind
-  card-list.children += [#db-explorer/record-symbol record]
+  symbol-list.children += [#db-explorer/record-symbol record]
 end
 ~~~
 
@@ -49,23 +50,48 @@ end
 ~~~ eve
 search
   symbol = [#db-explorer/record-symbol record]
+  title = if [#db-explorer/client-name entity: record name: t] then t else "Untitled"
 bind
   symbol <- [#html/div record sort: record | children:
-  [#ui/text record sort: 1 text: "⬢"]]
+  [#ui/text record sort: 1 text: "⬢ {{title}}"]]
 end
 ~~~
 
-If a record symbol is open, inject its card.
+Clicking a record symbol opens its card.
 ~~~ eve
 search
-  symbol = [#db-explorer/record-symbol record]
-  root = [#db-explorer/root open: record]
-  [#db-explorer/client-open-record record av]
-bind
-  symbol.children +=
-  [#record-card/card #db-explorer/card sort: 2 entity: record | av]
+  [#html/event/click element: [#db-explorer/record-symbol record]]
+  root = [#db-explorer/root]
+commit
+  // root.open += record // @FIXME: Why doesn't this work if we do + and -
+  root.open := record
 end
 ~~~
+
+## Record Card
+
+If a record is open, inject its card.
+~~~ eve
+search
+  root = [#db-explorer/root open: record]
+  [#db-explorer/client-open-record record av]
+  card-list = [#db-explorer/card-list]
+bind
+  card-list.children +=
+  [#record-card/card #db-explorer/card sort: record entity: record | av]
+end
+~~~
+
+Inject titles for open cards.
+~~~ eve
+search
+  card = [#record-card/card #db-explorer/card entity]
+  [#db-explorer/client-name entity name]
+bind
+  card.title += name
+end
+~~~
+
 
 Check if a value tile is a remote record.
 ~~~ eve
@@ -78,17 +104,28 @@ bind
 end
 ~~~
 
-
-Clicking a record symbol opens its card.
+Apply titles to record value tiles for remote records.
 ~~~ eve
 search
-  [#html/event/click element: [#db-explorer/record-symbol record]]
-  root = [#db-explorer/root]
-commit
-  // root.open += record // @FIXME: Why doesn't this work if we do + and -
-  root.open := record
+  card = [#db-explorer/card]
+  attr-tile = [#record-card/attribute-tile type: "record" card]
+  attr-value = [#record-card/value attr-tile value]
+  [#db-explorer/client-name entity: value name: title]
+bind
+  attr-value.title += title
 end
 ~~~
+
+~~~ eve
+search
+  attr-tile = [#record-card/attribute-tile type: "record" card]
+  attr-value = [#record-card/value attr-tile value title]
+  gather/count[for: title per: attr-value] > 1
+watch console
+  ("error" "{{title}} --> {{attr-value}}")
+end
+~~~
+
 
 Clicking a record link in a card opens its card too.
 ~~~ eve

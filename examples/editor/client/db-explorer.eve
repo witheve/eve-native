@@ -5,6 +5,7 @@ Send records in the system to the editor.
 search
   [#editor/program name]
   lookup[entity]
+  not(entity.tag = "editor/tag-metrics")
   not(entity.tag = "html/instance")
   not(entity.tag = "html/shortcut-tag")
   not(entity.tag = "html/shortcut-tagname")
@@ -37,5 +38,45 @@ search
   lookup[attribute]
 bind
   lookup-remote[to: name for: "all-attributes" entity: "tag:db-explorer/all-attributes|" attribute: "attribute" value: attribute]
+end
+~~~
+
+Send names of records in the system to the editor.
+~~~ eve
+search
+  [#editor/program name:editor]
+  entity = [name]
+bind
+  lookup-remote[to: editor for: "all-names" entity attribute: "name" value: name]
+end
+~~~
+
+Compute some tag metrics to provide reasonable default titles for unnamed records.
+~~~ eve
+search
+  record = [tag]
+  tag != "editor/tag-metrics"
+  count = gather/count[for: record, per: tag]
+bind
+  [#editor/tag-metrics tagname: tag count]
+end
+~~~
+
+Unnamed records send along their most specific tag as a name.
+~~~ eve
+search
+  [#editor/program name:editor]
+  entity = [tag]
+  not(entity.name)
+  [#editor/tag-metrics tagname: tag count]
+  not(entity = [tag: tag2]
+      [#editor/tag-metrics tagname: tag2 count: c2]
+       c2 < count)
+  not(entity = [tag: tag2]
+      [#editor/tag-metrics tagname: tag2 count: c2]
+      c2 = count
+      tag2 < tag)
+bind
+  lookup-remote[to: editor for: "all-names" entity attribute: "name" value: "#{{tag}}"]
 end
 ~~~
