@@ -2404,7 +2404,10 @@ impl Program {
 
     pub fn unregister_block(&mut self, name:String) {
         if let Some(block_ix) = self.block_info.block_names.remove(&name) {
-            let block = self.block_info.blocks.remove(block_ix);
+            let block = self.block_info.blocks.swap_remove(block_ix);
+            if let Some(neue) = self.block_info.blocks.get(block_ix) {
+                self.block_info.block_names.insert(neue.name.to_owned(), block_ix);
+            }
             for shape_set in block.shapes.iter() {
                 for shape in shape_set.iter() {
                     match shape {
