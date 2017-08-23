@@ -1,5 +1,7 @@
 # Setlist Aggregator
 
+
+
 This app takes a set of concerts, and accesses the setlist.fm api to retrieve
 the setlist that was played at that concert. This is cross-referenced with
 the MS Groove API to create playlists for those concerts.
@@ -10,10 +12,14 @@ commit
   [#setlist-app
     groove-client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba"
     groove-client-secret: "UskJMTfCRNffOLbuBnGSBb2"
-    setlist-api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275"]
+    groove-endpoint: "https://music.xboxlive.com"
+    setlist-api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275"
+    setlist-endpoint: "https://api.setlist.fm/rest"]
 end
 
-## Logging in to setlist
+
+
+## Logging-in to MS Groove
 
 Logging in is kicked off by clicking the login button.
 
@@ -37,68 +43,54 @@ commit
   [#html/redirect #req url: address]
 end
 
-A successful login will return to the app a code. This is exchanged for an
-access token with a POST request.
+A successful login will return to the app an access token
 
 search
-  [#html/event/page-show url: [#html/url query: [#html/url/query key: "code" value: code]]]
-  [#setlist-app groove-client-id groove-client-secret]
-  redirect-uri = string/url-encode[text: "http://localhost:8081/#setlist-callback"]
-  auth-token = string/encode[text: "{{groove-client-id}}:{{groove-client-secret}}"]
-  body = "grant_type=authorization_code&code={{code}}&redirect_uri={{redirect-uri}}"
-  content-length = string/length[text: body]
+  [#html/event/page-show url: [#html/url query: [#html/url/query key: "access_token" value: access-token]]]
+  app = [#setlist-app groove-client-id groove-client-secret]
+  //redirect-uri = string/url-encode[text: "http://localhost:8081/#setlist-callback"]
+  //auth-token = string/encode[text: "{{groove-client-id}}:{{groove-client-secret}}"]
+  //body = "grant_type=authorization_code&code={{code}}&redirect_uri={{redirect-uri}}"
+  //content-length = string/length[text: body]
 commit
-  [#http/request #setlist-token address: "https://accounts.setlist.com/api/token" method: "POST" body headers: 
-    [#http/header key: "Authorization" value: "Basic {{auth-token}}"]
-    [#http/header key: "Content-Type" value: "application/x-www-form-urlencoded"]
-    [#http/header key: "Content-Length" value: "{{content-length}}"]]
+  app.groove-access-token := access-token
+  //[#http/request #setlist-token address: "https://accounts.setlist.com/api/token" method: "POST" body headers: 
+    //[#http/header key: "Authorization" value: "Basic {{auth-token}}"]
+    //[#http/header key: "Content-Type" value: "application/x-www-form-urlencoded"]
+    //[#http/header key: "Content-Length" value: "{{content-length}}"]]
 end
 
-Parse the response body, which contains the access token
+
+
+## Getting Groove User Data
+
+With an access token in hand, we can use that to get user-specific information.
 
 search
-  [#setlist-token response: [body]]
+  [#setlist-app groove-access-token]
 commit
-  [#json/decode #setlist-auth-token json: body]
+  [#http/request #groove-profile address: "https://music.xboxlive.com/1/user/music/profile" method: "GET" headers: 
+    [#http/header key: "Authorization" value: "Bearer  {{groove-access-token}}"]]
 end
 
-Place the access token in the app record, so we can use it to fetch data from
-the user's account.
-
 search
-  [#setlist-auth-token json-object: auth]
+  [#groove-profile response]
   setlist = [#setlist-app]
 commit
-  setlist.access-token := auth.access_token
-  setlist.refresh-token := auth.refresh_token
+  setlist.user := [#setlist/user]
+  //[#json/decode #groove-profile json: response.body]
 end
 
-## Getting User Data
-
-With an access token in hand, we can use that to get user-specific information
-like username and email address.
+Create a user record on the app
 
 search
-  [#setlist-app access-token]
-commit
-  [#http/request #profile-content address: "https://api.setlist.com/v1/me" method: "GET" headers: 
-    [#http/header key: "Authorization" value: "Bearer  {{access-token}}"]]
-end
-
-search
-  [#profile-content response: [body]]
-commit
-  [#json/decode #setlist-profile json: body]
-end
-
-Save this info in the setlist app
-
-search
-  [#setlist-profile json-object: profile]
+  [#groove-profile json-object: profile]
   setlist = [#setlist-app]
 commit
-  setlist.user := [#setlist/user name: profile.id e-mail: profile.email]
+  setlist.user := [#setlist/user]
 end
+
+
 
 ## The User Interface
 
@@ -109,21 +101,69 @@ bind
 end
 
 commit
-  [#ui/input #artist-name]
-  [#ui/button #search-artist text: "Search"]
+  [#html/div children: 
+    [#ui/input #artist-name]
+    [#ui/button #search-artist text: "Search"]]
+end
+
+commit
+  [#ui/button #get-song text: "Get a song"]
+end
+
+search
+  [#html/event/click element: [#get-song]]
+  [#setlist-app groove-access-token groove-endpoint]
+  track-id = "music.8D6KGWZQ8TPR"
+  address = "{{groove-endpoint}}/1/content/{{track-id}}/stream?clientInstanceId=2E19AC92-8600-11E7-8200-4CC9641576C9"
+commit
+  [#http/request #get-song-req address headers: 
+    [#http/header key: "Authorization" value: "Bearer {{groove-access-token}}"]]
+end
+
+search
+  [#get-song-req response: [body]]
+commit
+  [#json/decode #get-song-req json: body]
+end
+
+search
+  [#get-song-req json-object: song]
+commit
+  [#html/div children: 
+    [#html/stream #song style: [display: "none"] source: song.Url type: song.ContentType]]
 end
 
 
-## Get Data From setlist
-
+search
+  [#song #ready]
+commit
+  [#html/button #play-song text: "Play"]
+end
 
 search
-  [#setlist-app access-token]
-  address = "https://api.setlist.com/v1/search?q=incubus+glitterbomb+8&type=track"
+  [#html/event/click element]
+  element = [#play-song]
+  song = [#song]
+  (play, text) = if song = [play: "true"] then ("false","Play")
+                 if song = [play: "false"] then ("true","Pause")
+                 else ("true","Pause")
 commit
-  [#http/request #search-setlist address headers: 
-      [#http/header key: "Authorization" value: "Bearer {{access-token}}"]
-      [#http/header key: "Accept" value: "application/json"]]
+  song.play := play
+  element.text := text
+end
+
+
+
+## Get Data From Setlist.fm
+
+disabled
+search
+  //[#setlist-app access-token setlist-endpoint]
+  //address = "{{setlist-endpoint}}/v1/search?q=incubus+glitterbomb+8&type=track"
+commit
+  //[#http/request #search-setlist address headers: 
+      //[#http/header key: "Authorization" value: "Bearer {{access-token}}"]
+      //[#http/header key: "Accept" value: "application/json"]]
 end
 
 search
@@ -141,50 +181,77 @@ end
 
 
 
-## Get Data From Setlist.fm 
+## Search Groove
 
 search
-  [#setlist-app setlist-api-key]
+  [#setlist-app groove-access-token groove-endpoint]
   [#html/event/click element: [#search-artist]]
   [#artist-name value]
   artist = string/replace[text: value replace: " " with: "+"]
-  //address = "https://api.setlist.fm/rest/1.0/search/artists?artistName={{artist}}"
-  address = "https://api.setlist.fm/rest/1.0/search/setlists?artistName=Incubus&date=16-08-2017&p=1"
+  //address = "{{setlist-endpoint}}/1.0/search/artists?artistName={{artist}}"
+  //address = "{{setlist-endpoint}}/1.0/search/setlists?artistName={{artist}}&date=16-08-2017&p=1"
+  address = "{{groove-endpoint}}/1/content/music/search?q={{artist}}"
 commit
-  [#http/request #setlist-fm artist: value, address headers: 
-      [#http/header key: "x-api-key" value: setlist-api-key]
-      [#http/header key: "Accept" value: "application/json"]]
+  [#http/request #groove-search address headers: 
+    [#http/header key: "Authorization" value: "Bearer {{groove-access-token}}"]]
+  //[#http/request #setlist-fm artist: value, address headers: 
+      //[#http/header key: "x-api-key" value: setlist-api-key]
+      //[#http/header key: "Accept" value: "application/json"]]
 end
 
 search
-  [#setlist-fm response: [body]]
+  [#groove-search #foo response: [body]]
 commit
-  [#json/decode #setlist-fm json: body]
+  [#json/decode #groove-search json: body]
 end
 
 search
-  [#setlist-fm json-object: setlistsearch]
+  [#groove-search json-object: setlistsearch]
   //setlistsearch.artist.value.name = artist
   //artist = setlistsearch.artist.value
 commit
-  [#html/div text: "{{setlistsearch.setlist.value.sets.set.value.song.index}} - {{setlistsearch.setlist.value.sets.set.value.song.value.name}}"] 
+  [#html/div text: "{{setlistsearch.tracks}}"] 
 end
 
-e3e0abcd-7671-4482-a9d8-462f5acc9be5
 
 
 ## Misc Diagnostics
 
-disabled
 search
+  [#disable]
   [#http/request/error error]
 commit
   [#html/div text: error]
 end
 
-disabled
 search
+  [#disable]
   [#http/response body]
 commit
-  [#html/div text: body]
+  [#html/div text: "THIS IS PART OF HTE BODY {{body}}"]
+end
+
+search
+  [#disable]
+  q = [#http/body-chunk chunk request index]
+commit
+  [#html/div request children: 
+    [#html/div request text: index]
+    [#html/div request text: chunk]]
+end
+
+search
+  [#disable]
+  [#http/request/done request]
+commit
+  [#html/div request text: "DONE!!@#!@#!@"]
+end
+
+search
+  [#disable]
+  [#http/fully-body body]
+commit
+  [#html/div children: 
+    [#html/div text: "FULL TEXT"]
+    [#html/div text: body]]
 end
