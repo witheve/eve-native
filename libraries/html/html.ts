@@ -10,7 +10,8 @@ export interface Instance extends HTMLElement {
   __styles?: RawValue[],
   __sort?:RawValue,
   __autoSort?:RawValue,
-  listeners?: {[event:string]: boolean}
+  __listeners?: {[event:string]: boolean},
+  __capturedKeys?: {[code:number]: boolean}
 }
 
 export interface Style extends RawMap<RawValue> {__count: number}
@@ -366,15 +367,34 @@ export class HTML extends Library {
       for(let [instanceId, listener] of removes || EMPTY) {
         let instance = this._instances[instanceId];
         if(!instance) continue;
-        if(!instance.listeners) throw new Error(`Cannot remove never-added listener '${listener}' on instance '${instanceId}'.`);
-        else instance.listeners[listener] = false;
+        if(!instance.__listeners) throw new Error(`Cannot remove never-added listener '${listener}' on instance '${instanceId}'.`);
+        else instance.__listeners[listener] = false;
       }
 
       for(let [instanceId, listener] of adds || EMPTY) {
         let instance = this._instances[instanceId];
         if(!instance) throw new Error(`Unable to add listener '${listener}' on nonexistent instance '${instanceId}'.`);
-        if(!instance.listeners) instance.listeners = {[listener]: true};
-        else instance.listeners[listener] = true;
+        if(!instance.__listeners) instance.__listeners = {[listener]: true};
+        else instance.__listeners[listener] = true;
+      }
+    }),
+    "export captured keys": handleTuples(({adds, removes}) => {
+      for(let [instanceId, key] of removes || EMPTY) {
+        let instance = this._instances[instanceId];
+        if(!instance) continue;
+        if(!instance.__capturedKeys) throw new Error(`Cannot remove never-added captured key '${key}' on instance '${instanceId}'.`);
+        else {
+          let code = this._reverseKeyMap[key] || +key;
+          instance.__capturedKeys[code] = false;
+        }
+      }
+
+      for(let [instanceId, key] of adds || EMPTY) {
+        let instance = this._instances[instanceId];
+        if(!instance) throw new Error(`Unable to add captured key '${key}' on nonexistent instance '${instanceId}'.`);
+        let code = this._reverseKeyMap[key] || +key;
+        if(!instance.__capturedKeys) instance.__capturedKeys = {[code]: true};
+        else instance.__capturedKeys[code] = true;
       }
     })
   };
@@ -411,7 +431,7 @@ export class HTML extends Library {
         while(current && current != this._container) {
           if(this.isInstance(current)) {
             eavs.push([eventId, "element", current.__element]);
-            if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
+            if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
               capturesContextMenu = true;
             }
           }
@@ -431,7 +451,7 @@ export class HTML extends Library {
       let captureContextMenu = false;
       let current:Element|null = event.target as Element;
       while(current && this.isInstance(current)) {
-        if(current.listeners && current.listeners["context-menu"] === true) {
+        if(current.__listeners && current.__listeners["context-menu"] === true) {
           captureContextMenu = true;
         }
         current = current.parentElement;
@@ -510,6 +530,11 @@ export class HTML extends Library {
     91: "meta"
   }
 
+  _reverseKeyMap:{[name: string]: number|undefined} = Object.keys(this._keyMap).reduce((memo:any, code:string) => {
+    memo[this._keyMap[+code]!] = +code;
+    return memo;
+  }, {});
+
   _keyEventHandler(tagname:string) {
     return (event:KeyboardEvent) => {
       if(event.repeat) return;
@@ -532,6 +557,9 @@ export class HTML extends Library {
         while(current && current != this._container) {
           if(this.isInstance(current)) {
             eavs.push([eventId, "element", current.__element]);
+            if(current.__listeners && current.__listeners["html/listener/key"] && current.__capturedKeys && current.__capturedKeys[code]) {
+              event.preventDefault();
+            }
           }
           current = current.parentElement;
         };
@@ -564,7 +592,7 @@ export class HTML extends Library {
 
       let eavs:RawEAV[] = [];
       let elemId = target.__element!;
-      if(target.listeners && target.listeners["hover"]) {
+      if(target.__listeners && target.__listeners["hover"]) {
         let eventId = createId();
         eavs.push(
           [eventId, "tag", "html/event"],
