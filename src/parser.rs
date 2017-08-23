@@ -276,7 +276,21 @@ parser!(lookup(state) -> Node<'a> {
     tag!(state, "lookup[");
     let attributes = many!(state, function_attribute);
     tag!(state, "]");
-    pos_result!(state, Node::RecordLookup(attributes, state.output_type))
+    pos_result!(state, Node::Lookup(attributes, state.output_type))
+});
+
+parser!(lookup_commit(state) -> Node<'a> {
+    tag!(state, "lookup-commit[");
+    let attributes = many!(state, function_attribute);
+    tag!(state, "]");
+    pos_result!(state, Node::LookupCommit(attributes))
+});
+
+parser!(lookup_remote(state) -> Node<'a> {
+    tag!(state, "lookup-remote[");
+    let attributes = many!(state, function_attribute);
+    tag!(state, "]");
+    pos_result!(state, Node::LookupRemote(attributes, state.output_type))
 });
 
 whitespace_parser!(record_function(state) -> Node<'a> {
@@ -413,7 +427,7 @@ parser!(output_equality(state) -> Node<'a> {
 //--------------------------------------------------------------------
 
 parser!(not_statement(state) -> Node<'a> {
-    let item = alt!(state, [ not_form lookup multi_function_equality inequality record_function record equality attribute_access ]);
+    let item = alt!(state, [ not_form lookup_remote lookup_commit lookup multi_function_equality inequality record_function record equality attribute_access ]);
     result!(state, item)
 });
 
@@ -462,7 +476,7 @@ parser!(if_else_branch(state) -> Node<'a> {
 });
 
 parser!(if_branch_statement(state) -> Node<'a> {
-    let item = alt!(state, [ lookup multi_function_equality not_form inequality record_function record equality attribute_access ]);
+    let item = alt!(state, [ lookup_remote lookup_commit lookup multi_function_equality not_form inequality record_function record equality attribute_access ]);
     result!(state, item)
 });
 
@@ -495,7 +509,7 @@ parser!(if_expression(state) -> Node<'a> {
 //--------------------------------------------------------------------
 
 parser!(search_section_statement(state) -> Node<'a> {
-    let item = alt!(state, [ not_form lookup multi_function_equality if_expression inequality
+    let item = alt!(state, [ not_form lookup_remote lookup_commit lookup multi_function_equality if_expression inequality
                              record_function record equality attribute_access ]);
     result!(state, item)
 });
@@ -508,7 +522,7 @@ parser!(search_section(state) -> Node<'a> {
 });
 
 parser!(bind_section_statement(state) -> Node<'a> {
-    let item = alt!(state, [ lookup output_equality record bind_update ]);
+    let item = alt!(state, [ lookup_remote lookup output_equality record bind_update ]);
     result!(state, item)
 });
 
@@ -520,7 +534,7 @@ parser!(bind_section(state) -> Node<'a> {
 });
 
 parser!(commit_section_statement(state) -> Node<'a> {
-    let item = alt!(state, [ lookup output_equality record commit_update ]);
+    let item = alt!(state, [ lookup_remote lookup output_equality record commit_update ]);
     result!(state, item)
 });
 

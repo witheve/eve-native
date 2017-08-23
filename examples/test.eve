@@ -1,5 +1,6 @@
 commit
   [#program id: 1 code: "insert code here"]
+  [#program id: 2 code: "insert code here"]
 end
 
 search
@@ -7,16 +8,15 @@ search
 bind
   [#html/element tagname: "div" #block-container id children:
     [#ui/text sort: 1 text: "Block {{id}}"]
-    [#ui/code-block id sort: 2 value: code]
+    [#codemirror/eve-block id sort: 2 value: code]
     [#ui/button #clear-block id sort: 4 text: "Clear"]
     [#ui/button #delete-block id sort: 5 text: "Delete"]
-    [#ui/button #compile-block id sort: 6 text: "Compile"]
-  ]
+    [#ui/button #compile-block id sort: 6 text: "Compile"]]
 end
 
 search
   [#html/event/click element: [#clear-block id]]
-  block = [#ui/code-block id value]
+  block = [#codemirror/eve-block id value]
 commit
   block.value := ""
 end
@@ -24,9 +24,9 @@ end
 
 search
   [#html/event/click element: [#delete-block id]]
-  snippet = [#snippet id]
+  program = [#program id]
 commit
-  snippet := none
+  program := none
 end
 
 search
@@ -34,4 +34,16 @@ search
   [#ui/code-block id value]
 commit
   [#eve/text-compiler code: value]
+end
+
+
+
+commit
+  [#ui/button #create-block text: "Create block"]
+end
+
+search
+  [#html/event/click element: [#create-block]]
+commit
+  [#program id: 1 code: "insert code here"]
 end

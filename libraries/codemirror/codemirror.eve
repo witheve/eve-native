@@ -1,0 +1,62 @@
+# CodeMirror
+
+This library creates instances of CodeMirror editors that can be used to 
+display and edit code. It includes a custom [Eve mode][1] for CodeMirror.
+
+
+## Creating a code block
+
+We create a code-block with a default value and id.
+
+search
+  block = [#codemirror/code-block]
+  //value = if block.value then block.value else ""
+  mode = if block.mode then block.mode else ""
+watch client/websocket
+  ("code-block/create", block, mode)
+end
+
+Code blocks are given tagged as `#html/element` so they will be rendered in the
+DOM. We replace this element with a CodeMirror instance, and sync its value 
+property with the value stored in Eve.
+
+search
+  block = [#codemirror/code-block]
+bind
+  block <- [#html/element tagname: "div"]
+end
+
+
+## Create an Eve block
+
+With a different tag, we can create a block configured for Eve code
+
+search
+  eve-block = [#codemirror/eve-block]
+bind
+  eve-block <- [#codemirror/code-block mode: "eve"]
+end
+
+
+## Updating a code block
+
+When we've gotten an update from the client, apply it to the original record,
+keeping them in sync.
+
+search
+  change = [#codemirror/code-block/change block new-value]
+  block = [#codemirror/code-block value]
+commit
+  change := none
+  block.value := new-value
+end
+
+If `value` changes in Eve, we need to sync that in the rendered version
+
+search
+  block = [#codemirror/code-block value]
+watch client/websocket
+  ("code-block/update", block, value)
+end
+
+[1]: https://github.com/witheve/codemirror-mode-eve

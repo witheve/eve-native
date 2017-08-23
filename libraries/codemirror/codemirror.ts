@@ -1,15 +1,15 @@
 import {Library, RawValue, RawEAV, handleTuples, libraries} from "../../ts";
 import "codemirror/mode/gfm/gfm";
 import "codemirror/addon/mode/simple";
+import "codemirror/addon/mode/overlay";
 import "codemirror-mode-eve";
 import CodeMirror from "codemirror";
 
 const EMPTY:never[] = [];
 
-export class CodeBlock extends Library {
+export class EveCodeMirror extends Library {
   static id = "code-block";
   blocks: any = {};
-
   html:libraries.HTML;
 
   setup() {
@@ -17,29 +17,29 @@ export class CodeBlock extends Library {
   }
   
   handlers = {
-    "create": handleTuples(({adds}) => {
-      for(let [blockID, value, init] of adds || EMPTY) {
-        if (init === "1") break
+    "create": handleTuples(({adds, removes}) => {
+      for(let [blockID, mode] of adds || EMPTY) {       
+        if (this.blocks[blockID] !== undefined) {
+          continue;
+        }
         let element: any = this.html.getInstances(blockID)
         var code_block = CodeMirror(element[0], {
-          mode:  "eve"
+          mode:  mode
         });
         code_block.on("change", (editor, change) => {
           if(change.origin === "setValue") return;
-          let changes: RawEAV[] = [];
-          let change_id = `ui/code-block/change|${blockID}`;
+          let change_id = `codemirror/code-block/change|${blockID}`;
           let new_value = editor.getValue();
-          changes.push(
-            [change_id, "tag", "ui/code-block/change"],
+          this.program.inputEAVs([
+            [change_id, "tag", "codemirror/code-block/change"],
             [change_id, "block", blockID],
             [change_id, "new-value", new_value],
-            [change_id, "origin", change.origin]
-          );
-          this.program.inputEAVs(changes);
-          
+            [change_id, "origin", change.origin]]);
         });
         this.blocks[blockID] = code_block;
-        this.program.inputEAVs([[blockID, "init", "1"]]);
+      }
+      for(let [blockID, value, mode] of removes || EMPTY) { 
+        delete this.blocks[blockID];
       }
     }),
     "update": handleTuples(({adds}) => {
@@ -54,4 +54,4 @@ export class CodeBlock extends Library {
   }
 }
 
-Library.register(CodeBlock.id, CodeBlock);
+Library.register(EveCodeMirror.id, EveCodeMirror);

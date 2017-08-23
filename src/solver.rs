@@ -1,7 +1,8 @@
 use ops::*;
 use compiler::{FunctionKind};
-use indexes::{WatchIndex};
+use indexes::{WatchIndex, RemoteChangeField};
 use std::collections::{HashSet};
+use std::hash::{Hash, Hasher};
 use std::usize;
 use std::iter;
 use std::sync::Arc;
@@ -13,6 +14,18 @@ pub type GetIteratorFunc = Fn(&mut EstimateIter, &mut RuntimeState, &mut Frame) 
 pub type GetRoundsFunc = Fn(&mut RuntimeState, &mut Frame);
 
 //-------------------------------------------------------------------------
+// Input Fields
+//-------------------------------------------------------------------------
+
+#[derive(Eq, Hash, PartialEq, Copy, Clone)]
+pub enum InputField {
+    Transaction,
+    Round,
+    Type,
+    Count,
+}
+
+//-------------------------------------------------------------------------
 // OutputFuncs
 //-------------------------------------------------------------------------
 
@@ -20,6 +33,7 @@ pub type GetRoundsFunc = Fn(&mut RuntimeState, &mut Frame);
 pub enum OutputFuncs {
     Bind,
     Commit,
+    DynamicCommit,
     Aggregate,
     Intermediate,
     Project,
@@ -39,13 +53,23 @@ pub struct Solver {
     get_rounds: Vec<Arc<GetRoundsFunc>>,
     finished_mask: u64,
     moves: Vec<(usize, usize)>,
+    input_checks: Vec<(InputField, Interned)>,
     commits: Vec<(Field, Field, Field, ChangeType)>,
+    dynamic_commits: Vec<(Field, Field, Field, Field)>,
     binds: Vec<(Field, Field, Field)>,
     watch_registers: Vec<(String, Vec<Field>)>,
     project_fields: Vec<usize>,
     intermediates: Vec<(Vec<Field>, Vec<Field>, bool)>,
     intermediate_accepts: Vec<(usize, Interned)>,
     aggregates: Vec<(Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, AggregateFunction, AggregateFunction, FunctionKind)>,
+    interned_remove: Interned,
+}
+
+impl Hash for Solver {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.block.hash(state);
+        self.id.hash(state);
+    }
 }
 
 impl PartialEq for Solver {
@@ -54,6 +78,8 @@ impl PartialEq for Solver {
     }
 }
 
+impl Eq for Solver {}
+
 unsafe impl Send for Solver {}
 impl Clone for Solver {
     fn clone(&self) -> Self {
@@ -61,10 +87,12 @@ impl Clone for Solver {
             block: self.block,
             id: self.id,
             moves: self.moves.clone(),
+            input_checks: self.input_checks.clone(),
             get_iters: self.get_iters.iter().cloned().collect(),
             accepts: self.accepts.iter().cloned().collect(),
             get_rounds: self.get_rounds.iter().cloned().collect(),
             commits: self.commits.clone(),
+            dynamic_commits: self.dynamic_commits.clone(),
             binds: self.binds.clone(),
             intermediates: self.intermediates.clone(),
             intermediate_accepts: self.intermediate_accepts.clone(),
@@ -73,6 +101,7 @@ impl Clone for Solver {
             project_fields: self.project_fields.clone(),
             aggregates: self.aggregates.iter().map(|&(ref a, ref b, ref c, ref d,e,f,g)| (a.clone(), b.clone(), c.clone(), d.clone(), e, f, g)).collect(),
             finished_mask: self.finished_mask,
+            interned_remove: self.interned_remove,
         }
     }
 }
@@ -83,14 +112,24 @@ impl fmt::Debug for Solver {
     }
 }
 
+fn move_or_accept(field:&Field, ix:usize, moves:&mut Vec<(usize, usize)>, accepts:&mut Vec<(usize, Interned)>) {
+    if let &Field::Register(reg) = field {
+        moves.push((ix, reg));
+    } else if let &Field::Value(val) = field {
+        accepts.push((ix, val));
+    }
+}
+
 impl Solver {
 
-    pub fn new(block:Interned, id:usize, active_scan:Option<&Constraint>, constraints:&Vec<Constraint>) -> Solver {
+    pub fn new(interner:&mut Interner, block:Interned, id:usize, active_scan:Option<&Constraint>, constraints:&Vec<Constraint>) -> Solver {
         let mut moves = vec![];
+        let mut input_checks = vec![];
         let mut get_iters = vec![];
         let mut accepts = vec![];
         let mut get_rounds = vec![];
         let mut commits = vec![];
+        let mut dynamic_commits = vec![];
         let mut binds = vec![];
         let mut watch_registers = vec![];
         let mut project_fields:Vec<usize> = vec![];
@@ -104,9 +143,34 @@ impl Solver {
         match active_scan {
             Some(&Constraint::Scan { e, a, v, .. }) => {
                 to_solve.extend(active_scan.unwrap().get_registers());
+                if let Field::Register(ix) = e {
+                    moves.push((0, ix));
+                } else {
+                    // in the case that e is fixed, the octopus currently passes all attributes
+                    // through, which may not be what you really wanted. As a result, we need to
+                    // actually create an accept for this scan to make sure he really does pass.
+                    accepts.push(make_scan_accept(active_scan.unwrap(), usize::MAX - 1));
+                }
+                if let Field::Register(ix) = a { moves.push((1, ix)); }
+                if let Field::Register(ix) = v { moves.push((2, ix)); }
+            },
+            Some(&Constraint::LookupCommit { e, a, v, .. }) => {
+                to_solve.extend(active_scan.unwrap().get_registers());
                 if let Field::Register(ix) = e { moves.push((0, ix)); }
                 if let Field::Register(ix) = a { moves.push((1, ix)); }
                 if let Field::Register(ix) = v { moves.push((2, ix)); }
+                input_checks.push((InputField::Round, 0));
+                get_rounds.push(make_commit_lookup_get_rounds(active_scan.unwrap()));
+            },
+            Some(&Constraint::LookupRemote { e, a, v, _for, _type, from, to, .. }) => {
+                to_solve.extend(active_scan.unwrap().get_registers());
+                move_or_accept(&e, 0, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&a, 1, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&v, 2, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&_for, 3, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&_type, 4, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&from, 5, &mut moves, &mut intermediate_accepts);
+                move_or_accept(&to, 6, &mut moves, &mut intermediate_accepts);
             },
             Some(&Constraint::IntermediateScan { ref full_key, .. }) |
             Some(&Constraint::AntiScan { key: ref full_key, .. }) => {
@@ -133,6 +197,14 @@ impl Solver {
                     get_iters.push(make_scan_get_iterator(constraint, ix));
                     accepts.push(make_scan_accept(constraint, ix));
                     get_rounds.push(make_scan_get_rounds(constraint));
+                },
+                &Constraint::LookupCommit {..} => {
+                    get_iters.push(make_scan_get_iterator(constraint, ix));
+                    accepts.push(make_scan_accept(constraint, ix));
+                    get_rounds.push(make_commit_lookup_get_rounds(constraint));
+                },
+                &Constraint::LookupRemote {..} => {
+                    get_iters.push(make_lookup_remote_get_iterator(constraint, ix));
                 },
                 &Constraint::AntiScan {..}  => {
                     get_rounds.push(make_anti_get_rounds(constraint));
@@ -181,6 +253,10 @@ impl Solver {
                     commits.push((e, Field::Value(0), Field::Value(0), ChangeType::Remove));
                     output_funcs.insert(OutputFuncs::Commit);
                 },
+                &Constraint::DynamicCommit { e,a,v,_type } => {
+                    dynamic_commits.push((e,a,v,_type));
+                    output_funcs.insert(OutputFuncs::DynamicCommit);
+                },
                 &Constraint::Project { ref registers } => {
                     project_fields.extend(registers.iter());
                     output_funcs.insert(OutputFuncs::Project);
@@ -197,13 +273,20 @@ impl Solver {
             match x {
                 OutputFuncs::Bind => do_bind as OutputFunc,
                 OutputFuncs::Commit => do_commit as OutputFunc,
+                OutputFuncs::DynamicCommit => do_dynamic_commit as OutputFunc,
                 OutputFuncs::Watch => do_watch as OutputFunc,
                 OutputFuncs::Intermediate => do_intermediate_insert as OutputFunc,
                 OutputFuncs::Project => do_project as OutputFunc,
                 OutputFuncs::Aggregate => do_aggregate as OutputFunc,
             }
         }).collect();
-        Solver { block, id, moves, get_iters, accepts, get_rounds, commits, binds, intermediates, intermediate_accepts, outputs, watch_registers, project_fields, aggregates, finished_mask }
+
+        // Dynamic commits need to compare their type to "add" and "remove", so to reduce the
+        // runtime pressure of that, we can get the interned id for remove and just use that to
+        // compare.
+        let interned_remove = interner.string_id("remove");
+
+        Solver { block, id, moves, input_checks, get_iters, accepts, get_rounds, dynamic_commits, commits, binds, intermediates, intermediate_accepts, outputs, watch_registers, project_fields, aggregates, finished_mask, interned_remove }
     }
 
     pub fn run(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame) {
@@ -211,8 +294,9 @@ impl Solver {
         if frame.row.solved_fields != self.finished_mask {
             self.solve_variables(state, pool, frame, 0);
         } else {
-            self.clear_rounds(&mut state.output_rounds, frame);
-            self.do_output(state, frame);
+            if self.clear_rounds(state, frame) {
+                self.do_output(state, frame);
+            }
         }
     }
 
@@ -225,8 +309,24 @@ impl Solver {
         if frame.row.solved_fields != self.finished_mask {
             self.solve_variables(state, pool, frame, 0);
         } else {
-            self.clear_rounds(&mut state.output_rounds, frame);
-            self.do_output(state, frame);
+            if self.clear_rounds(state, frame) {
+                self.do_output(state, frame);
+            }
+        }
+    }
+
+    pub fn run_remote(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame) {
+        if !self.do_remote_move(frame) { return }
+        for accept in self.accepts.iter() {
+            let res = (*accept)(state, frame, usize::MAX);
+            if !res { return }
+        }
+        if frame.row.solved_fields != self.finished_mask {
+            self.solve_variables(state, pool, frame, 0);
+        } else {
+            if self.clear_rounds(state, frame) {
+                self.do_output(state, frame);
+            }
         }
     }
 
@@ -239,6 +339,14 @@ impl Solver {
                     1 => { frame.row.set_multi(to, change.a); }
                     2 => { frame.row.set_multi(to, change.v); }
                     _ => { unreachable!() },
+                }
+            }
+            for check in self.input_checks.iter() {
+                match check {
+                    &(InputField::Round, v) => {
+                        if change.round != v { return false }
+                    }
+                    _ => { unimplemented!() },
                 }
             }
             for accept in self.accepts.iter() {
@@ -260,14 +368,56 @@ impl Solver {
         true
     }
 
-    pub fn clear_rounds(&self, output_rounds:&mut OutputRounds, frame: &mut Frame) {
-        output_rounds.clear();
-        if let Some(ref change) = frame.input {
-            output_rounds.output_rounds.push((change.round, change.count));
-        } else if let Some(ref change) = frame.intermediate {
-            let count = if change.negate { change.count * -1 } else { change.count };
-            output_rounds.output_rounds.push((change.round, count));
+    pub fn do_remote_move(&self, frame:&mut Frame) -> bool {
+        if let Some(ref remote) = frame.remote {
+            for &(from, to) in self.moves.iter() {
+                match from {
+                    0 => { frame.row.set_multi(to, remote.e); }
+                    1 => { frame.row.set_multi(to, remote.a); }
+                    2 => { frame.row.set_multi(to, remote.v); }
+                    3 => { frame.row.set_multi(to, remote._for); }
+                    4 => { frame.row.set_multi(to, remote._type); }
+                    5 => { frame.row.set_multi(to, remote.from); }
+                    6 => { frame.row.set_multi(to, remote.to); }
+                    _ => { unreachable!() },
+                }
+            }
+            for &(from, value) in self.intermediate_accepts.iter() {
+                match from {
+                    0 => { if remote.e != value { return false } }
+                    1 => { if remote.a != value { return false } }
+                    2 => { if remote.v != value { return false } }
+                    3 => { if remote._for != value { return false } }
+                    4 => { if remote._type != value { return false } }
+                    5 => { if remote.from != value { return false } }
+                    6 => { if remote.to != value { return false } }
+                    _ => { unreachable!() },
+                }
+            }
         }
+        true
+    }
+
+    pub fn clear_rounds(&self, state:&mut RuntimeState, frame: &mut Frame) -> bool {
+        {
+            let ref mut output_rounds = state.output_rounds;
+            output_rounds.clear();
+            if let Some(ref change) = frame.input {
+                output_rounds.output_rounds.push((change.round, change.count));
+            } else if let Some(ref change) = frame.intermediate {
+                let count = if change.negate { change.count * -1 } else { change.count };
+                output_rounds.output_rounds.push((change.round, count));
+            } else if let Some(_) = frame.remote {
+                output_rounds.output_rounds.push((0, 1));
+            }
+        }
+        for get in self.get_rounds.iter() {
+            (*get)(state, frame);
+            if state.output_rounds.get_output_rounds().len() == 0 {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn solve_variables(&self, state:&mut RuntimeState, pool:&mut EstimateIterPool, frame:&mut Frame, ix:usize) {
@@ -283,16 +433,14 @@ impl Solver {
         };
         'main: while { pool.get(ix).iter.next(&mut frame.row, ix) } {
             for accept in self.accepts.iter() {
-                if !(*accept)(state, frame, active_constraint) { continue 'main; }
+                if !(*accept)(state, frame, active_constraint) {
+                    continue 'main;
+                }
             }
             frame.row.put_solved(ix);
             if frame.row.solved_fields == self.finished_mask {
-                self.clear_rounds(&mut state.output_rounds, frame);
-                for get in self.get_rounds.iter() {
-                    (*get)(state, frame);
-                    if state.output_rounds.get_output_rounds().len() == 0 {
-                        continue 'main;
-                    }
+                if !self.clear_rounds(state, frame) {
+                    continue 'main;
                 }
                 self.do_output(state, frame);
             } else {
@@ -326,6 +474,7 @@ impl Solver {
 pub fn make_scan_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIteratorFunc> {
     let (e,a,v,register_mask) = match scan {
         &Constraint::Scan { e, a, v, register_mask} => (e,a,v,register_mask),
+        &Constraint::LookupCommit { e, a, v, register_mask} => (e,a,v,register_mask),
         _ => unreachable!()
     };
     Arc::new(move |iter, state, frame| {
@@ -359,6 +508,7 @@ pub fn make_scan_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIteratorFun
 pub fn make_scan_accept(scan:&Constraint, me:usize) -> Arc<AcceptFunc>  {
     let (e,a,v,register_mask) = match scan {
         &Constraint::Scan { e, a, v, register_mask} => (e,a,v,register_mask),
+        &Constraint::LookupCommit { e, a, v, register_mask} => (e,a,v,register_mask),
         _ => unreachable!()
     };
     Arc::new(move |state, frame, cur_constraint| {
@@ -385,6 +535,78 @@ pub fn make_scan_get_rounds(scan:&Constraint) -> Arc<GetRoundsFunc> {
             let resolved_v = frame.resolve(&v);
             let iter = state.distinct_index.iter(resolved_e, resolved_a, resolved_v);
             state.output_rounds.compute_output_rounds(iter);
+    })
+}
+
+//-------------------------------------------------------------------------
+// LookupCommit
+//-------------------------------------------------------------------------
+
+pub fn make_commit_lookup_get_rounds(scan:&Constraint) -> Arc<GetRoundsFunc> {
+    let (e,a,v,_) = match scan {
+        &Constraint::LookupCommit { e, a, v, register_mask} => (e,a,v,register_mask),
+        _ => unreachable!()
+    };
+    Arc::new(move |state, frame| {
+            let resolved_e = frame.resolve(&e);
+            let resolved_a = frame.resolve(&a);
+            let resolved_v = frame.resolve(&v);
+            if !state.distinct_index.is_commit(resolved_e, resolved_a, resolved_v) {
+                state.output_rounds.clear();
+            }
+    })
+}
+
+//-------------------------------------------------------------------------
+// LookupRemote
+//-------------------------------------------------------------------------
+
+pub fn make_lookup_remote_get_iterator(scan:&Constraint, ix: usize) -> Arc<GetIteratorFunc> {
+    let (e,a,v,_for,_type,from,to,register_mask) = match scan {
+        &Constraint::LookupRemote { e, a, v, _for, _type, from, to, register_mask} => (e,a,v,_for,_type,from,to,register_mask),
+        _ => unreachable!()
+    };
+    let mut fields = vec![];
+    let mut outputs = vec![];
+    if let Field::Register(ix) = e { fields.push(RemoteChangeField::E); outputs.push(ix); }
+    if let Field::Register(ix) = a { fields.push(RemoteChangeField::A); outputs.push(ix); }
+    if let Field::Register(ix) = v { fields.push(RemoteChangeField::V); outputs.push(ix); }
+    if let Field::Register(ix) = _for { fields.push(RemoteChangeField::For); outputs.push(ix); }
+    if let Field::Register(ix) = _type { fields.push(RemoteChangeField::Type); outputs.push(ix); }
+    if let Field::Register(ix) = from { fields.push(RemoteChangeField::From); outputs.push(ix); }
+    if let Field::Register(ix) = to { fields.push(RemoteChangeField::To); outputs.push(ix); }
+    Arc::new(move |iter, state, frame| {
+        // if we have already solved all of this scan's vars, we just move on
+        if check_bits(frame.row.solved_fields, register_mask) {
+            return true;
+        }
+
+        if iter.is_better(state.remote_index.len()) {
+            let resolved_e = frame.resolve(&e);
+            let resolved_a = frame.resolve(&a);
+            let resolved_v = frame.resolve(&v);
+            let resolved_for = frame.resolve(&_for);
+            let resolved_type = frame.resolve(&_type);
+            let resolved_from = frame.resolve(&from);
+            let resolved_to = frame.resolve(&to);
+            // @FIXME: why does this need to be collected into a vector first? If the iter is
+            // passed directly, it's always empty.
+            let remote_iter = state.remote_index.index.iter().filter(|x| {
+               (resolved_e == 0 || x.e == resolved_e) &&
+               (resolved_a == 0 || x.a == resolved_a) &&
+               (resolved_v == 0 || x.v == resolved_v) &&
+               (resolved_for == 0 || x._for == resolved_for) &&
+               (resolved_type == 0 || x._type == resolved_type) &&
+               (resolved_from == 0 || x.from == resolved_from) &&
+               (resolved_to == 0 || x.to == resolved_to)
+            }).map(|x| {
+                x.extract(&fields)
+            }).collect::<Vec<_>>();
+            iter.estimate = state.remote_index.len();
+            iter.iter = OutputingIter::Multi(outputs.clone(), OutputingIter::make_multi_ptr(Box::new(remote_iter.into_iter())));
+            iter.constraint = ix;
+        }
+        true
     })
 }
 
@@ -652,6 +874,18 @@ pub fn do_commit(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
     }
 }
 
+pub fn do_dynamic_commit(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
+    let n = (me.block * 10000) as u32;
+    for &(_, count) in state.output_rounds.get_output_rounds().iter() {
+        for &(e, a, v, _type) in me.dynamic_commits.iter() {
+            let (correct_count, change_type) = if frame.resolve(&_type) == me.interned_remove { (count * -1, ChangeType::Remove) } else { (count, ChangeType::Insert) };
+            let output = Change { e: frame.resolve(&e), a: frame.resolve(&a), v:frame.resolve(&v), n, round:0, transaction: 0, count:correct_count };
+            frame.counters.inserts += 1;
+            state.rounds.commit(output, change_type)
+        }
+    }
+}
+
 pub fn do_project(me: &Solver, _:&mut RuntimeState, frame: &mut Frame) {
     for from in me.project_fields.iter().cloned() {
         let value = frame.get_register(from);
@@ -675,7 +909,7 @@ pub fn do_intermediate_insert(me: &Solver, state: &mut RuntimeState, frame: &mut
 pub fn do_aggregate(me: &Solver, state: &mut RuntimeState, frame: &mut Frame) {
     for &(ref group, ref projection, ref params, ref output_key, add, remove, kind) in me.aggregates.iter() {
         let resolved_group:Vec<Interned> = group.iter().map(|v| frame.resolve(v)).collect();
-        let resolved_projection = if kind == FunctionKind::Sort {
+        let resolved_projection = if kind == FunctionKind::Sort || kind == FunctionKind::NeedleSort {
             projection.iter().map(|v| state.interner.get_value(frame.resolve(v)).clone()).collect()
         } else {
             vec![]

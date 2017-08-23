@@ -1,6 +1,6 @@
-## Compiler 2
+## Text Compiler
 
-Should be merged with the compiler library
+Compiles raw text into Eve code
 
 search
   block = [#eve/text-compiler code]

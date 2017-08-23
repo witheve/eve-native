@@ -1,0 +1,43 @@
+search
+  event = [#router/event/add-client name]
+commit
+  event := none
+  [#client name]
+end
+
+search
+  [#router/event/remove-client name]
+  client = [#client name]
+commit
+  client := none
+end
+
+search
+  lookup-remote[for:"todo", attribute:"text", entity value]
+  entity = [#todo]
+commit
+  entity.text := value
+end
+
+search
+  lookup-remote[for:"todo", entity attribute:"tag" value:"todo" type]
+commit
+  lookup[entity attribute:"tag" value:"todo" type]
+end
+
+search
+  lookup-remote[for:"todo", entity attribute value type]
+  entity = [#todo]
+  attribute != "text"
+  attribute != "tag"
+commit
+  lookup[entity attribute value type]
+end
+
+search
+  [#client name]
+  entity = [#todo]
+  lookup-commit[entity attribute value]
+bind
+  lookup-remote[to:name, for:"todo", entity attribute value]
+end
