@@ -52,8 +52,7 @@ search
   symbol = [#db-explorer/record-symbol record]
   title = if [#db-explorer/client-name entity: record name: t] then t else "Untitled"
 bind
-  symbol <- [#html/div record sort: record | children:
-  [#ui/text record sort: 1 text: "⬢ {{title}}"]]
+  symbol <- [#ui/button class: "flat" record sort: record text: title]
 end
 ~~~
 
@@ -116,18 +115,9 @@ bind
 end
 ~~~
 
-~~~ eve
-search
-  attr-tile = [#record-card/attribute-tile type: "record" card]
-  attr-value = [#record-card/value attr-tile value title]
-  gather/count[for: title per: attr-value] > 1
-watch console
-  ("error" "{{title}} --> {{attr-value}}")
-end
-~~~
+### Events
 
-
-Clicking a record link in a card opens its card too.
+Clicking a record button in a card opens its card too.
 ~~~ eve
 search
   [#html/event/click element: [#record-card/record value]]
@@ -137,23 +127,18 @@ commit
 end
 ~~~
 
-
+Clicking a tag button in a card adds that tag to the query.
 ~~~ eve
 search
-  root = [#db-explorer/root open: record]
+  [#html/event/click element: [#record-card/tag text]]
+  root = [#db-explorer/root]
+  query = [#ui/token-completer #db-explorer/query item]
+  item.value = text
 bind
-  attr-var = [#eve/compiler/variable name: "attribute"]
-  val-var = [#eve/compiler/variable name: "value"]
-  program-var = [#eve/compiler/variable name: "editor-program"]
-  editor-var = [#eve/compiler/variable name: "editor-name"]
-  [#eve/compiler/block #db-explorer/open-record type: "bind" record | constraint:
-    [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
-    [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
-    [#eve/compiler/scan entity: record attribute: attr-var value: val-var]
-    [#eve/compiler/remote-output to: editor-var for: "open-record" entity: record attribute: "tag" value: "db-explorer/open-record"]
-    [#eve/compiler/remote-output to: editor-var for: "open-record-av" entity: record attribute: attr-var value: val-var]]
+  [#ui/event/select element: query item]
 end
 ~~~
+
 
 ## Search
 
@@ -239,55 +224,6 @@ search
   token != ""
 bind
   pattern.attribute += [attribute: token]
-end
-~~~
-
-### Completer Generation
-
-Find records that match the current completer pattern.
-When the completion pattern has at least one attribute, create a completer block.
-~~~ eve
-search
-  [#db-explorer/query completion-pattern]
-  completion-pattern.attribute
-bind
-  record-var = [#eve/compiler/variable name: "record" completion-pattern]
-  attr-var = [#eve/compiler/variable name: "attribute" completion-pattern]
-  val-var = [#eve/compiler/variable name: "value-unused" completion-pattern]
-  tag-var = [#eve/compiler/variable name: "tag" completion-pattern]
-  program-var = [#eve/compiler/variable name: "editor-program"]
-  editor-var = [#eve/compiler/variable name: "editor-name"]
-  [#eve/compiler/block #db-explorer/completer type: "bind" | record-var constraint:
-    [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
-    [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
-    [#eve/compiler/scan entity: record-var attribute: attr-var value: val-var]
-    [#eve/compiler/scan entity: record-var attribute: "tag" value: tag-var] // @FIXME: This won't work on records with no tags **********
-    [#eve/compiler/remote-output to: editor-var for: "completion-record" entity: completion-pattern attribute: "record" value: record-var]
-    [#eve/compiler/remote-output to: editor-var for: "completion-attribute" entity: record-var attribute: "value" value: attr-var]
-    [#eve/compiler/remote-output to: editor-var for: "completion-tag" entity: record-var attribute: "value" value: tag-var]]
-end
-~~~
-
-Fully formed AVs translate into eAV scans.
-~~~ eve
-search
-  [#db-explorer/query completion-pattern: [attribute: [attribute value]]]
-  block = [#db-explorer/completer record-var]
-bind
-  block.constraint += [#eve/compiler/scan entity: record-var attribute value]
-end
-~~~
-
-AVs with only an A translate into eAv scans.
-~~~ eve
-search
-  [#db-explorer/query completion-pattern]
-  completion-pattern = [attribute]
-  not(attribute.value)
-  block = [#db-explorer/completer record-var]
-bind
-  value-var = [#eve/compiler/variable completion-pattern attribute]
-  block.constraint += [#eve/compiler/scan entity: record-var attribute: attribute.attribute value: value-var]
 end
 ~~~
 
