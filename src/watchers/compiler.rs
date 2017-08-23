@@ -1,4 +1,4 @@
-use super::super::ops::{make_scan, make_function, Constraint, PortableConstraint, Interned, Internable, Interner, Field, RunLoopMessage};
+use super::super::ops::{make_scan, make_function, Constraint, Interned, Internable, Interner, Field, RunLoopMessage};
 use super::super::compiler::{get_function_info};
 use indexes::{WatchDiff};
 use std::sync::mpsc::{Sender};
@@ -102,7 +102,7 @@ impl CompilerWatcher {
     }
 
 
-    pub fn compile_constraint(&self, mut constraint:&ConstraintParams, interner:&Interner, block_type:Option<String>) -> Option<Constraint> {
+    pub fn compile_constraint(&self, constraint:&ConstraintParams, interner:&Interner, block_type:Option<String>) -> Option<Constraint> {
         let commit = match block_type.as_ref().map(String::as_str) { Some("commit") => true, _ => false };
         match constraint {
             &ConstraintParams::Scan(e, a, v) => Some(make_scan(self.get_field(e), self.get_field(a), self.get_field(v))),
@@ -130,8 +130,7 @@ impl CompilerWatcher {
                     (interner.get_string(*key).expect("Unable to resolve attribute."), self.get_field(*value))
                 }).collect();
                 Some(make_function("gen_id", identity_to_vec(&arg_fields), self.get_field(var)))
-            },
-            _ => unimplemented!()
+            }
         }
     }
 }

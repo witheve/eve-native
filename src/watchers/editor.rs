@@ -4,7 +4,7 @@ use self::ws::{Sender as WSSender, Message};
 extern crate serde_json;
 
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Sender};
 use super::super::indexes::{WatchDiff};
