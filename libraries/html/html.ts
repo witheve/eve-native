@@ -46,6 +46,10 @@ export class HTML extends Library {
     return instanceIds.map((id) => this._instances[id]);
   }
 
+  getContainer() {
+    return this._container;
+  }
+
   // @DEPRECATED
   getInstance(instanceId:RawValue) {
     return this._instances[instanceId];
@@ -84,7 +88,9 @@ export class HTML extends Library {
       return;
     }
 
-    this._container = document.body;
+    this._container = document.createElement("div");
+    this._container.setAttribute("program", this.program.name);
+    document.body.appendChild(this._container);
     this._syntheticStyleContainer = document.createElement("div");
     this._syntheticStyleContainer.style.display = "none"
     this._syntheticStyleContainer.style.visibility = "hidden";
