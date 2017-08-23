@@ -101,7 +101,7 @@ fn dereference(target: &Map<String,Value>, flatmap: &Map<String,Value>) -> Map<S
 }
     
 pub fn new_change(e: &str, a: &str, v: Internable, n: &str) -> RawChange {
-    RawChange {e: Internable::String(e.to_string()), a: Internable::String(a.to_string()), v: v.clone(), n: Internable::String(n.to_string()), count: 1}
+    RawChange {e: Internable::from_str(e), a: Internable::from_str(a), v: v.clone(), n: Internable::from_str(n), count: 1}
 }
 
 pub fn value_to_changes(id: &str, attribute: &str, value: Value, node: &str, changes: &mut Vec<RawChange>) {

@@ -16,6 +16,7 @@ use self::hyper_tls::HttpsConnector;
 use self::tokio_core::reactor::Core;
 use self::hyper::{Method};
 use std::thread;
+use std::io;
 use std::io::{Write};
 extern crate iron;
 use self::iron::prelude::*;
@@ -24,12 +25,13 @@ use std::collections::HashMap;
 
 pub struct HttpWatcher {
     name: String,
+    responses: HashMap<String,Vec<(String,String)>>,
     outgoing: Sender<RunLoopMessage>,
 }
 
 impl HttpWatcher {
     pub fn new(outgoing: Sender<RunLoopMessage>) -> HttpWatcher {
-        HttpWatcher { name: "http".to_string(), outgoing }
+        HttpWatcher { name: "http".to_string(), responses: HashMap::new(), outgoing }
     }
 }
 
@@ -41,6 +43,7 @@ impl Watcher for HttpWatcher {
         self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) { 
+        println!("DIFF");
         let mut requests: HashMap<String,hyper::Request> = HashMap::new();
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
@@ -80,13 +83,46 @@ impl Watcher for HttpWatcher {
                     let body = Internable::to_string(interner.get_value(add[3]));
                     http_server(address, body);
                 },
+                "body" => {
+                    let response_id = Internable::to_string(interner.get_value(add[1]));
+                    let chunk = Internable::to_string(interner.get_value(add[2]));
+                    let index = Internable::to_string(interner.get_value(add[3]));
+                    //println!("A CHUNKIE CHUNK: {:?}",chunk);
+                    //println!("A resposneID CHUNK: {:?}",response_id);
+                    println!("A index CHUNK: {:?}",index);
+
+                    let v = self.responses.entry(response_id).or_insert(vec![(index.clone(),chunk.clone())]);
+                    v.push((index,chunk));
+
+                }
                 _ => {},
             }      
         }
         // Send the HTTP request and package response in the changevec
         for (id, request) in requests.drain() {
           send_http_request(&id,request,&self.outgoing);
-        }
+          println!("Done sending HTTP Request");
+        };
+        //println!("RESPONSES: {:?}",self.responses.len());
+
+        
+        for (response_id, mut chunk_vec) in self.responses.drain() {
+            chunk_vec.sort();
+            println!("{:?}",chunk_vec);
+            let body: String = chunk_vec.iter().fold("".to_string(), |acc, ref x| {
+                let &&(ref ix, ref chunk) = x;
+                println!("{:?} ----------------\n {:?}",ix, chunk);
+                acc + chunk
+            });
+            let response_id = format!("http/full-body|{:?}",response_id);
+            self.outgoing.send(RunLoopMessage::Transaction(vec![
+                new_change(&response_id, "tag", Internable::from_str("http/fully-body"), "http/request"),
+                new_change(&response_id, "body", Internable::String(body), "http/request"),
+            ])).unwrap();
+        };
+
+
+
     }
 }
 
@@ -104,6 +140,7 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
     let client = Client::configure()
         .connector(HttpsConnector::new(4,&handle).unwrap())
         .build(&handle);
+    let mut ix = 1;
     let work = client.request(request).and_then(|res| {
         let mut response_changes: Vec<RawChange> = vec![];
         let status = res.status().as_u16();
@@ -114,13 +151,20 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
         outgoing.send(RunLoopMessage::Transaction(response_changes)).unwrap();
         res.body().for_each(|chunk| {
             let response_id = format!("http/response|{:?}",id);
+            let chunk_id = format!("body-chunk|{:?}|{:?}",&response_id,ix);
             let mut vector: Vec<u8> = Vec::new();
             vector.write_all(&chunk).unwrap();
             let body_string = String::from_utf8(vector).unwrap();
-            outgoing.send(RunLoopMessage::Transaction(vec![new_change(&response_id, "body", Internable::String(body_string), "http/request")])).unwrap();
+            outgoing.send(RunLoopMessage::Transaction(vec![
+                new_change(&chunk_id, "tag", Internable::from_str("http/body-chunk"), "http/request"),
+                new_change(&chunk_id, "request", Internable::from_str(id), "http/request"),
+                new_change(&chunk_id, "chunk", Internable::String(body_string), "http/request"),
+                new_change(&chunk_id, "index", Internable::String(ix.to_string()), "http/request")
+            ])).unwrap();
+            println!("Chunk #{:?}",ix);
+            ix = ix + 1;
             Ok(())
         })
-        
     });
     match core.run(work) {
         Ok(_) => (),
@@ -134,4 +178,9 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
             outgoing.send(RunLoopMessage::Transaction(error_changes)).unwrap();
         },
     }
+    let error_id = format!("http/request/error|123456");
+    let mut changes: Vec<RawChange> = vec![];
+    changes.push(new_change(&error_id, "tag", Internable::from_str("http/request/done"), "http/request"));
+    changes.push(new_change(&error_id, "request", Internable::from_str(id), "http/request"));
+    outgoing.send(RunLoopMessage::Transaction(changes)).unwrap();
 }

@@ -1,5 +1,7 @@
 # HTTP
 
+
+
 ## Send an HTTP Request
 
 Watch for HTTP requests. requests with multiple headers will be processed
@@ -56,6 +58,16 @@ search
 commit
   request.error := error
 end
+
+Reconstruct a body from chunks
+
+search
+  [#http/body-chunk request chunk index]
+  [#http/request/done request]
+watch http
+  ("body", request, chunk, index)
+end
+
 
 ## Process HTTP Requests
 
