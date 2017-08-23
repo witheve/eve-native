@@ -76,9 +76,9 @@ search
 
 bind
   card <- [#html/element tagname: "card" children:
-    [#record-card/header sort: 1 card]
-    [#record-card/tag-list sort: 2 card]
-    [#record-card/attribute-list sort: 3 card]]
+    [#record-card/header sort: 1 card title: ""]
+    [#record-card/tag-list sort: 2 card title: ""]
+    [#record-card/attribute-list sort: 3 card title: ""]]
 end
 ~~~
 
@@ -106,7 +106,7 @@ search
 
 bind
   tag-list <- [#html/element tagname: "section" children:
-    [#ui/text #record-card/tag card text: card.tag-set]]
+    [#ui/button #record-card/tag class: "flat" card text: card.tag-set]]
 end
 ~~~
 
@@ -143,9 +143,12 @@ By default, values are shown as plain text.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "default" value]
+  (text, title) = if 0 = math/mod[value by: 1] then (value, "")
+                  else if fixed = math/to-fixed[value to: 3] then (fixed, value)
+                  else (value, "")
 
 bind
-  attr-value <- [#ui/text text: value]
+  attr-value <- [#ui/text text title]
 end
 ~~~
 
@@ -157,6 +160,6 @@ search
           if n = value.name then n
           else value
 bind
-  attr-value <- [#html/a #record-card/record rec: value href: "#" text: title]
+  attr-value <- [#ui/button #record-card/record class: "flat" text: title]
 end
 ~~~
