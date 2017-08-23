@@ -48,8 +48,8 @@ end
 Alias record name to title.
 ~~~ eve
 search
-  card = [#record-card/card av]
-  title = if av.attribute = "name" then av.value else "Unitled"
+  card = [#record-card/card]
+  title = if av = card.av av.attribute = "name" then av.value else "Unitled"
 bind
   card.title += title
 end
