@@ -617,22 +617,7 @@ impl PartialOrd for Internable {
 
 impl Ord for Internable {
     fn cmp(&self, rhs:&Self) -> cmp::Ordering {
-        let priority = self.to_sort_priority();
-        let right_priority = self.to_sort_priority();
-        if priority != right_priority {
-            return priority.cmp(&right_priority);
-        }
-
-        match (self, rhs) {
-            (&Internable::Null, &Internable::Null) => { cmp::Ordering::Equal },
-            (&Internable::String(ref s), &Internable::String(ref s2)) => { natord::compare(s, s2) },
-            (&Internable::Number(n), &Internable::Number(n2)) => {
-                let value = unsafe {transmute::<u32, f32>(n) };
-                let value2 = unsafe {transmute::<u32, f32>(n2) };
-                value.partial_cmp(&value2).unwrap()
-            },
-            _ => { unreachable!() }
-        }
+        self.partial_cmp(rhs).unwrap()
     }
 }
 
