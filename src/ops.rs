@@ -3045,7 +3045,7 @@ impl ProgramRunner {
         let initial_commits = self.initial_commits;
         let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
 
-        let thread = thread::spawn(move || {
+        let thread = thread::Builder::new().name(program.name.to_owned()).spawn(move || {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
@@ -3149,7 +3149,7 @@ impl ProgramRunner {
                 channel.send(PersisterMessage::Stop).unwrap();
             }
             println!("Closing run loop.");
-        });
+        }).unwrap();
 
         RunLoop { thread, outgoing }
     }
