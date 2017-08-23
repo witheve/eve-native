@@ -1,0 +1,2 @@
+body { display: flex; flex-direction: row; }
+body > .program-pane { flex: 1 1 auto; }

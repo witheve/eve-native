@@ -69,12 +69,14 @@ class RemoteProgram implements Program {
 class MultiplexedConnection extends Connection {
   programs:{[client:string]: RemoteProgram} = {};
   bundles:{[name:string]: Bundle} = {};
+  panes:{[client:string]: HTMLElement} = {};
 
   handlers = {
     "init": ({client}:Message) => {
       if(this.programs[client]) throw new Error(`Unable to initialize existing program: '${client}'.`);
       let program = this.programs[client] = new RemoteProgram(client, (type: string, diff: any) => this.send(type, diff, client));
-      program.attach("html");
+      let html = program.attach("html") as libraries.HTML;
+      this.addPane(client, html.getContainer());
       program.attach("canvas");
       program.attach("console");
     },
@@ -112,6 +114,14 @@ class MultiplexedConnection extends Connection {
       };
       this.bundles[name] = bundle;
     }
+  }
+
+  addPane(name:string, container:HTMLElement) {
+    if(this.panes[name] && this.panes[name] !== container) {
+      console.warn(`Overwriting container for existing pane '${name}'`);
+    }
+    this.panes[name] = container;
+    container.classList.add("program-pane");
   }
 }
 
