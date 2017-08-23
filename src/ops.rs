@@ -6,6 +6,7 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 extern crate term_painter;
+extern crate natord;
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -586,7 +587,7 @@ pub fn format_field(interner:&Interner, field:&Field) -> String{
 // Interner
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum Internable {
     Null,
     String(String),
@@ -603,11 +604,32 @@ impl PartialOrd for Internable {
 
         match (self, rhs) {
             (&Internable::Null, &Internable::Null) => { Some(cmp::Ordering::Equal) },
-            (&Internable::String(ref s), &Internable::String(ref s2)) => { Some(s.cmp(s2)) },
+            (&Internable::String(ref s), &Internable::String(ref s2)) => { Some(natord::compare(s, s2)) },
             (&Internable::Number(n), &Internable::Number(n2)) => {
                 let value = unsafe {transmute::<u32, f32>(n) };
                 let value2 = unsafe {transmute::<u32, f32>(n2) };
                 value.partial_cmp(&value2)
+            },
+            _ => { unreachable!() }
+        }
+    }
+}
+
+impl Ord for Internable {
+    fn cmp(&self, rhs:&Self) -> cmp::Ordering {
+        let priority = self.to_sort_priority();
+        let right_priority = self.to_sort_priority();
+        if priority != right_priority {
+            return priority.cmp(&right_priority);
+        }
+
+        match (self, rhs) {
+            (&Internable::Null, &Internable::Null) => { cmp::Ordering::Equal },
+            (&Internable::String(ref s), &Internable::String(ref s2)) => { natord::compare(s, s2) },
+            (&Internable::Number(n), &Internable::Number(n2)) => {
+                let value = unsafe {transmute::<u32, f32>(n) };
+                let value2 = unsafe {transmute::<u32, f32>(n2) };
+                value.partial_cmp(&value2).unwrap()
             },
             _ => { unreachable!() }
         }
@@ -2880,7 +2902,6 @@ impl PortableBlock {
 impl Block {
     pub fn to_portable(&self, interner:&Interner) -> PortableBlock {
         let constraints = self.constraints.iter().map(|c| c.to_portable(interner)).collect();
-        let block_id = interner.get_value(self.block_id);
         PortableBlock{name: self.name.clone(), block_id: interner.get_value(self.block_id).clone(), constraints}
     }
 }
