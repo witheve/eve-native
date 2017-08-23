@@ -386,7 +386,6 @@ export class HTML extends Library {
     _mouseEventHandler(tagname:string) {
     return (event:MouseEvent) => {
       let {target} = event;
-      // if(!this.isInstance(target)) return;
 
       let eventId = createId();
       let eavs:RawEAV[] = [
@@ -503,6 +502,7 @@ export class HTML extends Library {
     17: "control",
     18: "alt",
     27: "escape",
+    32: "space",
     37: "left",
     38: "up",
     39: "right",
