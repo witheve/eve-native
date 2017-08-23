@@ -656,6 +656,101 @@ impl<'a> Iterator for DistinctIter<'a> {
 }
 
 //-------------------------------------------------------------------------
+// RemoteIndex
+//-------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RawRemoteChange {
+    pub e: Internable,
+    pub a: Internable,
+    pub v: Internable,
+    pub _for: Internable,
+    pub _type: Internable,
+    pub from: Internable,
+    pub to: Internable,
+}
+
+impl RawRemoteChange {
+    pub fn to_change(self, interner: &mut Interner) -> RemoteChange {
+        RemoteChange {
+            e: interner.internable_to_id(self.e),
+            a: interner.internable_to_id(self.a),
+            v: interner.internable_to_id(self.v),
+            _for: interner.internable_to_id(self._for),
+            _type: interner.internable_to_id(self._type),
+            from: interner.internable_to_id(self.from),
+            to: interner.internable_to_id(self.to),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub enum RemoteChangeField {
+    E,
+    A,
+    V,
+    For,
+    Type,
+    From,
+    To,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RemoteChange {
+    pub e: Interned,
+    pub a: Interned,
+    pub v: Interned,
+    pub _for: Interned,
+    pub _type: Interned,
+    pub from: Interned,
+    pub to: Interned,
+}
+
+impl RemoteChange {
+    pub fn extract(&self, fields: &Vec<RemoteChangeField>) -> Vec<Interned> {
+        let mut result = vec![];
+        for field in fields {
+            match *field {
+                RemoteChangeField::E => result.push(self.e),
+                RemoteChangeField::A => result.push(self.a),
+                RemoteChangeField::V => result.push(self.v),
+                RemoteChangeField::For => result.push(self._for),
+                RemoteChangeField::Type => result.push(self._type),
+                RemoteChangeField::From => result.push(self.from),
+                RemoteChangeField::To => result.push(self.to),
+            }
+        }
+        result
+    }
+}
+
+pub struct RemoteIndex {
+    pub index: Vec<RemoteChange>,
+}
+
+impl RemoteIndex {
+    pub fn new() -> RemoteIndex {
+        RemoteIndex { index: vec![] }
+    }
+
+    pub fn insert(&mut self, change: RemoteChange) {
+        self.index.push(change);
+    }
+
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    pub fn prepare(&mut self) {
+        self.index.sort();
+    }
+
+    pub fn clear(&mut self) {
+        self.index.clear();
+    }
+}
+
+//-------------------------------------------------------------------------
 // Intermediate Index
 //-------------------------------------------------------------------------
 

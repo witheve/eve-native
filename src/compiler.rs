@@ -4,7 +4,7 @@ extern crate term_painter;
 
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
-use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan,
+use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan, Internable,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
           make_multi_function, make_commit_lookup, make_remote_lookup, make_aggregate, Block};
 use std::io::prelude::*;
@@ -38,6 +38,7 @@ pub enum FunctionKind {
     Scalar,
     Sum,
     Sort,
+    NeedleSort,
 }
 
 pub struct FunctionInfo {
@@ -117,8 +118,8 @@ lazy_static! {
         m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], vec!["count"], FunctionKind::Sum));
         m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["top"], FunctionKind::Sort));
         m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["bottom"], FunctionKind::Sort));
-        m.insert("gather/next".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
-        m.insert("gather/previous".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::Sort));
+        m.insert("gather/next".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::NeedleSort));
+        m.insert("gather/previous".to_string(), FunctionInfo::aggregate(vec![], vec!["*"], FunctionKind::NeedleSort));
         m
     };
 }
@@ -180,7 +181,7 @@ pub enum Node<'a> {
 #[derive(Debug, Clone)]
 pub enum SubBlock {
     Not(Compilation),
-    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, FunctionKind),
+    Aggregate(Compilation, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, FunctionKind),
     AggregateScan(Compilation),
     IfBranch(Compilation, Vec<Field>),
     If(Compilation, Vec<Field>, bool),
@@ -436,6 +437,12 @@ impl<'a> Node<'a> {
                 }
                 None
             },
+            &mut Node::LookupRemote(ref mut attrs, _) => {
+                for attr in attrs {
+                    attr.gather_equalities(interner, cur_block);
+                }
+                None
+            },
             &mut Node::RecordSet(ref mut records) => {
                 for record in records {
                     record.gather_equalities(interner, cur_block);
@@ -482,7 +489,11 @@ impl<'a> Node<'a> {
                 let right = value.gather_equalities(interner, cur_block);
                 if op == &"<-" {
                     cur_block.provide(right.unwrap(), true);
-                    cur_block.equalities.push((left.unwrap(), right.unwrap()));
+                    if let &Node::MutatingAttributeAccess(..) = record.unwrap_ref_pos() {
+                        // @NOTE: Compile will create a scan to resolve right, we only need to indicate that it exists.
+                    } else {
+                        cur_block.equalities.push((left.unwrap(), right.unwrap()));
+                    }
                 }
                 None
             },
@@ -601,7 +612,7 @@ impl<'a> Node<'a> {
                 let mut final_var = "attr_access".to_string();
                 let mut parent = get_provided!(cur_block, span, items[0]);
                 if items.len() > 2 {
-                    for item in items[1..items.len()-2].iter() {
+                    for item in items[1..items.len()-1].iter() {
                         final_var.push_str("|");
                         final_var.push_str(item);
                         let reg = cur_block.get_register(&final_var);
@@ -670,6 +681,7 @@ impl<'a> Node<'a> {
                 let mut cur_params = vec![Field::Value(0); info.params.len()];
                 let mut group = vec![];
                 let mut projection = vec![];
+                let mut needle = vec![];
                 for param in params {
                     let mut compiled_params = vec![];
                     let (_, unwrapped) = param.to_pos_ref(span);
@@ -695,8 +707,9 @@ impl<'a> Node<'a> {
                             ParamType::Output(ix) => { cur_outputs[ix] = v; }
                             ParamType::Invalid => {
                                 match (info.kind, a) {
-                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") => { group.push(v) }
-                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") => { projection.push(v) }
+                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") | (FunctionKind::NeedleSort, "per") => { group.push(v) }
+                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") | (FunctionKind::NeedleSort, "for") => { projection.push(v) }
+                                    (FunctionKind::NeedleSort, "from") => { needle.push(v) }
                                     _ => {
                                         cur_block.error(span, error::Error::UnknownFunctionParam(op.to_string(), a.to_string()));
                                     }
@@ -759,7 +772,22 @@ impl<'a> Node<'a> {
                         let mut sub_block = Compilation::new_child(cur_block);
                         let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
                         sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
-                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_output, info.kind));
+                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, vec![], unified_output, info.kind));
+                    },
+                    FunctionKind::NeedleSort => {
+                        if needle.len() > 0 && needle.len() != projection.len() {
+                            cur_block.error(span, error::Error::InvalidNeedle);
+                            return final_result;
+                        }
+                        let mut sub_block = Compilation::new_child(cur_block);
+                        let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
+                        let unified_needle:Vec<Field> = if needle.len() > 0 {
+                            needle
+                        } else {
+                            projection.clone()
+                        };
+                        sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
+                        cur_block.sub_blocks.push(SubBlock::Aggregate(sub_block, group, projection, cur_params, unified_needle, unified_output, info.kind));
                     },
                     FunctionKind::Scalar => {
                         cur_block.constraints.push(make_function(op, cur_params, cur_outputs[0]));
@@ -771,6 +799,7 @@ impl<'a> Node<'a> {
                 let mut entity = None;
                 let mut attribute = None;
                 let mut value = None;
+                let mut _type = None;
 
                 for attr in attrs {
                     let (local_span, unwrapped) = attr.to_pos_ref(span);
@@ -807,6 +836,7 @@ impl<'a> Node<'a> {
                         "entity" => {}
                         "attribute" => attribute = v,
                         "value" => value = v,
+                        "type" => _type = v,
                         _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
@@ -814,11 +844,22 @@ impl<'a> Node<'a> {
                 if attribute == None { attribute = cur_block.gen_var("eve_lookup"); }
                 if value == None { value = cur_block.gen_var("eve_lookup"); }
 
-                match output_type {
-                    OutputType::Lookup => cur_block.constraints.push(make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap())),
-                    OutputType::Commit => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true}),
-                    OutputType::Bind => cur_block.constraints.push(Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false})
-                }
+                let constraint = match (output_type, _type) {
+                    (OutputType::Lookup, _) => make_scan(entity.unwrap(), attribute.unwrap(), value.unwrap()),
+                    (OutputType::Bind, _) => Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: false},
+                    (OutputType::Commit, None) => Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true},
+                    (OutputType::Commit, Some(Field::Value(v))) => {
+                        match interner.get_value(v) {
+                            &Internable::String(ref s) if s == "add" => Constraint::Insert{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), commit: true},
+                            &Internable::String(ref s) if s == "remove" => Constraint::Remove{e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap() },
+                            _ => { cur_block.error(span, error::Error::InvalidLookupType); return None; }
+                        }
+                    },
+                    (OutputType::Commit, Some(Field::Register(_))) => {
+                        Constraint::DynamicCommit {e: entity.unwrap(), a: attribute.unwrap(), v: value.unwrap(), _type: _type.unwrap()}
+                    },
+                };
+                cur_block.constraints.push(constraint);
 
                 None
             },
@@ -917,9 +958,9 @@ impl<'a> Node<'a> {
                         "attribute" => attribute = v,
                         "value" => value = v,
                         "to" => to = v,
+                        "from" => from = v,
                         "for" => _for = v,
                         "type" => _type = v,
-                        "from" => value = v,
                         _ => panic!("Invalid lookup attribute '{}'. Lookup supports only entity, attribute, and value lookups.", a)
                     }
                 }
@@ -931,11 +972,12 @@ impl<'a> Node<'a> {
                 if _for == None { _for = cur_block.gen_var("eve_lookup"); }
                 if _type == None { _type = cur_block.gen_var("eve_lookup"); }
 
-                match output_type {
-                    OutputType::Lookup => cur_block.constraints.push(make_remote_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap(), _for.unwrap(), _type.unwrap(), from.unwrap(), to.unwrap())),
-                    OutputType::Commit => unimplemented!(),
-                    OutputType::Bind => unimplemented!()
-                }
+                let constraint = match output_type {
+                    OutputType::Lookup => make_remote_lookup(entity.unwrap(), attribute.unwrap(), value.unwrap(), _for.unwrap(), _type.unwrap(), from.unwrap(), to.unwrap()),
+                    OutputType::Commit => Constraint::Watch {name:"eve/remote".to_string(), registers: vec![to.unwrap(), _for.unwrap(), entity.unwrap(), attribute.unwrap(), value.unwrap(), Field::Value(0)]},
+                    OutputType::Bind => Constraint::Watch {name:"eve/remote".to_string(), registers: vec![to.unwrap(), _for.unwrap(), entity.unwrap(), attribute.unwrap(), value.unwrap(), Field::Value(1)]},
+                };
+                cur_block.constraints.push(constraint);
                 None
             },
             &Node::Record(ref var, ref attrs) => {
@@ -1072,6 +1114,11 @@ impl<'a> Node<'a> {
                 let mut avs = vec![];
                 match (attr, val) {
                     (None, &Node::Tag(t)) => { avs.push((interner.string("tag"), interner.string(t))) },
+                    (Some(attr), &Node::Tag(t)) => {
+                        let me = cur_block.gen_var("tag_mutation").unwrap();
+                        cur_block.constraints.push(make_scan(reg, interner.string(attr), me));
+                        cur_block.constraints.push(Constraint::Insert{e:me, a:interner.string("tag"), v:interner.string(t), commit});
+                    },
                     (None, &Node::NoneValue) => { avs.push((Field::Value(0), Field::Value(0))) }
                     (Some(attr), &Node::NoneValue) => { avs.push((interner.string(attr), Field::Value(0))) }
                     (Some(attr), &Node::ExprSet(ref nodes)) => {
@@ -1084,6 +1131,18 @@ impl<'a> Node<'a> {
                             avs.push((interner.string(attr), node.compile(interner, cur_block, local_span).unwrap()))
                         }
                     },
+                    (Some(attr), &Node::OutputRecord(Some(ref name), ..)) => {
+                        match op {
+                            &"<-" => {
+                                let me = get_provided!(cur_block, span, name);
+                                cur_block.constraints.push(make_scan(reg, interner.string(attr), me));
+                                val.compile(interner, cur_block, local_span);
+                            }
+                            _ => {
+                                avs.push((interner.string(attr), val.compile(interner, cur_block, local_span).unwrap()));
+                            }
+                        }
+                    },
                     (Some(attr), v) => {
                         avs.push((interner.string(attr), v.compile(interner, cur_block, local_span).unwrap()))
                     },
@@ -1094,7 +1153,7 @@ impl<'a> Node<'a> {
                             &"<-" => { val.compile(interner, cur_block, local_span); }
                             _ => panic!("Invalid {:?}", self)
                         }
-                    }
+                    },
                     _ => { panic!("Invalid {:?}", self) }
                 };
                 for (a, v) in avs {
@@ -1286,13 +1345,15 @@ impl<'a> Node<'a> {
                 key_attrs.extend(inputs.iter());
                 make_anti_scan(key_attrs)
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, _, ref output, kind) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, _, ref needle, ref output, kind) => {
                 let block_name = cur_block.block_name.to_string();
                 let result_id = interner.string(&format!("{}|sub_block|aggregate_result|{}", block_name, ix));
                 let mut result_key = vec![result_id];
                 result_key.extend(group.iter());
-                if kind == FunctionKind::Sort {
-                    result_key.extend(projection.iter());
+                match kind {
+                    FunctionKind::Sort => result_key.extend(projection.iter()),
+                    FunctionKind::NeedleSort => result_key.extend(needle.iter()),
+                    _ => {}
                 }
                 make_intermediate_scan(result_key, output.clone())
             }
@@ -1324,7 +1385,7 @@ impl<'a> Node<'a> {
                 related.push(make_intermediate_insert(key_attrs, vec![], true));
                 cur_block.constraints = related;
             }
-            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, _) => {
+            &mut SubBlock::Aggregate(ref mut cur_block, ref group, ref projection, ref params, _, _, _) => {
                 let block_name = cur_block.block_name.to_string();
 
                 // generate the scan block

@@ -7,7 +7,7 @@ extern crate clap;
 use clap::{Arg, App};
 
 use eve::ops::{ProgramRunner, Persister};
-use eve::watchers::system::{SystemTimerWatcher};
+use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
 use eve::watchers::json::JsonWatcher;
@@ -51,6 +51,7 @@ fn main() {
         runner.program.attach(Box::new(ConsoleWatcher::new()));
         runner.program.attach(Box::new(PrintDiffWatcher::new()));
         runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
+        runner.program.attach(Box::new(PanicWatcher::new()));
     }
 
     if let Some(persist_file) = persist {

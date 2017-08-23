@@ -1,0 +1,40 @@
+/******************************************************************************\
+ * Button                                                                     *
+\******************************************************************************/
+
+:root {
+    --default-col: #f0f0f0;
+    --primary-col: color(rgb(0, 184, 241) saturation(- 10%) lightness(+ 20%)); /*rgb(0, 184, 241);*/
+    --secondary-col: color(rgb(107, 103, 173) lightness(+ 15%));
+}
+
+button { display: flex; flex-direction: row; padding: 5px 10px; background: transparent; border: 1px solid transparent; outline: none; -webkit-appearance: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; background-clip: padding-box !important; }
+
+button:before { align-self: center; }
+
+button:not(:empty):before { margin-right: 10px; }
+
+/* Default */
+
+button { background: var(--default-col); border-radius: 4px; border-color: color(var(--default-col) lightness(- 3%)); }
+button:hover { background: color(var(--default-col) lightness(- 3%)); border-color: color(var(--default-col) lightness(- 6%)); }
+button:active { background: color(var(--default-col) lightness(- 6%)); border-color: color(var(--default-col) lightness(- 9%)); }
+
+button.inset { border-radius: 4px; border-color: rgba(0, 0, 0, 0.1); }
+button.inset:not(.disabled):hover { box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.2); border-top-color: rgba(0, 0, 0, 0.2); }
+button.inset:not(.disabled):active { box-shadow: inset 0 2px 1px rgba(0, 0, 0, 0.2); border-top-color: rgba(0, 0, 0, 0.3); }
+
+button.flat { background: transparent; border-color: transparent; border-radius: 0; }
+button.flat:not(.disabled):hover { background: rgba(0, 0, 0, 0.05); }
+button.flat:not(.disabled):active { background: rgba(0, 0, 0, 0.1); }
+
+.dark button.flat:not(.disabled):hover { background: rgba(255, 255, 255, 0.1); }
+.dark button.flat:not(.disabled):active { background: rgba(255, 255, 255, 0.2); }
+
+/* Primary */
+button.primary { background: var(--primary-col); border-color: color(var(--primary-col) lightness(- 3%)); }
+button.primary:hover { background: color(var(--primary-col) lightness(- 3%)); border-color: color(var(--primary-col) lightness(- 6%)); }
+button.primary:active { background: color(var(--primary-col) lightness(- 6%)); border-color: color(var(--primary-col) lightness(- 9%)); }
+
+button.flat.primary { background: transparent; border-color: transparent; color: color(var(--primary-col) lightness(30%)); }
+.dark button.flat.primary { background: transparent; border-color: transparent; color: color(var(--primary-col) lightness(80%)); }

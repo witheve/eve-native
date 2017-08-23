@@ -19,10 +19,11 @@ extern crate time;
 use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Interner, Persister, JSONInternable};
 use eve::indexes::{WatchDiff};
 use eve::watchers::{Watcher};
-use eve::watchers::system::{SystemTimerWatcher};
+use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
+use eve::watchers::remote::{Router, RemoteWatcher};
 
 extern crate iron;
 extern crate staticfile;
@@ -33,6 +34,8 @@ use iron::{Iron, Chain, status, Request, Response, IronResult, IronError, AfterM
 use staticfile::Static;
 use mount::Mount;
 use std::thread;
+use std::sync::{Arc, Mutex};
+use std::ops::Deref;
 
 extern crate term_painter;
 use self::term_painter::ToStyle;
@@ -53,24 +56,23 @@ pub enum ClientMessage {
 pub struct ClientHandler {
     out: Sender,
     running: RunLoop,
+    client_name: String,
+    router: Arc<Mutex<Router>>,
 }
 
 impl ClientHandler {
-    pub fn new(out:Sender, files:&Vec<&str>, persist:Option<&str>, clean: bool) -> ClientHandler {
+    pub fn new(out:Sender, router: Arc<Mutex<Router>>, files:&Vec<&str>, clean: bool, client_name:&str) -> ClientHandler {
         let mut runner = ProgramRunner::new();
         let outgoing = runner.program.outgoing.clone();
+        router.lock().unwrap().register(&client_name, outgoing.clone());
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
             runner.program.attach(Box::new(ConsoleWatcher::new()));
-        }
-
-        if let Some(persist_file) = persist {
-            let mut persister = Persister::new(persist_file);
-            persister.load(persist_file);
-            runner.persist(&mut persister);
+            runner.program.attach(Box::new(PanicWatcher::new()));
+            runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().unwrap().deref())));
         }
 
         for file in files {
@@ -79,7 +81,7 @@ impl ClientHandler {
 
         let running = runner.run();
 
-        ClientHandler {out, running}
+        ClientHandler {out, running, client_name: client_name.to_owned(), router }
     }
 }
 
@@ -116,6 +118,7 @@ impl Handler for ClientHandler {
 
     fn on_close(&mut self, code: CloseCode, reason: &str) {
         println!("WebSocket closing for ({:?}) {}", code, reason);
+        self.router.lock().unwrap().unregister(&self.client_name);
         self.running.close();
     }
 }
@@ -185,10 +188,41 @@ fn http_server(address: String) -> std::thread::JoinHandle<()> {
     })
 }
 
-fn websocket_server(address: String, files:&Vec<&str>, persist:Option<&str>, clean: bool) {
+fn websocket_server(address: String, server_file:Option<&str>, files:&Vec<&str>, persist:Option<&str>, clean: bool) {
     println!("{} Websocket Server at {}... ", BrightGreen.paint("Starting:"), address);
+
+    // create a server program
+    let mut runner = ProgramRunner::new();
+    let outgoing = runner.program.outgoing.clone();
+    let router = Arc::new(Mutex::new(Router::new(outgoing.clone())));
+    router.lock().unwrap().register("server", outgoing.clone());
+
+    if !clean {
+        runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
+        runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
+        runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
+        runner.program.attach(Box::new(ConsoleWatcher::new()));
+        runner.program.attach(Box::new(PanicWatcher::new()));
+        runner.program.attach(Box::new(RemoteWatcher::new("server", &router.lock().unwrap().deref())));
+    }
+
+    if let Some(persist_file) = persist {
+        let mut persister = Persister::new(persist_file);
+        persister.load(persist_file);
+        runner.persist(&mut persister);
+    }
+
+    if server_file.is_some() {
+        runner.load(server_file.unwrap());
+    }
+
+    runner.run();
+    let mut ix = 0;
+
     match listen(address, |out| {
-        ClientHandler::new(out, files, persist, clean)
+        ix += 1;
+        let client_name = format!("ws_client_{}", ix);
+        ClientHandler::new(out, router.clone(), files, clean, &client_name)
     }) {
         Ok(_) => {},
         Err(why) => println!("{} Failed to start Websocket Server: {}", BrightRed.paint("Error:"), why),
@@ -214,6 +248,11 @@ fn main() {
                                .help("The eve files and folders to load")
                                .required(true)
                                .multiple(true))
+                          .arg(Arg::with_name("server-file")
+                               .long("server")
+                               .value_name("FILE")
+                               .help("Loads the specified file into the server instance")
+                               .takes_value(true))
                           .arg(Arg::with_name("port")
                                .short("p")
                                .long("port")
@@ -249,8 +288,9 @@ fn main() {
         None => vec![]
     };
     let persist = matches.value_of("persist");
+    let server_file = matches.value_of("server-file");
     let clean = matches.is_present("clean");
 
     http_server(http_address);
-    websocket_server(websocket_address, &files, persist, clean);
+    websocket_server(websocket_address, server_file, &files, persist, clean);
 }
