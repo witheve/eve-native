@@ -33,6 +33,7 @@ let program = new RemoteProgram(`ws://${location.hostname}:3012`);
 program.attach("html");
 program.attach("canvas");
 program.attach("console");
+program.attach("code-block");
 // program.inputEAVs([
 //   [1, "tag", "html/element"],
 //   [1, "tagname", "div"],

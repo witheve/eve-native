@@ -21,7 +21,7 @@ use eve::indexes::{WatchDiff};
 use eve::watchers::{Watcher};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
-use eve::watchers::compiler2::{RawTextCompilerWatcher};
+use eve::watchers::textcompiler::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
 use eve::watchers::remote::{Router, RemoteWatcher};
 

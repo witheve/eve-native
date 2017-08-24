@@ -11,5 +11,5 @@ pub mod file;
 pub mod console;
 pub mod system;
 pub mod compiler;
-pub mod compiler2;
+pub mod textcompiler;
 pub mod remote;
