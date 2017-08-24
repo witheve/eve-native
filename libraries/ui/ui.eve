@@ -22,6 +22,7 @@ bind
 end
 ~~~
 
+
 ## Shortcut Tags
 
 ~~~ eve
@@ -46,6 +47,68 @@ end
 ~~~
 
 
+## General Setup
+
+Clear ui events.
+~~~ eve
+search
+  event = [#ui/event]
+commit
+  event := none
+end
+~~~
+
+Translate bubble event names to event tags.
+~~~ eve
+search
+  bubble = [#ui/bubble-event event: name]
+bind
+  bubble.event-tag += "ui/event/{{name}}"
+end
+~~~
+
+Bubble ui events.
+~~~ eve
+search
+  event = [#ui/event tag: event-tag element: from]
+  [#ui/bubble-event event-tag from to]
+bind
+  event.element += to
+end
+~~~
+
+Translate state/start/stop event names to event tags.
+~~~ eve
+search
+  transition = [#ui/state-tag state start-event stop-event]
+bind
+  transition.state-tag += "ui/{{state}}"
+  transition.start-tag += "ui/event/{{start-event}}"
+  transition.stop-tag += "ui/event/{{stop-event}}"
+end
+~~~
+
+Apply state when start-event occurs.
+~~~ eve
+search
+  [#ui/event tag: start-tag element: for]
+  [#ui/state-tag for state-tag start-tag]
+commit
+  for.tag += state-tag
+end
+~~~
+
+Remove state when stop-event occurs.
+~~~ eve
+search
+  [#ui/event tag: stop-tag element: for]
+  [#ui/state-tag for state-tag stop-tag]
+commit
+  for.tag -= state-tag
+end
+~~~
+
+
 ## Buttons
 
 Give button elements icons if specified.
@@ -58,280 +121,668 @@ bind
 end
 ~~~
 
-## Autocomplete
 
-### Setup
+## Toggle
 
-Decorate autocompletes.
+A toggle is a checkbox and a label decorated as a toggle switch.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete]
+  element = [#ui/toggle]
 bind
-  autocomplete <- [#ui/column children:
-    [#ui/input #ui/autocomplete/input sort: 1 autocomplete]
-    [#ui/column #ui/autocomplete/matches sort: 2 autocomplete]]
+  element <- [#html/div children:
+    [#html/element tagname: "label" for: "ui-toggle-{{element}}"]
+    [#html/input #ui/toggle/input type: "checkbox" id: "ui-toggle-{{element}}"]]
 end
 ~~~
 
-Copy input placeholder.
+Copy checked from input to toggle.
 ~~~ eve
 search
-  input = [#ui/autocomplete/input autocomplete]
+  element = [#ui/toggle children: [#ui/toggle/input checked]]
+
 bind
-  input.placeholder += autocomplete.placeholder
+  element.checked += checked
+end
+~~~
+
+Copy initial from toggle to input.
+~~~ eve
+search
+  element = [#ui/toggle initial children: input]
+  input = [#ui/toggle/input]
+
+bind
+  input.initial += initial
+end
+~~~
+
+
+## List
+
+Decorate list as html.
+~~~ eve
+search
+  list = [#ui/list]
+bind
+  list <- [#html/element tagname: "div"]
+end
+~~~
+
+Drop items into list (will eventually be flywheel'd).
+~~~ eve
+search
+  list = [#ui/list item]
+bind
+  list.children += item
+end
+~~~
+
+## Selectable
+
+The default cursor for a selectable list is the first item.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  not(selectable.cursor)
+  gather/bottom[for: item.sort per: selectable limit: 1]
+commit
+  selectable.cursor := item
+end
+~~~
+
+If the cursor is no longer an item, clear it.
+~~~ eve
+search
+  selectable = [#ui/selectable cursor]
+  not(selectable = [#ui/selectable item: cursor])
+commit
+  selectable.cursor := none
+end
+~~~
+
+Selectable items are sorted by autosort if they don't specify a sort.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  sort = if s = item.sort then s else item.eve-auto-index
+bind
+  item.sort += sort
+end
+~~~
+
+Build a linked list of the items in the selectable for navigation.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  (next-sort next) = gather/next[for: (item.sort item) per: selectable]
+bind
+  item.next-selectable-item += next
+  next.prev-selectable-item += item
+end
+~~~
+
+Mark the currently selected element.
+~~~ eve
+search
+  [#ui/selectable selected]
+bind
+  selected += #ui/selected
+end
+~~~
+
+Mark the cursor element.
+~~~ eve
+search
+  [#ui/selectable #ui/active cursor]
+bind
+  cursor += #ui/current
+end
+~~~
+
+A focused selectable is active.
+~~~ eve
+search
+  selectable = [#ui/selectable #html/focused]
+bind
+  selectable += #ui/active
+end
+~~~
+
+
+### Handlers
+
+If a selectable is focused by the client, activate it.
+~~~ eve
+search
+  selectable = [#ui/selectable]
+  [#html/event/focus element: selectable]
+bind
+  [#ui/event #ui/event/activate element: selectable]
+end
+~~~
+
+If a selectable is blurred by the client, deactivate it.
+~~~ eve
+search
+  selectable = [#ui/selectable]
+  [#html/event/blur element: selectable]
+bind
+  [#ui/event #ui/event/deactivate element: selectable]
+end
+~~~
+
+Clicking an item in a selectable selects the item.
+~~~ eve
+search
+  selectable = [#ui/selectable item]
+  [#html/event/mouse-down element: item]
+bind
+  [#ui/event #ui/event/select element: selectable item]
+end
+~~~
+
+Clicking outside an active selectable deactivates it.
+@FIXME: This just won't work :( It clashes when used as a subcomponent.
+~~~ eve
+// search
+//   selectable = [#ui/selectable #ui/active]
+//   [#html/event/click]
+//   container = if c = selectable.container then c else selectable
+//   not([#html/event/click element: container])
+// bind
+//   [#ui/event #ui/event/deactivate element: selectable]
+// end
+~~~
+
+Escape or tab in a active selectable deactivates it.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/active]
+  event = if e = [#html/event/key-down key: "escape"] then e
+  if e = [#html/event/key-down key: "tab"] then e
+  if e = [#html/event/key-down key: "enter"] then e
+bind
+  [#ui/event #ui/event/deactivate element: selectable]
+end
+~~~
+
+Enter in a active selectable selects its cursor.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/active cursor:item]
+  [#html/event/key-down key: "enter"]
+bind
+  [#ui/event #ui/event/select element: selectable item]
+end
+~~~
+
+Down in a active selectable advances the cursor.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/active cursor]
+  event = [#html/event/key-down key: "down"]
+commit
+  selectable.cursor := cursor.next-selectable-item
+end
+~~~
+
+Up in a active selectable retreats the cursor.
+~~~ eve
+search
+  selectable = [#ui/selectable #ui/active cursor]
+  [#html/event/key-down key: "up"]
+commit
+  selectable.cursor := cursor.prev-selectable-item
+end
+~~~
+
+
+### Events
+
+Describe selectable states.
+~~~ eve
+search
+  selectable = [#ui/selectable]
+bind
+  [#ui/state-tag for: selectable state: "active" start-event: "activate" stop-event: "deactivate"]
+end
+~~~
+
+Selecting an element updates the selected and cursor.
+~~~ eve
+search
+  event = [#ui/event/select element: selectable item]
+commit
+  selectable.selected += item
+  selectable.cursor := item
+end
+~~~
+
+In a single-selectable selectable, selection overwrites the previous selected.
+~~~ eve
+search
+  event = [#ui/event/select element: selectable item]
+  selectable = [#ui/single-selectable]
+commit
+  selectable.selected := item
+end
+~~~
+
+Clearing a selectable clears its selected.
+~~~ eve
+search
+  event = [#ui/event/clear element: selectable]
+commit
+  selectable.selected := none
+end
+~~~
+
+
+### Dropdown
+
+Decorate dropdown as html.
+~~~ eve
+search
+  dropdown = [#ui/dropdown]
+bind
+  dropdown <- [#html/element tagname: "div"]
+end
+~~~
+
+A dropdown's first child is its input.
+~~~ eve
+search
+  dropdown = [#ui/dropdown input]
+bind
+  dropdown.children += input
+  input.sort += 1
+end
+~~~
+
+A dropdown creates a selectable list of its items.
+~~~ eve
+search
+  dropdown = [#ui/dropdown item]
+bind
+  dropdown.children += [#ui/dropdown/list #ui/list #ui/selectable #ui/single-selectable dropdown container: dropdown sort: 999999 | item]
+end
+~~~
+
+A dropdown's selected is its list's
+~~~ eve
+search
+  [#ui/dropdown/list dropdown selected]
+bind
+  dropdown.selected += selected
+end
+~~~
+
+
+### Handlers
+
+Clicking a dropdown opens it.
+~~~ eve
+search
+  dropdown = [#ui/dropdown]
+  not(dropdown = [#ui/active])
+  [#html/event/click element: dropdown]
+bind
+  [#ui/event #ui/event/activate element: dropdown]
+end
+~~~
+
+Clicking anywhere outside an open dropdown closes it.
+~~~ eve
+search
+  dropdown = [#ui/dropdown #ui/active]
+  [#html/event/click]
+  not([#html/event/click element: dropdown])
+bind
+  [#ui/event #ui/event/deactivate element: dropdown]
+end
+~~~
+
+
+### Events
+
+Describe dropdown event bubbling and states.
+~~~ eve
+search
+  dropdown = [#ui/dropdown input]
+  list = [#ui/dropdown/list dropdown]
+bind
+  [#ui/bubble-event from: dropdown to: list event: ("activate" "deactivate" "clear" "select")]
+  [#ui/bubble-event from: list to: dropdown event: ("activate" "deactivate" "clear" "select")]
+  [#ui/state-tag for: dropdown state: "active" start-event: "activate" stop-event: "deactivate"]
+end
+~~~
+
+Opening a button-based dropdown blurs the button.
+~~~ eve
+search
+  [#ui/event/activate element: dropdown]
+  dropdown.input.tagname = "button"
+commit
+  dropdown.input += #html/trigger/blur
+end
+~~~
+
+
+## Completer
+
+Decorate completer.
+~~~ eve
+search
+  completer = [#ui/completer]
+bind
+  completer <- [#ui/dropdown input:
+    [#ui/input #ui/completer/input completer]]
+end
+~~~
+
+
+### Setup
+
+Copy input placeholder.
+~~~ eve
+search input = [#ui/completer/input completer]
+bind   input.placeholder += completer.placeholder
 end
 ~~~
 
 Copy input initial.
 ~~~ eve
-search
-  input = [#ui/autocomplete/input autocomplete]
-bind
-  input.initial += autocomplete.initial
+search input = [#ui/completer/input completer]
+bind   input.initial += completer.initial
 end
 ~~~
 
-Copy trigger focus.
+A completer's value is its input's.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete #html/event/trigger-focus]
-  input = [#ui/autocomplete/input autocomplete]
+  completer = [#ui/completer]
+  value = if [#ui/completer/input completer value: v] then v else ""
 bind
-  input += #html/event/trigger-focus
+  completer.value += value
 end
 ~~~
 
-Copy autosize input.
+
+### Handlers
+
+Focusing the completer opens the dropdown.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete #html/autosize-input]
-  input = [#ui/autocomplete/input autocomplete]
+  input = [#ui/completer/input completer]
+  [#html/event/focus element: input]
 bind
-  input += #html/autosize-input
+  [#ui/event #ui/event/activate element: completer]
 end
 ~~~
 
-An autocomplete's value is its input's.
+Blurring the completer closes the dropdown.
 ~~~ eve
 search
-  input = [#ui/autocomplete/input autocomplete]
-  value = if v = input.value then v else ""
+  input = [#ui/completer/input completer]
+  [#html/event/blur element: input]
 bind
-  autocomplete.value += value
+  [#ui/event #ui/event/deactivate element: completer]
 end
 ~~~
 
-An autocomplete uses a custom-specified needle as the search term if provided, otherwise its current value.
+Changing the completer moves the cursor to the top of the list.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete]
-  term = if n = autocomplete.needle then n else autocomplete.value
-bind
-  autocomplete.term += term
+  completer = [#ui/completer #ui/active item]
+  list = [#ui/dropdown/list dropdown: completer]
+
+  [#html/event/change element: [#ui/completer/input completer]]
+  gather/bottom[for: item.sort per: list limit: 1]
+commit
+  list.cursor := item
 end
 ~~~
 
+
+### Events
+
+Closing a completer blurs it.
+~~~ eve
+search
+  [#ui/event/deactivate element: completer]
+  completer = [#ui/completer input]
+commit
+  input += #html/trigger/blur
+end
+~~~
+
+Opening a completer focuses it.
+~~~ eve
+search
+  [#ui/event/activate element: completer]
+  completer = [#ui/completer input]
+commit
+  input += #html/trigger/focus
+end
+~~~
+
+
+## Autocomplete
+
+Decorate autocomplete
+~~~ eve
+search
+  completer = [#ui/autocomplete]
+bind
+  completer <- [#ui/completer]
+end
+~~~
+
+### Logic
 
 If an autocomplete's value disagrees with its selected, clear the selected.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete term selected]
+  completer = [#ui/autocomplete value: term selected]
   selected.text != term
 commit
-  autocomplete.selected := none
+  [#ui/event #ui/event/clear element: completer]
 end
 ~~~
 
-Completions that match the current input value are matches.
+Completions that match the current input value are matches, sorted by length.
 ~~~ eve
 search
-  autocomplete = [#ui/autocomplete term completion]
-  string/index-of[text: completion.text substring: string/lowercase[text: term]]
+  completer = [#ui/autocomplete value: term completion]
+  ix = string/index-of[text: completion.text substring: string/lowercase[text: term]]
+  sort = string/length[text: completion.text]
 bind
-  autocomplete.match += completion
+  completer.item += completion
+  completion.sort += "{{sort}}{{completion.text}}"
 end
 ~~~
 
-Matches are sorted by length.
-~~~ eve
-search
-  autocomplete = [#ui/autocomplete match]
-  sort = string/length[text: match.text]
-bind
-  match.sort += sort
-end
-~~~
-
-Show the matches in a popout beneath the input.
-~~~ eve
-search
-  autocomplete = [#ui/autocomplete match]
-  matches = [#ui/autocomplete/matches autocomplete]
-bind
-  matches.children += match
-  match <- [#ui/autocomplete/match #ui/text autocomplete]
-end
-~~~
-
-### Interaction
-
-Clicking a match updates the selected and value of the autocomplete.
-~~~ eve
-search
-  match = [#ui/autocomplete/match autocomplete]
-  [#html/event/mouse-down element: match]
-commit
-  [#ui/event/select autocomplete selected: match]
-end
-~~~
-
-Focusing an autocomplete input opens it.
-~~~ eve
-search
-  input = [#ui/autocomplete/input autocomplete]
-  [#html/event/focus element: input]
-commit
-  [#ui/event/open autocomplete]
-end
-~~~
-
-Blurring an autocomplete input opens it.
-~~~ eve
-search
-  input = [#ui/autocomplete/input autocomplete]
-  [#html/event/blur element: input]
-commit
-  [#ui/event/close autocomplete]
-end
-~~~
+### Handlers
 
 If the value matches perfectly on blur, select that match.
 ~~~ eve
 search
-  input = [#ui/autocomplete/input autocomplete]
+  input = [#ui/completer/input completer]
+  completer = [#ui/autocomplete]
   [#html/event/blur element: input value]
-  match = autocomplete.match
+  match = completer.item
   lower = string/lowercase[text: match.text]
   lower = string/lowercase[text: value]
-commit
-  [#ui/event/select autocomplete selected: match]
+bind
+  [#ui/event #ui/event/select element: completer item: match]
 end
 ~~~
 
-Pressing escape in an open autocomplete closes it.
+Autocompletes update their values on select.
 ~~~ eve
 search
-  [#ui/autocomplete open: "true"]
-  [#html/event/key-down key: "escape" element: autocomplete]
+  autocomplete = [#ui/autocomplete input]
+  [#ui/event/select item element: autocomplete]
 commit
-  [#ui/event/close autocomplete]
+  input.value := item.text
 end
 ~~~
 
-Pressing enter in an open autocomplete submits it.
-~~~ eve
-search
-  [#ui/autocomplete open: "true"]
-  [#html/event/key-down key: "enter" element: autocomplete]
-commit
-  [#ui/event/submit autocomplete]
-  [#ui/event/close autocomplete]
-end
-~~~
-
-Pressing tab in an open autocomplete submits it.
-~~~ eve
-// search
-//   [#ui/autocomplete open: "true" match]
-//   [#html/event/key-down key: "tab" element: autocomplete]
-//   1 == gather/sort[for: match.sort per: autocomplete]
-// commit
-//   [#ui/event/select autocomplete selected: match]
-//   [#ui/event/close autocomplete]
-// end
-~~~
 
 ### Events
 
 Clear the specified autocomplete.
 ~~~ eve
 search
-  event = [#ui/event/clear autocomplete]
+  event = [#ui/event/clear element: autocomplete]
   input = [#ui/autocomplete/input autocomplete]
 commit
   input.value := none
-  event := none
 end
 ~~~
 
 When an autocomplete is opened, store its previous value.
 ~~~ eve
 search
-  event = [#ui/event/open autocomplete]
+  event = [#ui/event/activate element: autocomplete]
   input = [#ui/autocomplete/input autocomplete]
   value = if v = input.value then v else ""
 commit
-  autocomplete.open := "true"
   autocomplete.previous := value
-  input -= #html/trigger/blur
-  event := none
 end
 ~~~
 
 When an autocomplete is closed, erase its previous value.
 ~~~ eve
 search
-  event = [#ui/event/close autocomplete]
+  event = [#ui/event/deactivate element: autocomplete]
   input = [#ui/autocomplete/input autocomplete]
 commit
-  autocomplete.open := none
   autocomplete.previous := none
-  input += #html/trigger/blur
-  input -= #html/trigger/focus
-  event := none
 end
 ~~~
 
 When an autocomplete is closed and its value is changed, emit a change event.
 ~~~ eve
 search
-  event = [#ui/event/close autocomplete]
+  event = [#ui/event/deactivate element: autocomplete]
   autocomplete.value != autocomplete.previous
 commit
-  [#ui/event/change autocomplete value: autocomplete.value]
+  [#ui/event #ui/event/change element: autocomplete value: autocomplete.value]
 end
 ~~~
 
 When a selection is made that differs from the previous value, emit a change event.
 ~~~ eve
 search
-  event = [#ui/event/select autocomplete selected]
-  selected.text != autocomplete.previous
+  event = [#ui/event/select element: autocomplete item]
+  item.text != autocomplete.previous
 commit
-  [#ui/event/change autocomplete value: selected.text]
+  [#ui/event #ui/event/change element: autocomplete value: item.text]
 end
 ~~~
 
 
-Selecting a completion updates the autocomplete if you aren't using a custom needle.
+## Token Completer
+
+Token completers are completers.
 ~~~ eve
 search
-  event = [#ui/event/select autocomplete selected]
-  input = [#ui/autocomplete/input autocomplete]
-  not(autocomplete.needle)
-commit
-  input.value := selected.text
-  autocomplete.selected := selected
-  event := none
+  completer = [#ui/token-completer]
+bind
+  completer <- [#ui/completer #html/listener/key | captured-key: ("space" "up" "down")]
 end
 ~~~
 
-Clear the autocomplete change event.
+Token items are divs.
 ~~~ eve
 search
-  event = [#ui/event/change autocomplete]
+  completer = [#ui/token-completer item]
+bind
+  item += #html/div
+end
+~~~
+
+
+### Logic
+
+The current term is the last word of the value.
+~~~ eve
+search
+  completer = [#ui/token-completer value]
+  (token, 1) = eve-internal/string/split-reverse[text: value by: " "]
+bind
+  completer.needle += token
+end
+~~~
+
+Completions that match the current input value are matches, sorted by length.
+~~~ eve
+search
+  completer = [#ui/token-completer needle: term completion]
+  ix = string/index-of[text: string/lowercase[text: completion.text] substring: string/lowercase[text: term]]
+  sort = string/length[text: completion.text]
+bind
+  completer.item += completion
+  completion.sort += "{{sort}}{{completion.text}}"
+end
+~~~
+
+Space-separated words are tokens of the completer.
+~~~ eve
+search
+  completer = [#ui/token-completer value]
+  (token, ix) = string/split[text: value by: " "]
+bind
+  completer.token += [#ui/token-completer/token token ix]
+end
+~~~
+
+Track the index of the last token.
+~~~ eve
+search
+  completer = [#ui/token-completer token: [ix]]
+  gather/top[for: ix per: completer limit: 1]
+bind
+  completer.last-ix += ix
+end
+~~~
+
+### Handlers
+
+Token completers append the new completed token in place of the in progress token on select.
+~~~ eve
+search
+  event = [#ui/event/select element: completer item]
+  input = [#ui/completer/input completer]
+  completer = [#ui/token-completer needle]
+  needle != ""
+  needle-start = 0 - string/length[text: needle]
+  value = string/substring[text: input.value from: 1 to: needle-start]
 commit
-  event := none
+  input.value := "{{value}}{{item.text}} "
+end
+~~~
+
+Token completers without an in-progress token just append the new one.
+~~~ eve
+search
+  event = [#ui/event/select element: completer item]
+  input = [#ui/completer/input completer]
+  completer = [#ui/token-completer needle: ""]
+commit
+  input.value := "{{completer.value}}{{item.text}} "
+end
+~~~
+
+Space in a active selectable selects its cursor.
+~~~ eve
+search
+  completer = [#ui/token-completer #ui/active]
+  list = [#ui/dropdown/list dropdown: completer cursor:item]
+  [#html/event/key-up key: "space"]
+bind
+  [#ui/event #ui/event/select element: list item]
 end
 ~~~
 
@@ -339,9 +790,20 @@ end
 
 
 Todo:
- - [X] string/index-of[text substring] match_indices(pattern)
-- [X] string/contains[text substring] contains(pattern)
-- [X] string/lowercase[text] to_lowercase
-- [X] string/uppercase[text] to_uppercase
-- [X] string/length[text]
-- [ ] Highlight functions
+- [x] Toggle
+- [x] List
+- [x] Dropdown
+  - [x] *bug* commit removal not working for enter / click (blurs list -> closes dropdown)
+  - [x] *bug* gather/bottom filtering randomly (always includes correct answer + optionally any others in set).
+- [ ] Tab Box
+- [ ] Rewrite AC on Dropdown
+  - input
+  - list (navigable)
+- [ ] container
+  - card
+- [ ] progress
+- [ ] Tree
+- [ ] chip
+- [ ] date picker
+- [ ] time picker
+- [ ] dialog

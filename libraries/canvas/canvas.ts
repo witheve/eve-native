@@ -1,4 +1,5 @@
 import {Program, Library, RawValue, RawEAV, RawMap, handleTuples, asValue, libraries} from "../../ts";
+import {Instance as HTMLInstance} from "../html/html";
 
 function ixComparator(idMap:{[key:string]:{ix:number}}) {
   return (a:string, b:string) => {
@@ -32,7 +33,7 @@ function isOperationType(val:RawValue): val is OperationType {
 const EMPTY_OBJ = {};
 const EMPTY:never[] = [];
 
-export interface Canvas extends HTMLCanvasElement { __element: RawValue }
+type CanvasInstance = HTMLCanvasElement & HTMLInstance;
 export type OperationType = keyof Path2D;
 export interface Operation {type: OperationType, args:any, paths:RawValue[]};
 // {fillStyle: "#000000", strokeStyle: "#000000", lineWidth: 1, lineCap: "butt", lineJoin: "miter"}
@@ -105,7 +106,7 @@ export class Canvas extends Library {
     return this.operations[id] = {type, args: {}, paths: []};
   }
   clearOperation(id:RawValue) {
-    if(!this.operations[id]) throw new Error(`Missing operation instance ${id}`);
+    if(!this.operations[id]) { throw new Error(`Missing operation instance ${id}`); }
     this.operations[id] = undefined;
   }
   getOperation(id:RawValue) {
@@ -121,7 +122,8 @@ export class Canvas extends Library {
     let input = [];
     let restOptional = false;
     for(let field of fields) {
-      let value = asValue(args[field]) || defaultOperationFieldValue[field];
+      let value = asValue(args[field]);
+      if(value === undefined) value = defaultOperationFieldValue[field];
       if(value === undefined) return;
       input.push(value);
     }
@@ -135,9 +137,10 @@ export class Canvas extends Library {
       if(!path) continue;
       let path2d = this.pathCache[id] = new window.Path2D();
       for(let opId of path) {
+        if(opId === undefined) continue;
         let operation = this.getOperation(opId);
         let input = this.getOperationArgs(operation);
-        if(!input) {
+        if(input === undefined) {
           console.warn(`Skipping incomplete or invalid operation ${opId}`, operation.type, operation.args);
           continue;
         }
@@ -163,7 +166,7 @@ export class Canvas extends Library {
     for(let canvasId of Object.keys(dirtyCanvases)) {
       let pathIds = this.canvasPaths[canvasId];
       for(let instanceId of this.getCanvasInstances(canvasId)) {
-        let canvas = this.html.getInstance(instanceId) as Canvas;
+        let canvas = this.html.getInstance(instanceId) as CanvasInstance;
         let ctx = canvas.getContext("2d")!;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if(!pathIds) continue;
@@ -227,7 +230,7 @@ export class Canvas extends Library {
         let instances = this.canvases[canvasId];
         let paths = this.canvasPaths[canvasId];
         if(!paths || !instances) continue;
-        paths.splice(ix - 1, 1);
+        paths[ix - 1] = undefined as any;
         let canvases = this.pathToCanvases[pathId]!;
         canvases.splice(canvases.indexOf(canvasId), 1);
 
@@ -239,7 +242,7 @@ export class Canvas extends Library {
         if(typeof ix !== "number") continue;
         let instances = this.canvases[canvasId];
         let paths = this.canvasPaths[canvasId] = this.canvasPaths[canvasId] || [];
-        paths.splice(ix - 1, 0, pathId);
+        paths[ix - 1] = pathId;
         let canvases = this.pathToCanvases[pathId] = this.pathToCanvases[pathId] || [];
         canvases.push(canvasId);
 
@@ -256,7 +259,7 @@ export class Canvas extends Library {
         if(typeof ix !== "number") continue;
         let path = this.paths[pathId];
         let operation = this.operations[operationId];
-        if(path) path.splice(ix - 1, 1);
+        if(path) path[ix - 1] = undefined as any;
         if(operation) operation.paths.splice(operation.paths.indexOf(pathId), 1);
 
         this.dirty[pathId] = true;
@@ -265,7 +268,7 @@ export class Canvas extends Library {
         if(typeof ix !== "number") continue;
         let path = this.getPath(pathId);
         let operation = this.getOperation(operationId);
-        path.splice(ix - 1, 0, operationId);
+        path[ix - 1] = operationId;
         operation.paths.push(pathId);
 
         this.dirty[pathId] = true;
@@ -283,7 +286,7 @@ export class Canvas extends Library {
       }
       for(let [operationId, attribute, value] of adds || EMPTY) {
         let operation = this.operations[operationId];
-        if(!operation) throw new Error(`Missing operation ${operationId} for AV ${attribute}: $[value}`);
+        if(!operation) throw new Error(`Missing operation ${operationId} for AV ${attribute}: ${value}`);
         if(operation.args[attribute]) throw new Error(`Attempting to overwrite existing attribute ${attribute} of ${operationId}: ${operation.args[attribute]} => ${value}`);
         operation.args[attribute] = value;
         for(let pathId of operation.paths) this.dirty[pathId] = true;

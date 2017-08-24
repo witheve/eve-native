@@ -58,7 +58,7 @@ impl Watcher for RawTextCompilerWatcher {
                     ("code", &[id, code]) => {
                         match interner.get_value(code).clone() {
                             Internable::String(ref s) => {
-                                let blocks = parse_string(interner, s, &format!("eve/raw-text/{:?}", id));
+                                let blocks = parse_string(interner, s, &format!("eve/raw-text/{:?}", id), false);
                                 let names = self.id_to_blocks.entry(id).or_insert_with(|| vec![]);
                                 names.extend(blocks.iter().map(|x| x.name.to_owned()));
                                 added_blocks.extend(blocks);

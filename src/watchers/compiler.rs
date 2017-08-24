@@ -10,9 +10,32 @@ use std::collections::hash_map::{Entry};
 pub enum ConstraintParams {
     Scan(Interned, Interned, Interned),
     Output(Interned, Interned, Interned),
+    RemoteOutput(Interned, Interned, Interned, Interned, Interned),
     Function(Interned, Interned, HashMap<String, Interned>),
     Variadic(Interned, Interned, Vec<Interned>),
-    GenId(Interned, HashMap<Interned, Interned>)
+    GenId(Interned, HashMap<Interned, Interned>),
+}
+
+pub fn args_to_vec(op:&str, args:&HashMap<String, Field>) -> Option<Vec<Field>> {
+    if let Some(info) = get_function_info(op) {
+        let mut params:Vec<Field> = vec![];
+        for param in info.get_params() {
+            if let Some(&Field::Value(val)) = args.get(param) {
+                if val != 0 { params.push(Field::Value(val)); }
+                else { return None; }
+            } else { return None; }
+        }
+        return Some(params);
+    }
+    None
+}
+
+pub fn identity_to_vec(args:&HashMap<String, Field>) -> Vec<Field> {
+    // @FIXME: needs attr to soon.
+    let mut keys:Vec<String> = vec![];
+    keys.extend(args.keys().cloned());
+    keys.sort();
+    keys.iter().map(|attr| *args.get(attr).unwrap()).collect()
 }
 
 //-------------------------------------------------------------------------
@@ -22,18 +45,20 @@ pub enum ConstraintParams {
 pub struct CompilerWatcher {
     name: String,
     outgoing: Sender<RunLoopMessage>,
+    remote: bool,
     variable_ix: usize,
     variables: HashMap<Interned, Field>,
     block_types: HashMap<Interned, Interned>,
     block_to_constraints: HashMap<Interned, Vec<Interned>>,
-    constraint_to_params: HashMap<Interned, ConstraintParams>,
-    constraints: HashMap<Interned, Constraint>,
+    constraint_to_params: HashMap<(Interned, Interned), ConstraintParams>,
+    constraints: HashMap<(Interned, Interned), Constraint>,
 }
 
 impl CompilerWatcher {
-    pub fn new(outgoing: Sender<RunLoopMessage>) -> CompilerWatcher {
+    pub fn new(outgoing: Sender<RunLoopMessage>, remote: bool) -> CompilerWatcher {
         CompilerWatcher{name: "eve/compiler".to_string(),
                         outgoing,
+                        remote,
                         variable_ix: 0,
                         variables: HashMap::new(),
                         block_types: HashMap::new(),
@@ -51,15 +76,12 @@ impl CompilerWatcher {
         None
     }
 
-    pub fn add_constraint(&mut self, id:Interned, block:Interned, damaged_constraints:&mut HashSet<Interned>, damaged_blocks:&mut HashSet<Interned>) {
+    pub fn add_constraint(&mut self, id:Interned, block:Interned, damaged_constraints:&mut HashSet<Interned>, damaged_blocks:&mut HashSet<Interned>, params:ConstraintParams) {
         let constraints = self.block_to_constraints.entry(block).or_insert_with(|| vec![]);
         constraints.push(id);
         damaged_blocks.insert(block);
         damaged_constraints.insert(id);
-    }
-
-    pub fn get_field(&self, value:Interned) -> Field {
-        self.variables.get(&value).cloned().unwrap_or_else(|| Field::Value(value))
+        self.constraint_to_params.insert((block, id), params);
     }
 
     pub fn update_variables(&mut self, interner:&mut Interner, diff:&WatchDiff) {
@@ -76,35 +98,41 @@ impl CompilerWatcher {
         }
     }
 
-    pub fn args_to_vec(&self, op:&str, args:&HashMap<String, Interned>) -> Option<Vec<Field>> {
-        if let Some(info) = get_function_info(op) {
-            let mut params:Vec<Field> = vec![];
-            for param in info.get_params() {
-                if let Some(&val) = args.get(param) {
-                    if val != 0 {
-                        params.push(self.get_field(val));
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
+    fn get_field(&self, value:Interned) -> Field {
+        self.variables.get(&value).cloned().unwrap_or_else(|| Field::Value(value))
+    }
+
+
+    pub fn compile_constraint(&self, constraint:&ConstraintParams, interner:&Interner, block_type:Option<String>) -> Option<Constraint> {
+        let commit = match block_type.as_ref().map(String::as_str) { Some("commit") => true, _ => false };
+        match constraint {
+            &ConstraintParams::Scan(e, a, v) => Some(make_scan(self.get_field(e), self.get_field(a), self.get_field(v))),
+            &ConstraintParams::Output(e, a, v) => Some(Constraint::Insert{e: self.get_field(e), a: self.get_field(a), v: self.get_field(v), commit}),
+            &ConstraintParams::RemoteOutput(label, e, a, v, to) => {
+                let commit_type = match commit { true => 0, false => 1 };
+                let registers = vec![to, label, e, a, v, commit_type].iter().map(|&x| self.get_field(x)).collect();
+                Some(Constraint::Watch {name:"eve/remote".to_string(), registers})
+            },
+            &ConstraintParams::Function(name, output, ref args) => {
+                let op = interner.get_string(name).expect("Unable to resolve name of function.");
+                let arg_fields:HashMap<String, Field> = args.iter().map(|(key, value)| (key.to_owned(), self.get_field(*value))).collect();
+                match args_to_vec(&op, &arg_fields) {
+                    Some(params) => Some(make_function(&op, params, self.get_field(output))),
+                    _ => None
                 }
+            },
+            &ConstraintParams::Variadic(name, output, ref args) => {
+                let op = interner.get_string(name).expect("Unable to resolve name of variadic.");
+                let params:Vec<Field> = args.iter().map(|value| self.get_field(*value)).collect();
+                Some(make_function(&op, params, self.get_field(output)))
+            },
+            &ConstraintParams::GenId(var, ref interned_attrs) => {
+                let arg_fields = interned_attrs.iter().map(|(key, value)| {
+                    (interner.get_string(*key).expect("Unable to resolve attribute."), self.get_field(*value))
+                }).collect();
+                Some(make_function("gen_id", identity_to_vec(&arg_fields), self.get_field(var)))
             }
-            return Some(params);
         }
-        None
-    }
-
-    pub fn varargs_to_vec(&self, args:&Vec<Interned>) -> Option<Vec<Field>> {
-        Some(args.iter().map(|&arg| self.get_field(arg)).collect())
-    }
-
-    pub fn identity_to_vec(&self, args:&HashMap<Interned, Interned>) -> Option<Vec<Field>> {
-        // @FIXME: needs attr to soon.
-        let mut keys:Vec<Interned> = vec![];
-        keys.extend(args.keys());
-        keys.sort();
-        Some(keys.iter().map(|attr| self.get_field(*args.get(attr).unwrap())).collect())
     }
 }
 
@@ -131,8 +159,8 @@ impl Watcher for CompilerWatcher {
                         damaged_blocks.insert(block);
                     },
                     ("variable", _) => {},
-                    ("argument", &[constraint, attribute, _]) => {
-                        if let Some(constraint_params) = self.constraint_to_params.get_mut(&constraint) {
+                    ("argument", &[constraint, block, attribute, _]) => {
+                        if let Some(constraint_params) = self.constraint_to_params.get_mut(&(block, constraint)) {
                             match constraint_params {
                                 &mut ConstraintParams::Function(_, _, ref mut params) => {
                                     if let &Internable::String(ref string) = interner.get_value(attribute) {
@@ -148,22 +176,22 @@ impl Watcher for CompilerWatcher {
                             damaged_constraints.insert(constraint);
                         }
                     },
-                    ("identity", &[constraint, attribute, ..]) => {
-                        if let Some(&mut ConstraintParams::GenId(_, ref mut identity)) = self.constraint_to_params.get_mut(&constraint) {
+                    ("identity", &[constraint, block, attribute, ..]) => {
+                        if let Some(&mut ConstraintParams::GenId(_, ref mut identity)) = self.constraint_to_params.get_mut(&(block, constraint)) {
                             identity.remove(&attribute);
                             damaged_constraints.insert(constraint);
                         }
                     },
-
 
                     // Constraints
                     ("scan", &[id, block, ..]) |
                     ("output", &[id, block, ..]) |
                     ("function", &[id, block, ..]) |
                     ("variadic", &[id, block, ..]) |
-                    ("gen-id", &[id, block, ..])=> {
-                        self.constraints.remove(&id).unwrap();
-                        self.constraint_to_params.remove(&id).unwrap();
+                    ("gen-id", &[id, block, ..]) |
+                    ("remote-output", &[id, block, ..]) => {
+                        self.constraints.remove(&(block, id)).expect(format!("Unable to remove nonexistent constraint: '{:?}'", interner.get_value(id)).as_str());
+                        self.constraint_to_params.remove(&(block, id)).unwrap();
                         self.block_to_constraints.get_mut(&block).unwrap().remove_item(&id);
                         damaged_blocks.insert(block);
                         damaged_constraints.insert(id);
@@ -195,24 +223,23 @@ impl Watcher for CompilerWatcher {
 
                     // Constraints
                     ("scan", &[id, block, e, a, v]) => {
-                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
-                        self.constraint_to_params.insert(id, ConstraintParams::Scan(e, a, v));
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks, ConstraintParams::Scan(e, a, v));
                     },
                     ("output", &[id, block, e, a, v]) => {
-                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
-                        self.constraint_to_params.insert(id, ConstraintParams::Output(e, a, v));
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks, ConstraintParams::Output(e, a, v));
                     },
                     ("function", &[id, block, op, output]) => {
-                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
-                        self.constraint_to_params.insert(id, ConstraintParams::Function(op, output, HashMap::new()));
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks,
+                                            ConstraintParams::Function(op, output, HashMap::new()));
                     },
                     ("variadic", &[id, block, op, output]) => {
-                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
-                        self.constraint_to_params.insert(id, ConstraintParams::Variadic(op, output, vec![]));
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks, ConstraintParams::Variadic(op, output, vec![]));
                     },
                     ("gen-id", &[id, block, variable]) => {
-                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks);
-                        self.constraint_to_params.insert(id, ConstraintParams::GenId(variable, HashMap::new()));
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks, ConstraintParams::GenId(variable, HashMap::new()));
+                    },
+                    ("remote-output", &[id, block, label, e, a, v, to]) => {
+                        self.add_constraint(id, block, &mut damaged_constraints, &mut damaged_blocks, ConstraintParams::RemoteOutput(label, e, a, v, to));
                     },
 
                     _ => println!("Found other add '{}' {:?}", kind, add)
@@ -224,8 +251,8 @@ impl Watcher for CompilerWatcher {
         for add in diff.adds {
             if let &Internable::String(ref kind) = interner.get_value(add[0]) {
                 match (kind.as_ref(), &add[1..]) {
-                    ("argument", &[constraint, attribute, value]) => {
-                        match self.constraint_to_params.get_mut(&constraint).unwrap() {
+                    ("argument", &[constraint, block, attribute, value]) => {
+                        match self.constraint_to_params.get_mut(&(block, constraint)).unwrap() {
                             &mut ConstraintParams::Function(_, _, ref mut params) => {
                                 if let &Internable::String(ref string) = interner.get_value(attribute) {
                                     params.insert(string.to_string(), value);
@@ -239,8 +266,8 @@ impl Watcher for CompilerWatcher {
                         }
                         damaged_constraints.insert(constraint);
                     },
-                    ("identity", &[constraint, attribute, value]) => {
-                        if let &mut ConstraintParams::GenId(_, ref mut identity) = self.constraint_to_params.get_mut(&constraint).unwrap() {
+                    ("identity", &[constraint, block, attribute, value]) => {
+                        if let &mut ConstraintParams::GenId(_, ref mut identity) = self.constraint_to_params.get_mut(&(block, constraint)).unwrap() {
                             identity.insert(attribute, value);
                             damaged_constraints.insert(constraint);
                         } else {
@@ -268,50 +295,25 @@ impl Watcher for CompilerWatcher {
 
                 for id in constraints.iter() {
                     if !damaged_constraints.contains(&id) { continue; }
-                    if let Some(params) = self.constraint_to_params.get(&id) {
-                        match params {
-                            &ConstraintParams::Scan(e, a, v) => {
-                                let scan = make_scan(self.get_field(e), self.get_field(a), self.get_field(v));
-                                self.constraints.insert(*id, scan);
-                            },
-                            &ConstraintParams::Output(e, a, v) => {
-                                let is_commit = self.block_type(*block, interner).unwrap() == "commit";
-                                let output = Constraint::Insert{e: self.get_field(e), a: self.get_field(a), v: self.get_field(v), commit: is_commit};
-                                self.constraints.insert(*id, output);
-                            },
-                            &ConstraintParams::Function(op_interned, output, ref params_interned) => {
-                                if let &Internable::String(ref op) = interner.get_value(op_interned) {
-                                    if let Some(params) = self.args_to_vec(op, &params_interned) {
-                                        let function = make_function(op, params, self.get_field(output));
-                                        self.constraints.insert(*id, function);
-                                    }
-                                }
-                            },
-                            &ConstraintParams::Variadic(op_interned, output, ref params_interned) => {
-                                if let &Internable::String(ref op) = interner.get_value(op_interned) {
-                                    if let Some(params) = self.varargs_to_vec(&params_interned) {
-                                        let function = make_function(op, params, self.get_field(output));
-                                        self.constraints.insert(*id, function);
-                                    }
-                                }
-                            },
-                            &ConstraintParams::GenId(var, ref identity_attrs) => {
-                                if let Some(params) = self.identity_to_vec(identity_attrs) {
-                                    let function = make_function("gen_id", params, self.get_field(var));
-                                    self.constraints.insert(*id, function);
-                                }
-                            }
+                    if let Some(params) = self.constraint_to_params.get(&(*block, *id)) {
+                        let block_type = self.block_type(*block, interner);
+                        if let Some(compiled) = self.compile_constraint(params.clone(), interner, block_type) {
+                            self.constraints.insert((*block, *id), compiled);
                         }
                     }
                 }
 
-                comp.constraints.extend(constraints.iter().map(|&id| self.constraints.get(&id).unwrap()).cloned());
+                comp.constraints.extend(constraints.iter().map(|&id| self.constraints.get(&(*block, id)).unwrap()).cloned());
                 comp.finalize();
-                added_blocks.extend(compilation_to_blocks(comp, interner, "compiler_watcher", ""));
+                added_blocks.extend(compilation_to_blocks(comp, interner, "compiler_watcher", "", false));
             }
         }
 
-        // @FIXME: Gotta plumb remove all the way through.
-        self.outgoing.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks)).unwrap();
+        if self.remote {
+            let remote_adds = added_blocks.iter().map(|b| b.to_portable(interner)).collect();
+            self.outgoing.send(RunLoopMessage::RemoteCodeTransaction(remote_adds, removed_blocks)).unwrap();
+        } else {
+            self.outgoing.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks)).unwrap();
+        }
     }
 }

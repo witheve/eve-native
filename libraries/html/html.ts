@@ -6,10 +6,12 @@ const EMPTY:never[] = [];
 
 export interface Instance extends HTMLElement {
   __element: RawValue,
+  __source: HTML,
   __styles?: RawValue[],
   __sort?:RawValue,
   __autoSort?:RawValue,
-  listeners?: {[event:string]: boolean}
+  __listeners?: {[event:string]: boolean},
+  __capturedKeys?: {[code:number]: boolean}
 }
 
 export interface Style extends RawMap<RawValue> {__count: number}
@@ -18,10 +20,6 @@ export interface StyleElement extends HTMLStyleElement {__style: RawValue}
 ////////////////////////////////////////////////////////////////////////////////
 // Helpers
 ////////////////////////////////////////////////////////////////////////////////
-function isFocusable(x:any) {
-  return x instanceof HTMLInputElement ||
-    x instanceof HTMLTextAreaElement;
-}
 
 let naturalComparator = new Intl.Collator("en", {numeric: true}).compare;
 
@@ -49,6 +47,10 @@ export class HTML extends Library {
     return instanceIds.map((id) => this._instances[id]);
   }
 
+  getContainer() {
+    return this._container;
+  }
+
   // @DEPRECATED
   getInstance(instanceId:RawValue) {
     return this._instances[instanceId];
@@ -57,7 +59,7 @@ export class HTML extends Library {
   isInstance(elem?:any): elem is Instance {
     if(!elem || !(elem instanceof Element)) return false;
     let instance = elem as Instance;
-    return instance && !!instance["__element"];
+    return instance && !!instance["__element"] && instance.__source == this;
   }
 
   //////////////////////////////////////////////////////////////////////
@@ -78,6 +80,8 @@ export class HTML extends Library {
   _syntheticStyles:RawMap<StyleElement> = {};
   /** Dummy used for converting style properties to CSS strings. */
   _dummy:HTMLElement;
+  /** Map of currently checked radio buttons (used to uncheck them when their siblings are checked). */
+  _checkedRadios:{[name:string]: RawValue, [name:number]: RawValue} = {};
 
   setup() {
     if(typeof document === "undefined") {
@@ -85,7 +89,9 @@ export class HTML extends Library {
       return;
     }
 
-    this._container = document.body;
+    this._container = document.createElement("div");
+    this._container.setAttribute("program", this.program.name);
+    document.body.appendChild(this._container);
     this._syntheticStyleContainer = document.createElement("div");
     this._syntheticStyleContainer.style.display = "none"
     this._syntheticStyleContainer.style.visibility = "hidden";
@@ -98,6 +104,7 @@ export class HTML extends Library {
     window.addEventListener("mouseup", this._mouseEventHandler("mouse-up"));
     window.addEventListener("contextmenu", this._captureContextMenuHandler());
 
+    window.addEventListener("change", this._changeEventHandler("change"));
     window.addEventListener("input", this._inputEventHandler("change"));
     window.addEventListener("keydown", this._keyEventHandler("key-down"));
     window.addEventListener("keyup", this._keyEventHandler("key-up"));
@@ -113,6 +120,7 @@ export class HTML extends Library {
   protected decorate(elem:Element, elemId:RawValue): Instance {
     let e = elem as Instance;
     e.__element = elemId;
+    e.__source = this;
     return e;
   }
   protected decorateStyle(styleElem:HTMLStyleElement, styleId:RawValue): StyleElement {
@@ -239,6 +247,36 @@ export class HTML extends Library {
     styleElem.textContent = `.${klass} {${this.toCSS(style)}}`;
   }
 
+  protected focusElement(id:RawValue) {
+    let instances = this.getInstances(id);
+    if(!instances || !instances.length) throw new Error(`Unable to focus nonexistent element: '${id}'.`);
+    if(instances.length > 1) throw new Error(`Cannot assign focus to element with multiple instances: '${id}'.`);
+    if(instances[0].focus) instances[0].focus();
+    else console.warn(`Unable to focus element: '${id}' (element not focusable).`);
+    let eventId = createId();
+    this.program.inputEAVs([
+      [eventId, "tag", "html/event"],
+      [eventId, "tag", "html/event/trigger"],
+      [eventId, "trigger", "html/trigger/focus"],
+      [eventId, "element", id]
+    ]);
+  }
+
+  protected blurElement(id:RawValue) {
+    let instances = this.getInstances(id);
+    for(let instance of instances || EMPTY) {
+      if(instance.blur) instance.blur();
+      else console.warn(`Unable to blur element: '${id}' (element not focusable).`);
+    }
+    let eventId = createId();
+    this.program.inputEAVs([
+      [eventId, "tag", "html/event"],
+      [eventId, "tag", "html/event/trigger"],
+      [eventId, "trigger", "html/trigger/blur"],
+      [eventId, "element", id]
+    ]);
+  }
+
 
   //////////////////////////////////////////////////////////////////////
   // Handlers
@@ -255,6 +293,7 @@ export class HTML extends Library {
     }),
     "export roots": handleTuples(({adds}) => {
       for(let [instanceId] of adds || EMPTY) {
+        if(!this._instances[instanceId]) throw new Error(`Instance '${instanceId}' cannot be promoted to root: no longer exists.`);
         this.insertRoot(this._instances[instanceId]);
       }
     }),
@@ -318,27 +357,44 @@ export class HTML extends Library {
         else instance.setAttribute(""+a, ""+v);
       }
     }),
-    "export triggers": handleTuples(({adds, removes}) => {
-      for(let [instanceId, trigger] of adds || EMPTY) {
-        let instance = this._instances[instanceId];
-        if(!instance) throw new Error(`Unable to trigger '${trigger}' on nonexistent instance '${instanceId}'.`);
-        else if(trigger === "html/trigger/focus" && isFocusable(instance)) setImmediate(() => instance.focus());
-        else if(trigger === "html/trigger/blur" && isFocusable(instance)) setImmediate(() => instance.blur());
+    "export triggers": handleTuples(({adds}) => {
+      for(let [elemId, trigger] of adds || EMPTY) {
+        if(trigger === "html/trigger/focus") setImmediate(() => this.focusElement(elemId));
+        if(trigger === "html/trigger/blur") setImmediate(() => this.blurElement(elemId));
       }
     }),
     "export listeners": handleTuples(({adds, removes}) => {
       for(let [instanceId, listener] of removes || EMPTY) {
         let instance = this._instances[instanceId];
         if(!instance) continue;
-        if(!instance.listeners) throw new Error(`Cannot remove never-added listener '${listener}' on instance '${instanceId}'.`);
-        else instance.listeners[listener] = false;
+        if(!instance.__listeners) throw new Error(`Cannot remove never-added listener '${listener}' on instance '${instanceId}'.`);
+        else instance.__listeners[listener] = false;
       }
 
       for(let [instanceId, listener] of adds || EMPTY) {
         let instance = this._instances[instanceId];
         if(!instance) throw new Error(`Unable to add listener '${listener}' on nonexistent instance '${instanceId}'.`);
-        if(!instance.listeners) instance.listeners = {[listener]: true};
-        else instance.listeners[listener] = true;
+        if(!instance.__listeners) instance.__listeners = {[listener]: true};
+        else instance.__listeners[listener] = true;
+      }
+    }),
+    "export captured keys": handleTuples(({adds, removes}) => {
+      for(let [instanceId, key] of removes || EMPTY) {
+        let instance = this._instances[instanceId];
+        if(!instance) continue;
+        if(!instance.__capturedKeys) throw new Error(`Cannot remove never-added captured key '${key}' on instance '${instanceId}'.`);
+        else {
+          let code = this._reverseKeyMap[key] || +key;
+          instance.__capturedKeys[code] = false;
+        }
+      }
+
+      for(let [instanceId, key] of adds || EMPTY) {
+        let instance = this._instances[instanceId];
+        if(!instance) throw new Error(`Unable to add captured key '${key}' on nonexistent instance '${instanceId}'.`);
+        let code = this._reverseKeyMap[key] || +key;
+        if(!instance.__capturedKeys) instance.__capturedKeys = {[code]: true};
+        else instance.__capturedKeys[code] = true;
       }
     })
   };
@@ -350,7 +406,6 @@ export class HTML extends Library {
     _mouseEventHandler(tagname:string) {
     return (event:MouseEvent) => {
       let {target} = event;
-      // if(!this.isInstance(target)) return;
 
       let eventId = createId();
       let eavs:RawEAV[] = [
@@ -376,7 +431,7 @@ export class HTML extends Library {
         while(current && current != this._container) {
           if(this.isInstance(current)) {
             eavs.push([eventId, "element", current.__element]);
-            if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
+            if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
               capturesContextMenu = true;
             }
           }
@@ -396,7 +451,7 @@ export class HTML extends Library {
       let captureContextMenu = false;
       let current:Element|null = event.target as Element;
       while(current && this.isInstance(current)) {
-        if(current.listeners && current.listeners["context-menu"] === true) {
+        if(current.__listeners && current.__listeners["context-menu"] === true) {
           captureContextMenu = true;
         }
         current = current.parentElement;
@@ -410,8 +465,7 @@ export class HTML extends Library {
   _inputEventHandler(tagname:string) {
     return (event:Event) => {
       let target = event.target as (Instance & HTMLInputElement);
-      let elementId = target.__element;
-      if(elementId) {
+      if(this.isInstance(target)) {
         if(target.classList.contains("html-autosize-input")) {
           target.size = target.value.length || 1;
         }
@@ -419,10 +473,44 @@ export class HTML extends Library {
         let eavs:RawEAV[] = [
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "element", elementId],
+          [eventId, "element", target.__element],
           [eventId, "value", target.value]
         ];
         if(eavs.length) this._sendEvent(eavs);
+      }
+    }
+  }
+
+  _changeEventHandler(tagname:string) {
+    return (event:Event) => {
+      let target = event.target as (Instance & HTMLInputElement);
+      if(!(target instanceof HTMLInputElement)) return;
+      if(target.type == "checkbox" || target.type == "radio") {
+        if(this.isInstance(target)) {
+          let eventId = createId();
+          let eavs:RawEAV[] = [
+            [eventId, "tag", "html/event"],
+            [eventId, "tag", `html/event/${tagname}`],
+            [eventId, "element", target.__element],
+            [eventId, "checked", ""+target.checked]
+          ];
+          let name = target.name;
+          if(target.type == "radio" && name !== undefined) {
+            let prev = this._checkedRadios[name];
+            if(prev && prev !== target.__element) {
+              // @NOTE: This is two events in one TX, a bit dangerous.
+              let event2Id = createId();
+              eavs.push(
+                [event2Id, "tag", "html/event"],
+                [event2Id, "tag", `html/event/${tagname}`],
+                [event2Id, "element", prev],
+                [event2Id, "checked", "false"]
+              );
+            }
+            this._checkedRadios[name] = target.__element;
+          }
+          if(eavs.length) this._sendEvent(eavs);
+        }
       }
     }
   }
@@ -434,12 +522,18 @@ export class HTML extends Library {
     17: "control",
     18: "alt",
     27: "escape",
+    32: "space",
     37: "left",
     38: "up",
     39: "right",
     40: "down",
     91: "meta"
   }
+
+  _reverseKeyMap:{[name: string]: number|undefined} = Object.keys(this._keyMap).reduce((memo:any, code:string) => {
+    memo[this._keyMap[+code]!] = +code;
+    return memo;
+  }, {});
 
   _keyEventHandler(tagname:string) {
     return (event:KeyboardEvent) => {
@@ -463,6 +557,9 @@ export class HTML extends Library {
         while(current && current != this._container) {
           if(this.isInstance(current)) {
             eavs.push([eventId, "element", current.__element]);
+            if(current.__listeners && current.__listeners["html/listener/key"] && current.__capturedKeys && current.__capturedKeys[code]) {
+              event.preventDefault();
+            }
           }
           current = current.parentElement;
         };
@@ -475,13 +572,12 @@ export class HTML extends Library {
   _focusEventHandler(tagname:string) {
     return (event:FocusEvent) => {
       let target = event.target as (Instance & HTMLInputElement);
-      let elementId = target.__element;
-      if(elementId) {
+      if(this.isInstance(target)) {
         let eventId = createId();
         let eavs:RawEAV[] = [
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "element", elementId]
+          [eventId, "element", target.__element]
         ];
         if(target.value !== undefined) eavs.push([eventId, "value", target.value]);
         if(eavs.length) this._sendEvent(eavs);
@@ -496,7 +592,7 @@ export class HTML extends Library {
 
       let eavs:RawEAV[] = [];
       let elemId = target.__element!;
-      if(target.listeners && target.listeners["hover"]) {
+      if(target.__listeners && target.__listeners["hover"]) {
         let eventId = createId();
         eavs.push(
           [eventId, "tag", "html/event"],

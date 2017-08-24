@@ -6,6 +6,7 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 extern crate term_painter;
+extern crate natord;
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -233,7 +234,9 @@ impl Block {
                     let actual_e = if let &Field::Value(val) = e { val } else { 0 };
                     let actual_a = if let &Field::Value(val) = a { val } else { 0 };
                     let actual_v = if let &Field::Value(val) = v { val } else { 0 };
-                    if actual_a == tag {
+                    if actual_e != 0 {
+                        scan_shapes.push(PipeShape::Scan(actual_e, 0, 0));
+                    } else if actual_a == tag {
                         scan_shapes.push(PipeShape::Scan(0, actual_a, actual_v));
                     } else {
                         match tag_mappings.get(e) {
@@ -591,11 +594,18 @@ pub fn is_register(field:&Field) -> bool {
     }
 }
 
+pub fn format_field(interner:&Interner, field:&Field) -> String{
+    match field {
+        &Field::Register(reg) => format!("Register({})", reg),
+        &Field::Value(interned) => format!("Value({})", format_interned(interner, interned))
+    }
+}
+
 //-------------------------------------------------------------------------
 // Interner
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum Internable {
     Null,
     String(String),
@@ -612,7 +622,7 @@ impl PartialOrd for Internable {
 
         match (self, rhs) {
             (&Internable::Null, &Internable::Null) => { Some(cmp::Ordering::Equal) },
-            (&Internable::String(ref s), &Internable::String(ref s2)) => { Some(s.cmp(s2)) },
+            (&Internable::String(ref s), &Internable::String(ref s2)) => { Some(natord::compare(s, s2)) },
             (&Internable::Number(n), &Internable::Number(n2)) => {
                 let value = unsafe {transmute::<u32, f32>(n) };
                 let value2 = unsafe {transmute::<u32, f32>(n2) };
@@ -620,6 +630,12 @@ impl PartialOrd for Internable {
             },
             _ => { unreachable!() }
         }
+    }
+}
+
+impl Ord for Internable {
+    fn cmp(&self, rhs:&Self) -> cmp::Ordering {
+        self.partial_cmp(rhs).unwrap()
     }
 }
 
@@ -856,6 +872,14 @@ impl Interner {
     #[allow(dead_code)]
     pub fn get_value(&self, id:u32) -> &Internable {
         &self.value_to_id[id as usize]
+    }
+
+    #[allow(dead_code)]
+    pub fn get_string(&self, id:u32) -> Option<String> {
+        match self.get_value(id) {
+            &Internable::String(ref str) => Some(str.to_owned()),
+            _ => None
+        }
     }
 }
 
@@ -2309,10 +2333,12 @@ pub enum RunLoopMessage {
     Stop,
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
-    CodeTransaction(Vec<Block>, Vec<String>)
+    CodeTransaction(Vec<Block>, Vec<String>),
+    RemoteCodeTransaction(Vec<PortableBlock>, Vec<String>)
 }
 
 pub struct Program {
+    pub name: String,
     pub state: RuntimeState,
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher + Send>>,
@@ -2321,7 +2347,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new() -> Program {
+    pub fn new(name:&str) -> Program {
         let index = HashIndex::new();
         let distinct_index = DistinctIndex::new();
         let remote_index = RemoteIndex::new();
@@ -2339,7 +2365,7 @@ impl Program {
         let (outgoing, incoming) = mpsc::channel();
         let state = RuntimeState { debug:false, rounds, remote_index, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, remote_pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
-        Program { state, block_info, watchers, incoming, outgoing }
+        Program { name: name.to_owned(), state, block_info, watchers, incoming, outgoing }
     }
 
     pub fn clear(&mut self) {
@@ -2396,7 +2422,10 @@ impl Program {
 
     pub fn unregister_block(&mut self, name:String) {
         if let Some(block_ix) = self.block_info.block_names.remove(&name) {
-            let block = self.block_info.blocks.remove(block_ix);
+            let block = self.block_info.blocks.swap_remove(block_ix);
+            if let Some(neue) = self.block_info.blocks.get(block_ix) {
+                self.block_info.block_names.insert(neue.name.to_owned(), block_ix);
+            }
             for shape_set in block.shapes.iter() {
                 for shape in shape_set.iter() {
                     match shape {
@@ -2435,14 +2464,14 @@ impl Program {
 
     pub fn attach(&mut self, watcher:Box<Watcher + Send>) {
         let name = watcher.get_name();
-        println!("{} {}", BrightCyan.paint("Loaded Watcher:"), name);
+        println!("[{}] {} {}", &self.name, BrightCyan.paint("Loaded Watcher:"), name);
         self.watchers.insert(name, watcher);
     }
 
     pub fn get_pipes<'a>(&self, block_info:&'a BlockInfo, input: &Change, pipes: &mut HashSet<&'a Solver>) {
         let ref pipe_lookup = block_info.pipe_lookup;
         let mut tuple = (0,0,0);
-        // look for (0,0,0), (0, a, 0) and (0, a, v) pipes
+        // look for (0,0,0), (e, 0, 0), (0, a, 0) and (0, a, v) pipes
         match pipe_lookup.get(&tuple) {
             Some(found) => {
                 for pipe in found.iter() {
@@ -2451,6 +2480,16 @@ impl Program {
             },
             None => {},
         }
+        tuple.0 = input.e;
+        match pipe_lookup.get(&tuple) {
+            Some(found) => {
+                for pipe in found.iter() {
+                    pipes.insert(pipe);
+                }
+            },
+            None => {},
+        }
+        tuple.0 = 0;
         tuple.1 = input.a;
         match pipe_lookup.get(&tuple) {
             Some(found) => {
@@ -2783,6 +2822,97 @@ impl CodeTransaction {
 }
 
 //-------------------------------------------------------------------------
+// Portable Code Transaction
+//-------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub enum PortableField {
+    Register(usize),
+    Value(Internable)
+}
+impl PortableField {
+    pub fn intern(&self, interner:&mut Interner) -> Field {
+        match self {
+            &PortableField::Register(ix) => Field::Register(ix),
+            &PortableField::Value(ref internable) => Field::Value(interner.internable_to_id(internable.clone()))
+        }
+    }
+}
+impl Field {
+    pub fn to_portable(&self, interner:&Interner) -> PortableField {
+        match self {
+            &Field::Register(ix) => PortableField::Register(ix),
+            &Field::Value(interned) => PortableField::Value(interner.get_value(interned).clone())
+        }
+    }
+}
+
+pub enum PortableConstraint {
+    Scan(PortableField, PortableField, PortableField),
+    Output(PortableField, PortableField, PortableField, bool),
+    Watch(String, Vec<PortableField>),
+    Function(String, PortableField, Vec<PortableField>),
+    Variadic(String, PortableField, Vec<PortableField>),
+    GenId(PortableField, HashMap<String, PortableField>),
+}
+
+impl PortableConstraint {
+    pub fn intern(&self, interner:&mut Interner) -> Constraint {
+        match self {
+            &PortableConstraint::Scan(ref e, ref a, ref v) => make_scan(e.intern(interner), a.intern(interner), v.intern(interner)),
+            &PortableConstraint::Output(ref e, ref a, ref v, commit) => Constraint::Insert{e: e.intern(interner), a: a.intern(interner), v: v.intern(interner), commit},
+            &PortableConstraint::Watch(ref name, ref registers) => {
+                Constraint::Watch {name: name.to_owned(), registers: registers.iter().map(|v| v.intern(interner)).collect()}
+            },
+            &PortableConstraint::Function(ref name, ref output, ref args) => {
+                let params = args.iter().map(|v| v.intern(interner)).collect();
+                make_function(name, params, output.intern(interner))
+            },
+
+            _ => unimplemented!()
+        }
+    }
+}
+
+impl Constraint {
+    pub fn to_portable(&self, i:&Interner) -> PortableConstraint {
+        match self {
+            &Constraint::Scan{ref e, ref a, ref v, ..} => PortableConstraint::Scan(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
+            &Constraint::Insert{ref e, ref a, ref v, commit} => PortableConstraint::Output(e.to_portable(i), a.to_portable(i), v.to_portable(i), commit),
+            &Constraint::Watch{ref name, ref registers} => {
+                PortableConstraint::Watch(name.to_owned(), registers.iter().map(|v| v.to_portable(i)).collect())
+            },
+            &Constraint::Function{ref op, ref output, ref params, ..} => {
+                PortableConstraint::Function(op.to_owned(), output.to_portable(i), params.iter().map(|v| v.to_portable(i)).collect())
+            },
+
+            _ => unimplemented!()
+        }
+    }
+}
+
+pub struct PortableBlock {
+    pub name: String,
+    pub block_id: Internable,
+    pub constraints: Vec<PortableConstraint>
+}
+
+impl PortableBlock {
+    pub fn intern(&self, interner:&mut Interner) -> Block {
+        let constraints = self.constraints.iter().map(|c| c.intern(interner)).collect();
+        let block_id = interner.internable_to_id(self.block_id.clone());
+        Block::new(interner, &self.name, block_id, constraints)
+    }
+}
+
+impl Block {
+    pub fn to_portable(&self, interner:&Interner) -> PortableBlock {
+        let constraints = self.constraints.iter().map(|c| c.to_portable(interner)).collect();
+        PortableBlock{name: self.name.clone(), block_id: interner.get_value(self.block_id).clone(), constraints}
+    }
+}
+
+//-------------------------------------------------------------------------
 // Persister
 //-------------------------------------------------------------------------
 
@@ -2896,16 +3026,23 @@ impl RunLoop {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DebugMode {
+    Compile
+}
+
 pub struct ProgramRunner {
     pub program: Program,
+    pub name: String,
     paths: Vec<String>,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
+    debug_modes: HashSet<DebugMode>
 }
 
 impl ProgramRunner {
-    pub fn new() -> ProgramRunner {
-        ProgramRunner {paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
+    pub fn new(name:&str) -> ProgramRunner {
+        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![], debug_modes: HashSet::new() }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -2917,20 +3054,26 @@ impl ProgramRunner {
         self.initial_commits = persister.get_commits();
     }
 
+    pub fn debug(&mut self, mode:DebugMode) {
+        self.debug_modes.insert(mode);
+    }
+
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
         let initial_commits = self.initial_commits;
-        let thread = thread::spawn(move || {
+        let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
+
+        let thread = thread::Builder::new().name(program.name.to_owned()).spawn(move || {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                blocks.extend(parse_file(&mut program.state.interner, &path, true));
+                blocks.extend(parse_file(&mut program.state.interner, &path, true, debug_compile));
             }
             let mut end_ns = time::precise_time_ns();
-            println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+            println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
 
             start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
@@ -2939,26 +3082,29 @@ impl ProgramRunner {
             }
             txn.exec(&mut program, blocks, vec![]);
             end_ns = time::precise_time_ns();
-            println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+            println!("[{}] Load took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
 
             let mut iter_pool = EstimateIterPool::new();
-            println!("Starting run loop.");
+            println!("[{}] Starting run loop.", &program.name);
 
             'outer: loop {
                 match program.incoming.recv() {
                     Ok(RunLoopMessage::Transaction(v)) => {
+                        println!("[{}] Txn started", &program.name);
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new(&mut iter_pool);
                         for cur in v {
+                            // println!("  -> {:?}", cur);
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
                     Ok(RunLoopMessage::RemoteTransaction(v)) => {
                         let start_ns = time::precise_time_ns();
+                        println!("[{}] Remote txn started", &program.name);
                         let mut txn = RemoteTransaction::new(&mut iter_pool);
                         for cur in v {
                             txn.input_change(cur.to_change(&mut program.state.interner));
@@ -2966,27 +3112,56 @@ impl ProgramRunner {
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
                     Ok(RunLoopMessage::Stop) => {
                         break 'outer;
                     }
                     Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                        let start_ns = time::precise_time_ns();
                         let mut tx = CodeTransaction::new();
-                        println!("------ Got Code Transaction! ------");
+                        println!("[{}] Code Txn started", &program.name);
                         if adds.len() > 0 {
-                            println!("### ADDS: ###");
+                            println!("  ADDS:");
                             for block in adds.iter() {
                                 print_block_constraints(&block);
                             }
                         }
                         if removes.len() > 0 {
-                            println!("### REMOVES: ###");
+                            println!("  REMOVES:");
                             for block in removes.iter() {
-                                println!("  - {:?}", block);
+                                println!("    - {:?}", block);
                             }
                         }
                         tx.exec(&mut program, adds, removes);
+                        let end_ns = time::precise_time_ns();
+                        let time = (end_ns - start_ns) as f64;
+                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
+                    }
+                    Ok(RunLoopMessage::RemoteCodeTransaction(adds, removes)) => {
+                        let start_ns = time::precise_time_ns();
+                        let mut tx = CodeTransaction::new();
+                        println!("[{}] Remote Code Txn started", &program.name);
+                        let added_blocks:Vec<Block> = adds.iter().map(|b| b.intern(&mut program.state.interner)).collect();
+
+                        if adds.len() > 0 {
+                            println!("  ADDS:");
+                            for block in added_blocks.iter() {
+                                print_block_constraints(&block);
+                            }
+                        }
+                        if removes.len() > 0 {
+                            println!("  REMOVES:");
+                            for block in removes.iter() {
+                                println!("    - {:?}", block);
+                            }
+                        }
+
+                        tx.exec(&mut program, added_blocks, removes);
+                        let end_ns = time::precise_time_ns();
+                        let time = (end_ns - start_ns) as f64;
+                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
+
                     }
                     Err(_) => { break; }
                 }
@@ -2995,7 +3170,7 @@ impl ProgramRunner {
                 channel.send(PersisterMessage::Stop).unwrap();
             }
             println!("Closing run loop.");
-        });
+        }).unwrap();
 
         RunLoop { thread, outgoing }
     }

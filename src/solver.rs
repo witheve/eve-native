@@ -143,7 +143,14 @@ impl Solver {
         match active_scan {
             Some(&Constraint::Scan { e, a, v, .. }) => {
                 to_solve.extend(active_scan.unwrap().get_registers());
-                if let Field::Register(ix) = e { moves.push((0, ix)); }
+                if let Field::Register(ix) = e {
+                    moves.push((0, ix));
+                } else {
+                    // in the case that e is fixed, the octopus currently passes all attributes
+                    // through, which may not be what you really wanted. As a result, we need to
+                    // actually create an accept for this scan to make sure he really does pass.
+                    accepts.push(make_scan_accept(active_scan.unwrap(), usize::MAX - 1));
+                }
                 if let Field::Register(ix) = a { moves.push((1, ix)); }
                 if let Field::Register(ix) = v { moves.push((2, ix)); }
             },
