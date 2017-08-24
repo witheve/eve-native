@@ -75,17 +75,11 @@ impl ClientHandler {
         router.lock().expect("ERROR: Failed to lock router: Cannot register new client.").register(&client_name, outgoing.clone());
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
-<<<<<<< HEAD
-            runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
             runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(HttpWatcher::new(outgoing.clone())));
-=======
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone(), false)));
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone(), client_name)));
->>>>>>> master
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().expect("ERROR: Failed to lock router: Cannot init RemoteWatcher.").deref())));

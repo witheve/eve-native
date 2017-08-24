@@ -6,13 +6,9 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 extern crate term_painter;
-<<<<<<< HEAD
 extern crate data_encoding;
 extern crate urlencoding;
-
-=======
 extern crate natord;
->>>>>>> master
 
 use unicode_segmentation::UnicodeSegmentation;
 
