@@ -6,17 +6,17 @@ display and edit code. It includes a custom [Eve mode][1] for CodeMirror.
 
 ## Creating a code block
 
-We create a code-block with a default value and id.
+A `#codemirror/code-block` has an optional "mode" that tells CodeMirror how
+to render its contents.
 
 search
   block = [#codemirror/code-block]
-  //value = if block.value then block.value else ""
   mode = if block.mode then block.mode else ""
 watch client/websocket
   ("code-block/create", block, mode)
 end
 
-Code blocks are given tagged as `#html/element` so they will be rendered in the
+Code blocks are tagged as `#html/element` so they will be rendered in the
 DOM. We replace this element with a CodeMirror instance, and sync its value 
 property with the value stored in Eve.
 

@@ -18,6 +18,9 @@ export class EveCodeMirror extends Library {
   
   handlers = {
     "create": handleTuples(({adds, removes}) => {
+      for(let [blockID, value, mode] of removes || EMPTY) { 
+        delete this.blocks[blockID];
+      }
       for(let [blockID, mode] of adds || EMPTY) {       
         if (this.blocks[blockID] !== undefined) {
           continue;
@@ -37,9 +40,6 @@ export class EveCodeMirror extends Library {
             [change_id, "origin", change.origin]]);
         });
         this.blocks[blockID] = code_block;
-      }
-      for(let [blockID, value, mode] of removes || EMPTY) { 
-        delete this.blocks[blockID];
       }
     }),
     "update": handleTuples(({adds}) => {
