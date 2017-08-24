@@ -120,7 +120,8 @@ export class HTML extends Library {
 
     // Frame events
     window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
-    window.addEventListener("pageshow", this._pageShowHandler("page-show"));
+    //window.addEventListener("pageshow", this._pageShowHandler("page-show"));
+    this.getURL(window.location);
   }
 
   protected decorate(elem:Element, elemId:RawValue): Instance {
@@ -616,6 +617,7 @@ export class HTML extends Library {
   }
 
   _hashChangeHandler(tagname:string) {
+    console.log("Hash Change");
     return (event: HashChangeEvent) => {
       if (event.newURL !== null) {
         let eavs:RawEAV[] = [];
@@ -652,61 +654,53 @@ export class HTML extends Library {
     }
   }
 
-  _pageShowHandler(tagname:string) {
-    return (event: any) => {      
-      if (event.srcElement !== null) {
-        let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(event.target.URL, true);
-        let eavs:RawEAV[] = [];
-        let eventId = createId();
-        let urlId = createId();
-        eavs.push(
-          [eventId, "tag", "html/event"],
-          [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "url", `${urlId}`],
-          [urlId, "tag", "html/url"],
-          [urlId, "host", `${host}`],
-          [urlId, "hash", `${hash}`],
-          [urlId, "hostname", `${hostname}`],
-          [urlId, "href", `${href}`],
-          [urlId, "pathname", `${pathname}`],
-          [urlId, "port", `${port}`],
-          [urlId, "protocol", `${protocol}`],
-        );
-        // Parse Query String
-        let ix = 1;
-        for (var key in query) {
-          let value = query[key];
-          let queryId = createId();
+  getURL(location: Location) {
+    let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(location.href, true);
+    let eavs:RawEAV[] = [];
+    let urlId = createId();
+    eavs.push(
+      [urlId, "tag", "html/url"],
+      [urlId, "host", `${host}`],
+      [urlId, "hash", `${hash}`],
+      [urlId, "hostname", `${hostname}`],
+      [urlId, "href", `${href}`],
+      [urlId, "pathname", `${pathname}`],
+      [urlId, "port", `${port}`],
+      [urlId, "protocol", `${protocol}`],
+    );
+    // Parse Query String
+    let ix = 1;
+    for (var key in query) {
+      let value = query[key];
+      let queryId = createId();
+      eavs.push(
+        [urlId, "query", `${queryId}`],
+        [queryId, "tag", `html/url/query`],
+        [queryId, "index", `${ix}`],
+        [queryId, "key", key],
+        [queryId, "value", value],
+      )
+      ix++;
+    }
+    // Parse Hash String
+    if (hash !== undefined && hash !== null) {
+      let pairs = hash.substring(1).split('&');  
+      for (var pair of pairs) {
+        let queryId = createId();
+        let parts = pair.split('=');
+        if (parts.length == 2) {
           eavs.push(
             [urlId, "query", `${queryId}`],
             [queryId, "tag", `html/url/query`],
             [queryId, "index", `${ix}`],
-            [queryId, "key", key],
-            [queryId, "value", value],
+            [queryId, "key", parts[0]],
+            [queryId, "value", parts[1]],
           )
-          ix++;
         }
-        // Parse Hash String
-        if (hash !== undefined && hash !== null) {
-          let pairs = hash.substring(1).split('&');  
-          for (var pair of pairs) {
-            let queryId = createId();
-            let parts = pair.split('=');
-            if (parts.length == 2) {
-              eavs.push(
-                [urlId, "query", `${queryId}`],
-                [queryId, "tag", `html/url/query`],
-                [queryId, "index", `${ix}`],
-                [queryId, "key", parts[0]],
-                [queryId, "value", parts[1]],
-              )
-            }
-            ix++;
-          }
-        }
-        this._sendEvent(eavs);
+        ix++;
       }
     }
+    this._sendEvent(eavs);
   }
 }
 
