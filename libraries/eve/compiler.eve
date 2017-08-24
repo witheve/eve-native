@@ -27,15 +27,6 @@ end
 ~~~ eve
 search
   block = [#eve/compiler/block constraint]
-  constraint = [#eve/compiler/function name output]
-watch eve/compiler
-  ("function" constraint block name output)
-end
-~~~
-
-~~~ eve
-search
-  block = [#eve/compiler/block constraint]
   constraint = [#eve/compiler/remote-scan for entity attribute value]
   from = if f = constraint.from then f else ""
 watch eve/compiler
@@ -52,6 +43,14 @@ watch eve/compiler
 end
 ~~~
 
+~~~ eve
+search
+  block = [#eve/compiler/block constraint]
+  constraint = [#eve/compiler/function name output]
+watch eve/compiler
+  ("function" constraint block name output)
+end
+~~~
 
 ~~~ eve
 search
@@ -62,7 +61,7 @@ search
   attribute != "tag"
 
 watch eve/compiler
-  ("argument" constraint attribute value)
+  ("argument" constraint block attribute value)
 end
 ~~~
 
@@ -82,7 +81,7 @@ search
   index = if s = argument.sort then s else argument.eve-auto-index
 
 watch eve/compiler
-  ("argument" constraint index argument.value)
+  ("argument" constraint block index argument.value)
 end
 ~~~
 
@@ -104,7 +103,7 @@ search
     [#eve/compiler/output entity attribute value]]
 
 watch eve/compiler
-  ("identity" constraint attribute value)
+  ("identity" constraint block attribute value)
 end
 ~~~
 
