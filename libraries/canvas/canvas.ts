@@ -1,4 +1,5 @@
 import {Program, Library, RawValue, RawEAV, RawMap, handleTuples, asValue, libraries} from "../../ts";
+import {Instance as HTMLInstance} from "../html/html";
 
 function ixComparator(idMap:{[key:string]:{ix:number}}) {
   return (a:string, b:string) => {
@@ -32,7 +33,7 @@ function isOperationType(val:RawValue): val is OperationType {
 const EMPTY_OBJ = {};
 const EMPTY:never[] = [];
 
-export interface Canvas extends HTMLCanvasElement { __element: RawValue }
+type CanvasInstance = HTMLCanvasElement & HTMLInstance;
 export type OperationType = keyof Path2D;
 export interface Operation {type: OperationType, args:any, paths:RawValue[]};
 // {fillStyle: "#000000", strokeStyle: "#000000", lineWidth: 1, lineCap: "butt", lineJoin: "miter"}
@@ -165,7 +166,7 @@ export class Canvas extends Library {
     for(let canvasId of Object.keys(dirtyCanvases)) {
       let pathIds = this.canvasPaths[canvasId];
       for(let instanceId of this.getCanvasInstances(canvasId)) {
-        let canvas = this.html.getInstance(instanceId) as Canvas;
+        let canvas = this.html.getInstance(instanceId) as CanvasInstance;
         let ctx = canvas.getContext("2d")!;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if(!pathIds) continue;

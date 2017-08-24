@@ -12,4 +12,6 @@ pub mod console;
 pub mod system;
 pub mod compiler;
 pub mod textcompiler;
+pub mod editor;
 pub mod remote;
+pub mod websocket;

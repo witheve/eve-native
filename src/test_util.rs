@@ -37,7 +37,7 @@ macro_rules! valid (($blocks:tt) => ({
 
 #[macro_export]
 macro_rules! blocks (($info:tt) => ({
-    let mut program = Program::new();
+    let mut program = Program::new("test");
     // @FIXME: any occurrence of search/commit/etc. will be replaced here...
     let stringy = stringify!($info).replace("\n", " ")
         .replace("# ", "#")
@@ -53,7 +53,7 @@ macro_rules! blocks (($info:tt) => ({
         .replace(": =", ":=")
         .replace(" . ", ".");
     println!("{}", stringy);
-    let blocks = parse_string(&mut program.state.interner, &stringy, "test");
+    let blocks = parse_string(&mut program.state.interner, &stringy, "test", false);
     let mut txn = CodeTransaction::new();
     txn.exec(&mut program, blocks, vec![]);
 
