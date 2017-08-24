@@ -1265,6 +1265,7 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "string/uppercase" => string_uppercase,
         "string/substring" => string_substring,
         "string/length" => string_length,
+        "eve/type-of" => eve_type_of,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -1648,6 +1649,14 @@ pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
         }
     }
     Some(Internable::String(result))
+}
+
+pub fn eve_type_of(params: Vec<&Internable>) -> Option<Internable> {
+    match params.get(0) {
+        Some(&&Internable::String(_)) => Some(Internable::String("string".to_owned())),
+        Some(&&Internable::Number(_)) => Some(Internable::String("number".to_owned())),
+        _ => { panic!("Type of called without a valid parameter") }
+    }
 }
 
 //-------------------------------------------------------------------------

@@ -22,43 +22,186 @@ set of them and find out what the most specific domain we have is. The first
 step there is to check if we have multiple types.
 
     search
-      [#domain type block e a]
+      set = [#domain-set domain: [#domain type]]
       [#define/domain type sort > 2]
-      count = gather/count[for:type per:(block,e,a)]
+      count = gather/count[for:type per:set]
       count > 1
     bind
-      [#domain type:"multi-type" block e a]
+      set.domain += [#domain type:"multi-type"]
     end
 
 To figure out what our real domain is given all the potential options we have,
 we look for the type with the highest defined sort.
 
     search
-      [#domain type block e a]
+      set = [#domain-set domain: [#domain type]]
       [#define/domain type sort]
-      gather/top[for:(sort,type) per:(block,e,a) limit:1]
+      gather/top[for:sort per:set limit:1]
     bind
-      [#domain/final type block e a]
+      set.final += [#domain/final set type]
     end
 
 Then, if it's a number we need to try and capture our numeric bounds by taking
 the largest `from` and smallest `to`.
 
     search
-      final = [#domain/final type block e a]
-      [#domain type block e a from]
-      gather/top[for:(from) per:(block,e,a) limit:1]
+      set = [#domain-set final domain:[#domain from]]
+      gather/top[for:from per:set limit:1]
     bind
       final.from += from
     end
 
     search
-      final = [#domain/final type block e a]
-      [#domain type block e a to]
-      gather/bottom[for:(to) per:(block,e,a) limit:1]
+      set = [#domain-set final domain:[#domain to]]
+      gather/bottom[for:to per:set limit:1]
     bind
       final.to += to
     end
+
+We also need to be able to do some basic arithmetic on domains to propagate
+constraints forward. We'll represent these as records with the operation as a
+tag and two extra attributes `a` and `b` representing the operands.
+
+    search
+      domain = if d = [#domain/add] then d
+               if d = [#domain/sub] then d
+               if d = [#domain/mul] then d
+               if d = [#domain/div] then d
+    bind
+      domain <- [#domain type:"number"]
+    end
+
+Add and subtract are exactly like what you'd expect:
+
+    search
+      add = [#domain/add a b]
+    bind
+      add.from += a.from + b.from
+    end
+
+    search
+      add = [#domain/add a b]
+    bind
+      add.to += a.to + b.to
+    end
+
+    search
+      sub = [#domain/sub a b]
+    bind
+      sub.from += a.from - b.from
+    end
+
+    search
+      sub = [#domain/sub a b]
+    bind
+      sub.to += a.to - b.to
+    end
+
+Multiplication and division have to deal with the fact that multiplying or
+dividing by a negative could potentially swap the from and to. To handle this,
+we'll set a maybe-from and maybe-to attribute and then resolve them to `to` and
+`from` later.
+
+    search
+      mult = [#domain/mul a b]
+    bind
+      mult.maybe-from += a.from * b.from
+    end
+
+    search
+      mult = [#domain/mul a b]
+    bind
+      mult.maybe-to += a.to * b.to
+    end
+
+    search
+      mult = [#domain/mul a b]
+      to = if a.to < 0, not(b.to) then "-Infinity"
+           else if b.to < 0, not(a.to) then "-Infinity"
+    bind
+      mult.maybe-to += to
+    end
+
+    search
+      div = [#domain/div a b]
+    bind
+      div.maybe-from += a.from / b.from
+    end
+
+    search
+      div = [#domain/div a b]
+    bind
+      div.maybe-to += a.to / b.to
+    end
+
+    search
+      div = [#domain/div a b]
+      to = if a.to < 0, not(b.to) then "-Infinity"
+           else if b.to < 0, not(a.to) then "-Infinity"
+    bind
+      div.maybe-to += to
+    end
+
+To resolve the maybes we created above, we just need to check if the from is
+actually greater than the to or if the to is less than the from. If from or to
+are missing then it represents infinity in that direction and we just take the
+maybe value as it is.
+
+    search
+      domain = [#domain maybe-to]
+      to = if domain.maybe-from > maybe-to then domain.maybe-from
+           else if maybe-to = "-Infinity" then domain.maybe-from
+           else if maybe-to != "-Infinity" then maybe-to
+    bind
+      domain.to += to
+    end
+
+    search
+      domain = [#domain maybe-from]
+      from = if domain.maybe-to < maybe-from then domain.maybe-to
+             else if domain.maybe-to != "-Infinity" then maybe-from
+             else if not(domain.maybe-to) then maybe-from
+    bind
+      domain.from += from
+    end
+
+It's also useful to be able to take an arbitrary value and turn it into a domain
+
+    search
+      domain = [#domain/from-value value]
+      "number" = eve/type-of[value]
+    bind
+      domain <- [#domain type:"number" from:value to:value]
+    end
+
+    search
+      domain = [#domain/from-value value]
+      "string" = eve/type-of[value]
+      not(lookup[entity:value, attribute:"tag"])
+    bind
+      domain <- [#domain type:"string"]
+    end
+
+    search
+      domain = [#domain/from-value value]
+      value = [#register]
+      [#domain-set register:value final]
+    bind
+      domain <- [#domain/from-final #domain type:final.type final]
+    end
+
+    search
+      domain = [#domain/from-final final]
+    bind
+      domain.from += final.from
+    end
+
+    search
+      domain = [#domain/from-final final]
+    bind
+      domain.to += final.to
+    end
+
 
 Blocks and constraints
 ------------------------------------------------------
@@ -204,6 +347,116 @@ Turn output constraints into their "real" equivalents
     end
 
 
+Register domains
+------------------------------------------------------
+
+In order to determine what the domains of our inputs and outputs are, we need to
+figure out the domains of each register in a block. We do this by creating a
+domain set for each register and then by looking through the constraints to
+supply domains.
+
+    search
+      register = [#register]
+    bind
+      [#domain-set register]
+    end
+
+For scans we know that the e register is in the record domain, an a register is
+in the string domain and a v is unknown.
+
+    search
+      [#scan e]
+      set = [#domain-set register:e]
+    bind
+      set.domain += [#domain type:"record"]
+    end
+
+    search
+      [#scan a]
+      set = [#domain-set register:a]
+    bind
+      set.domain += [#domain type:"string"]
+    end
+
+    search
+      [#scan v]
+      set = [#domain-set register:v]
+    bind
+      set.domain += [#domain type:"unknown"]
+    end
+
+For filters we need to find out ...
+
+    search
+      [#filter op:">" left right]
+      set = [#domain-set register:left]
+      not(right = [#register])
+    bind
+      set.domain += [#domain type:"number" from:right]
+    end
+
+    search
+      [#filter op:">" left right]
+      set = [#domain-set register:right]
+      not(left = [#register])
+    bind
+      set.domain += [#domain type:"number" to:left]
+    end
+
+    search
+      [#filter op:"<" left right]
+      set = [#domain-set register:left]
+      not(right = [#register])
+    bind
+      set.domain += [#domain type:"number" to:right]
+    end
+
+    search
+      [#filter op:"<" left right]
+      set = [#domain-set register:right]
+      not(left = [#register])
+    bind
+      set.domain += [#domain type:"number" from:left]
+    end
+
+Functions...
+
+    search
+      [#function op:"+" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/add
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
+    search
+      [#function op:"-" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/sub
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
+    search
+      [#function op:"*" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/mul
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
+    search
+      [#function op:"/" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/div
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
 Optimizing
 ------------------------------------------------------
 
@@ -260,9 +513,15 @@ Test
       [#insert block:b0 e:"r1" a:"name" v:"zomg"]
 
       b1 = [#block name:"b1"]
-      [#scan block:b1 e:"r1" a:"tag" v:"foo"]
-      [#scan block:b1 e:"r1" a:"name" v:"zomg"]
-      [#insert block:b1 e:"r2" a:"tag" v:"yar"]
+      r1 = [#register block:b1 offset:1]
+      r2 = [#register block:b1 offset:2]
+      r3 = [#register block:b1 offset:3]
+      [#scan block:b1 e:r1 a:"tag" v:"foo"]
+      [#scan block:b1 e:r1 a:"name" v:"zomg"]
+      [#scan block:b1 e:r1 a:"score" v:r2]
+      [#filter block:b1 op:">" left:r2 right:10]
+      [#function block:b1 op:"*" params: [index:1 value: r2] [index:2 value:-1] output: r3]
+      [#insert block:b1 e:r2 a:"tag" v:"yar"]
 
       b2 = [#block name:"b2"]
       [#scan block:b2 e:"r1" a:"tag" v:"yar"]
@@ -274,4 +533,3 @@ Test
       [#insert block:b3 e:"r2" a:"tag" v:"yar"]
       [#insert block:b3 e:"r2" a:"meep" v:"foo"]
     end
-
