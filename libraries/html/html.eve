@@ -50,7 +50,8 @@ commit
     "html/trigger/blur")]
   [#html/listener-tag | listener: (
     "html/listener/hover"
-    "html/listener/context-menu")]
+    "html/listener/context-menu"
+    "html/listener/key")]
 end
 ~~~
 
@@ -349,6 +350,17 @@ watch client/websocket
   ("html/export listeners" instance listener)
 end
 ~~~
+
+~~~ eve
+search
+  element = [#html/element #html/listener/key captured-key]
+  instance = [#html/instance element]
+
+watch client/websocket
+  ("html/export captured keys" instance captured-key)
+end
+~~~
+
 
 Export triggers.
 ~~~ eve

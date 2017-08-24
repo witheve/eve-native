@@ -13,6 +13,9 @@ extern crate lazy_static;
 extern crate serde;
 
 #[macro_use]
+extern crate serde_json;
+
+#[macro_use]
 extern crate serde_derive;
 
 extern crate rand;
@@ -23,6 +26,8 @@ pub mod ops;
 
 #[macro_use]
 pub mod combinators;
+
+pub mod paths;
 
 pub mod indexes;
 pub mod compiler;

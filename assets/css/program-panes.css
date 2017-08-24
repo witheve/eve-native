@@ -1,0 +1,4 @@
+body { display: flex; flex-direction: row; align-items: stretch; min-height: 100vh; }
+body > .program-pane { flex: 1 1 auto; }
+body > .program-pane:first-of-type { flex: 0 1 auto; }
+body > .program-pane + .program-pane { }

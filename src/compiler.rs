@@ -1661,16 +1661,24 @@ impl Compilation {
         let mut ix = 0;
         for c in self.constraints.iter() {
             for reg in c.get_registers() {
-                regs.entry(reg).or_insert_with(|| {
-                    match var_values.get(&reg) {
-                        Some(field @ &Field::Value(_)) => field.clone(),
-                        _ => {
+                if regs.contains_key(&reg) { continue; }
+
+                let val = match var_values.get(&reg) {
+                    Some(field @ &Field::Value(_)) => field.clone(),
+                    Some(field @ &Field::Register(_)) => {
+                        regs.entry(field.clone()).or_insert_with(|| {
                             let out = Field::Register(ix);
                             ix += 1;
                             out
-                        }
+                        }).clone()
                     }
-                });
+                    _ => {
+                        let out = Field::Register(ix);
+                        ix += 1;
+                        out
+                    }
+                };
+                regs.insert(reg, val);
             }
         }
         for c in self.constraints.iter_mut() {
@@ -1717,10 +1725,10 @@ pub fn make_block(interner:&mut Interner, name:&str, content:&str) -> Vec<Block>
     // for c in comp.constraints.iter() {
     //     println!("{:?}", c);
     // }
-    compilation_to_blocks(comp, interner, name, content)
+    compilation_to_blocks(comp, interner, name, content, false)
 }
 
-pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path:&str, source: &str) -> Vec<Block> {
+pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path:&str, source: &str, debug: bool) -> Vec<Block> {
     let mut compilation_blocks = vec![];
     if comp.errors.len() > 0 {
         report_errors(&comp.errors, path, source);
@@ -1737,23 +1745,24 @@ pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path
         let mut sub_comp = cur.get_mut_compilation();
         if sub_comp.constraints.len() > 0 {
             sub_comp.finalize();
-            // println!("       SubBlock: {}", sub_name);
-            // for c in sub_comp.constraints.iter() {
-            //     println!("            {:?}", c);
-            // }
+            if debug {
+                println!("       SubBlock: {}", sub_name);
+                for c in sub_comp.constraints.iter() {
+                    println!("            {:?}", c);
+                }
+            }
             let interned_name = interner.string_id(&sub_name);
             compilation_blocks.push(Block::new(interner, &sub_name, interned_name, sub_comp.constraints.clone()));
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
-    // println!("");
     let interned_name = interner.string_id(&block_name);
     compilation_blocks.push(Block::new(interner, &block_name, interned_name, comp.constraints));
     compilation_blocks
 }
 
-pub fn parse_string(interner:&mut Interner, content:&str, path:&str) -> Vec<Block> {
+pub fn parse_string(interner:&mut Interner, content:&str, path:&str, debug: bool) -> Vec<Block> {
     let mut state = ParseState::new(content);
     let res = embedded_blocks(&mut state, path);
     if let ParseResult::Ok(mut cur) = res {
@@ -1769,14 +1778,16 @@ pub fn parse_string(interner:&mut Interner, content:&str, path:&str) -> Vec<Bloc
                 block.compile(interner, &mut comp, &EMPTY_SPAN);
 
                 comp.finalize();
-                // println!("---------------------- Block {} ---------------------------", block_name);
-                // if let &mut Node::Block { code, ..} = block {
-                //     println!("{}\n\n => \n", code);
-                // }
-                // for c in comp.constraints.iter() {
-                //     println!("   {:?}", c);
-                // }
-                program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content));
+                if debug {
+                    println!("---------------------- Block {} ---------------------------", block_name);
+                    if let &mut Node::Block { code, ..} = block {
+                        println!("{}\n\n => \n", code);
+                    }
+                    for c in comp.constraints.iter() {
+                        println!("   {:?}", c);
+                    }
+                }
+                program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content, debug));
             }
             program_blocks
         } else {
@@ -1787,7 +1798,7 @@ pub fn parse_string(interner:&mut Interner, content:&str, path:&str) -> Vec<Bloc
     }
 }
 
-pub fn parse_file(interner:&mut Interner, path:&str, report: bool) -> Vec<Block> {
+pub fn parse_file(interner:&mut Interner, path:&str, report: bool, debug: bool) -> Vec<Block> {
     let metadata = fs::metadata(path).expect(&format!("Invalid path: {:?}", path));
     let mut paths = vec![];
     if metadata.is_file() {
@@ -1813,7 +1824,7 @@ pub fn parse_file(interner:&mut Interner, path:&str, report: bool) -> Vec<Block>
         let mut file = File::open(&cur_path).expect("Unable to open the file");
         let mut contents = String::new();
         file.read_to_string(&mut contents).expect("Unable to read the file");
-        blocks.extend(parse_string(interner, &contents, &cur_path).into_iter());
+        blocks.extend(parse_string(interner, &contents, &cur_path, debug).into_iter());
     }
     blocks
 }

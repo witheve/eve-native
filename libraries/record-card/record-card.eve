@@ -17,18 +17,68 @@ bind
 end
 ~~~
 
+
+## Simple Cards
+
+Explode the AVs of simple record cards.
+~~~ eve
+search
+  card = [#record-card/card record]
+  lookup[entity: record attribute value]
+bind
+  card.entity += record
+  card.av += [attribute value]
+end
+~~~
+
+For simple cards, records are local and can be determined via lookup.
+~~~ eve
+search
+  card = [#record-card/card record]
+  attr-tile = [#record-card/attribute-tile card value]
+  lookup[entity: value]
+bind
+  attr-tile.type += "record"
+end
+~~~
+
+
+## Card Aliasing
+
+Alias record name to title.
+~~~ eve
+search
+  card = [#record-card/card]
+  title = if t = card.title t != "Untitled" then t
+          else if av = card.av av.attribute = "name" then av.value
+          else "Untitled"
+bind
+  card.title += title
+end
+~~~
+
+Alias record tags to tag-set.
+~~~ eve
+search
+  card = [#record-card/card av: [attribute: "tag" value]]
+bind
+  card.tag-set += value
+end
+~~~
+
+
 ## Card
 
 Create a card wrapper for each record card.
 ~~~ eve
 search
-  card = [#record-card/card record]
+  card = [#record-card/card]
 
 bind
-  card <- [#html/element tagname: "card" id: "record-card-{{record}}" children:
-    [#record-card/header sort: 1 card]
-    [#record-card/tag-list sort: 2 card]
-    [#record-card/attribute-list sort: 3 card]]
+  card <- [#html/element tagname: "card" children:
+    [#record-card/header sort: 1 card title: ""]
+    [#record-card/tag-list sort: 2 card title: ""]
+    [#record-card/attribute-list sort: 3 card title: ""]]
 end
 ~~~
 
@@ -38,12 +88,9 @@ The card header contains its name and relevant controls.
 ~~~ eve
 search
   header = [#record-card/header card]
-  record = card.record
-  name = if n = record.name then n else "Untitled"
-
 bind
   header <- [#html/element tagname: "header" children:
-    [#html/element #record-card/name tagname: "h2" sort: 1 card text: name]
+    [#html/element #record-card/name tagname: "h2" sort: 1 card text: card.title]
     [#ui/spacer sort: 2 ]
     [#ui/row #record-card/controls sort: 3 card]
   ]
@@ -56,11 +103,10 @@ The tag list contains each tag on the record.
 ~~~ eve
 search
   tag-list = [#record-card/tag-list card]
-  record = card.record
 
 bind
   tag-list <- [#html/element tagname: "section" children:
-    [#ui/text #record-card/tag card text: record.tag]]
+    [#ui/button #record-card/tag class: "flat" card text: card.tag-set]]
 end
 ~~~
 
@@ -70,8 +116,7 @@ The attribute list contains a set of attribute tiles for each attribute on the r
 ~~~ eve
 search
   attr-list = [#record-card/attribute-list card]
-  record = card.record
-  lookup[entity: record attribute value]
+  card.av = [attribute value]
   attribute != "tag"
   attribute != "name"
 
@@ -85,8 +130,7 @@ Attribute tiles contain a set of values whose display is indicated by their type
 ~~~ eve
 search
   attr-tile = [#record-card/attribute-tile card attribute value]
-
-  type = if lookup[entity: value] then "record" else "default"
+  type = if t = attr-tile.type then t else "default"
 
 bind
   attr-tile <- [#ui/row sort: attribute children:
@@ -99,9 +143,12 @@ By default, values are shown as plain text.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "default" value]
+  (text, title) = if 0 = math/mod[value by: 1] then (value, "")
+                  else if fixed = math/to-fixed[value to: 3] then (fixed, value)
+                  else (value, "")
 
 bind
-  attr-value <- [#ui/text text: value]
+  attr-value <- [#ui/text text title]
 end
 ~~~
 
@@ -109,80 +156,10 @@ Record values are shown as record links.
 ~~~ eve
 search
   attr-value = [#record-card/value type: "record" value]
-  name = value.name // if n = value.name then n else value
-
+  title = if t = attr-value.title then t
+          if n = value.name then n
+          else value
 bind
-  attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" text: name]
-end
-~~~
-
-Unnamed record links show the records tags and attributes.
-~~~ eve
-search
-  attr-value = [#record-card/value type: "record" value]
-  not(value.name)
-
-  lookup[entity: value attribute]
-  text = if t = value.tag then "#{{t}}"
-         if attribute != "tag" then attribute
-
-bind
-  attr-value <- [#html/a #record-card/record href: "#record-card-{{value}}" | children:
-    [#ui/text sort: text text: "{{text}} "]]
-end
-~~~
-
-## Styles
-
-Record card styles.
-~~~ eve
-search
-  link-background = "#f0f0f0"
-  link-color = "#008cdd"
-  link-hover = "#CEEDFF"
-  link-active ="#B5D4E6"
-commit
-  [#html/element tagname: "link" href: "https://fonts.googleapis.com/css?family=Lato" rel: "stylesheet"]
-  [#html/style text: "
-    body { background: #f9f9f9; font-family: Lato, sans-serif; }
-    .cards { flex-wrap: wrap; }
-
-    .record-card-card { display: flex; flex: 0 0 auto; flex-direction: column; align-items: stretch; margin: 20px; min-width: 300px; max-width: 300px; }
-    .record-card-card { background: white; border-radius: 3px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
-
-    .record-card-card > * { padding: 10px 20px; }
-    .record-card-card > * + * { border-top: 1px solid #eee; }
-
-    /* Header */
-
-    .record-card-card > header { display: flex; flex-direction: row; }
-    .record-card-card h2 { margin: 0; padding: 0; text-align: left; color: rgb(106,138,156) }
-
-    /* Tag List */
-
-    .record-card-card > .record-card-tag-list { display: flex; flex-direction: row; flex-wrap: wrap; }
-
-    .record-card-card .record-card-tag { padding: 0.25em 0.5em; background: {{link-background}}; border-radius: 3px; }
-    .record-card-card .record-card-tag:before { content: '#' }
-    .record-card-card .record-card-tag + .record-card-tag { margin-left: 5px; }
-    .record-card-card .record-card-tag:hover { background: {{link-hover}} }
-    .record-card-card .record-card-tag:active { background: {{link-active}} }
-
-    /* Attribute List */
-
-    .record-card-card > .record-card-attribute-list { padding: 0; display: flex; flex-direction: row; flex-wrap: wrap; }
-    .record-card-card .record-card-attribute-tile { display: flex; flex: 1 1 auto; align-items: baseline; padding: 10px 20px; padding-bottom: 5px; margin-left: -1px; margin-top: -1px; border: 1px solid #eee; flex-wrap: wrap; }
-    .record-card-card .record-card-attribute-tile:first-of-type { position: relative; left: -1px; margin-right: -1px; }
-
-    .record-card-card .record-card-attribute { color: #aaa; margin-right: 5px; }
-
-    .record-card-card .record-card-value { margin-right: 5px; margin-bottom: 5px; }
-
-    .record-card-card .record-card-record { padding: 0.25em 0.5em; background: {{link-background}}; border-radius: 3px; text-decoration: none; color: {{link-color}}; }
-    .record-card-card .record-card-record:before { content: '⬢ '; }
-    .record-card-card .record-card-record:hover { background: {{link-hover}} }
-.record-card-card .record-card-record:active { background: {{link-active}} }
-
-    "]
+  attr-value <- [#ui/button #record-card/record class: "flat" text: title]
 end
 ~~~

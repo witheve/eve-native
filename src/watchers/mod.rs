@@ -11,5 +11,12 @@ pub mod file;
 pub mod console;
 pub mod system;
 pub mod compiler;
+<<<<<<< HEAD
 pub mod json;
 pub mod http;
+=======
+pub mod textcompiler;
+pub mod editor;
+pub mod remote;
+pub mod websocket;
+>>>>>>> master

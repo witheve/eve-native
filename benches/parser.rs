@@ -11,7 +11,7 @@ use test::Bencher;
 pub fn parse_clock(b:&mut Bencher) {
     b.iter(|| {
         let mut program = Program::new();
-        let blocks = parse_file(&mut program.state.interner, "/users/ibdknox/scratch/eve-starter/programs/test.eve", false);
+        let blocks = parse_file(&mut program.state.interner, "/users/ibdknox/scratch/eve-starter/programs/test.eve", false, false);
     });
 }
 
