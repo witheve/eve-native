@@ -23,7 +23,7 @@ use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::http::{HttpWatcher};
 use eve::watchers::json::JsonWatcher;
-use eve::watchers::compiler2::{RawTextCompilerWatcher};
+use eve::watchers::textcompiler::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
 use eve::watchers::remote::{Router, RemoteWatcher};
 

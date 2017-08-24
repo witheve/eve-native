@@ -1,0 +1,60 @@
+# CodeMirror Demo
+
+Commit some programs
+
+commit
+  [#program id: 1 code: "insert code here"]
+  [#program id: 2 code: "insert code here"]
+end
+
+Create UI out of programs
+
+search
+  [#program id code]
+bind
+  [#html/element tagname: "div" #block-container id children:
+    [#ui/text sort: 1 text: "Block {{id}}"]
+    [#codemirror/eve-block id sort: 2 value: code]
+    [#ui/button #clear-block id sort: 4 text: "Clear"]
+    [#ui/button #delete-block id sort: 5 text: "Delete"]
+    [#ui/button #compile-block id sort: 6 text: "Compile"]]
+end
+
+Clear a block
+
+search
+  [#html/event/click element: [#clear-block id]]
+  block = [#codemirror/eve-block id value]
+commit
+  block.value := ""
+end
+
+Delete a block
+
+search
+  [#html/event/click element: [#delete-block id]]
+  program = [#program id]
+commit
+  program := none
+end
+
+Compile a block
+
+search
+  [#html/event/click element: [#compile-block id]]
+  [#codemirror/eve-block id value]
+commit
+  [#eve/text-compiler code: value]
+end
+
+Create a block after an event
+
+commit
+  [#ui/button #create-block text: "Create block"]
+end
+
+search
+  [#html/event/click element: [#create-block]]
+commit
+  [#program id: 1 code: "insert code here"]
+end
