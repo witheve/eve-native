@@ -1,9 +1,0 @@
-~~~ eve
-commit
-  dubdub = [#person #employee #male text: "wump" sort: 7 name: "dubdub" blarg: "crab" salary: 96 | company: kodowa friend: jubalyn]
-  jubalyn = [#person #female name: "jubalyn" weight: 13 age: 91 coolness: 6 | friend: dubdub]
-  kodowa = [#company #startup name: "kodowa" ceo: "chris" man-of-distinction: "josh" | employees: (dubdub, "josh", "chris", "corey", "rob")]
-  [#pet #cat name: "blort" age: 13 | owner: dubdub]
-  [#pet #dog name: "steve" age: 3 | owner: dubdub]
-end
-~~~

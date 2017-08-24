@@ -24,7 +24,7 @@ use eve::paths::EvePaths;
 use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Persister, JSONInternable};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
-use eve::watchers::compiler2::{RawTextCompilerWatcher};
+use eve::watchers::textcompiler::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
 use eve::watchers::editor::EditorWatcher;
 use eve::watchers::remote::{Router, RouterMessage, RemoteWatcher};

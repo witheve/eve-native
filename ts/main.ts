@@ -79,6 +79,7 @@ class MultiplexedConnection extends Connection {
       this.addPane(client, html.getContainer());
       program.attach("canvas");
       program.attach("console");
+      program.attach("code-block");
     },
     "diff": (diff:DiffMessage) => {
       let program = this.programs[diff.client];

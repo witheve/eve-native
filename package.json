@@ -16,12 +16,15 @@
   "author": "Eve Team",
   "license": "UNLICENSED",
   "dependencies": {
+    "codemirror": "^5.28.0",
+    "codemirror-mode-eve": "0.0.1",
     "md5": "^2.2.1",
     "postinstall-build": "^5.0.1",
     "setimmediate": "^1.0.5",
     "uuid": "^3.1.0"
   },
   "devDependencies": {
+    "@types/codemirror": "0.0.41",
     "@types/md5": "^2.1.32",
     "@types/uuid": "^3.4.0",
     "autoprefixer": "^7.1.2",
