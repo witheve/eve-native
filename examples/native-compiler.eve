@@ -1,0 +1,277 @@
+Domains
+------------------------------------------------------
+
+Domains help us represent the valid values of some value within a block. Knowing
+the domain for both the inputs and outputs of a block help us dramatically prune
+the otherwise very cyclic graph that most Eve programs end up forming. There are
+a few types of domains:
+
+    commit
+      [#define/domain type:"unknown" sort:1]
+      [#define/domain type:"removed" sort:2]
+      [#define/domain type:"string" sort:3]
+      [#define/domain type:"record" sort:4]
+      // numbers can also optionally have a from/to to help be even more
+      // specific about their bounds
+      [#define/domain type:"number" sort:5]
+      [#define/domain type:"multi-type" sort:6]
+    end
+
+One of the most important things for us to be able to do with domains is take a
+set of them and find out what the most specific domain we have is. The first
+step there is to check if we have multiple types.
+
+    search
+      [#domain type block e a]
+      [#define/domain type sort > 2]
+      count = gather/count[for:type per:(block,e,a)]
+      count > 1
+    bind
+      [#domain type:"multi-type" block e a]
+    end
+
+To figure out what our real domain is given all the potential options we have,
+we look for the type with the highest defined sort.
+
+    search
+      [#domain type block e a]
+      [#define/domain type sort]
+      gather/top[for:(sort,type) per:(block,e,a) limit:1]
+    bind
+      [#domain/final type block e a]
+    end
+
+Then, if it's a number we need to try and capture our numeric bounds by taking
+the largest `from` and smallest `to`.
+
+    search
+      final = [#domain/final type block e a]
+      [#domain type block e a from]
+      gather/top[for:(from) per:(block,e,a) limit:1]
+    bind
+      final.from += from
+    end
+
+    search
+      final = [#domain/final type block e a]
+      [#domain type block e a to]
+      gather/bottom[for:(to) per:(block,e,a) limit:1]
+    bind
+      final.to += to
+    end
+
+Blocks and constraints
+------------------------------------------------------
+
+We need to gather what tag each e belongs to in each block. We then
+need to gather our inputs and outputs for the block based on what tag they
+represent.
+
+    search
+      [#scan block e a:"tag" v]
+    bind
+      [#block-tag block e tag-name:v]
+    end
+
+    search
+      [#block-tag block e tag-name]
+      [#scan block e a]
+    bind
+      [#block-input block tag-name a]
+    end
+
+    search
+      (block e v) = if [#insert block e a:"tag" v] then (block e v)
+                    else if [#remove block e a:"tag" v] then (block e v)
+    bind
+      [#block-tag block e tag-name:v]
+    end
+
+    search
+      [#block-tag block e tag-name]
+      (block a) = if [#insert block e a] then (block a)
+                    else if [#remove block e a] then (block a)
+    bind
+      [#block-output block tag-name a]
+    end
+
+Match all the inputs with the outputs per block and create a link between those
+blocks. Note that recursive blocks will have themselves as both inputs and
+outputs.
+
+    search
+      [#block-input block:to tag-name a]
+      [#block-output block:from tag-name a]
+    bind
+      [#link from to]
+    end
+
+Find blocks that serve as roots. These are either blocks that rely on an
+external tag, and therefore an event, or they are blocks without scans and act
+as a setup
+
+    search
+      [#external-tags tag-name]
+      [#block-input block tag-name]
+    bind
+      block += #root
+    end
+
+    search
+      block = [#block]
+      not([#scan block])
+      not([#if block])
+    bind
+      block += #setup
+    end
+
+Each setup and each root block will ultimately turn into the starting points for
+chains of execution in the compiled program.
+
+    search
+      block = [#setup]
+    bind
+      [#chain type:"setup" start:block]
+    end
+
+    search
+      block = [#root]
+    bind
+      [#chain type:"root" start:block]
+    end
+
+We create this chain by walking the links between blocks starting at the #root
+or #setup. We also want to discover cycles here, which we figure out by looking
+for a link that has the same to, but a lower level
+
+    search
+      chain = [#chain start]
+      [#link from:start to]
+    bind
+      [#chain-link chain from:start to level:1]
+    end
+
+    search
+      [#chain-link chain to:from level]
+      [#link from to]
+      not(
+        prev = [#chain-link chain to]
+        prev.level <= level
+      )
+      next-level = level + 1
+    bind
+      [#chain-link chain from to level:next-level]
+    end
+
+    search
+      cur = [#chain-link chain to:from level]
+      [#link from to]
+      prev = [#chain-link chain to]
+      prev.level <= level
+    bind
+      cur.back-link += prev
+    end
+
+Turn output constraints into their "real" equivalents
+
+    search
+      [#insert block e a v]
+      [#remove-attribute block e a]
+    bind
+      [#real/set block e a v]
+    end
+
+    search
+      [#function block op:"gen-id" output: e]
+      [#insert block e a v]
+    bind
+      [#real/create block e | attribute: [a v]]
+    end
+
+    search
+      [#insert block e a v]
+      not([#set block e a])
+      not([#create block e])
+    bind
+      [#real/update block e a v]
+    end
+
+    search
+      [#remove block e a v]
+      not([#set block e a])
+    bind
+      [#real/remove block e a v]
+    end
+
+
+Optimizing
+------------------------------------------------------
+
+While on the surface blocks tend to produce many cycles, they're often written
+in such a way that if you knew the bounds of their inputs and their outputs, you
+could prove that they don't actually form a cycle. Much of the optimizer is just
+us using the domain information we've collected to "simulate" the program's
+execution and start pruning chain-links.
+
+
+Intermediate Representation (IR)
+------------------------------------------------------
+
+With a set of optimized chains, we can now generate a language agnostic IR tree
+that represents the optimized program.
+
+
+Code Generation
+------------------------------------------------------
+
+From the IR we can generate actual source code in some language that we can then
+execute. At this point, code generation is a largely mechanical process of
+looking at IR nodes and constructing code strings out of them.
+
+
+Drawing
+------------------------------------------------------
+
+    search
+      [#chain-link from to chain level]
+    bind
+      [#ui/column #links chain | children:
+        [#ui/text sort:level text: "{{level}}: {{from}} -> {{to}}"]]
+    end
+
+    disabled search
+      [#block-input block tag-name a]
+    bind
+      [#ui/column #block-tags | children:
+        [#ui/text text: "{{block}} - {{tag-name}} {{a}}"]]
+    end
+
+
+Test
+------------------------------------------------------
+
+    commit
+      [#external-tags tag-name: ("system/timer/change")]
+    end
+
+    commit
+      b0 = [#block name:"b0"]
+      [#insert block:b0 e:"r1" a:"tag" v:"foo"]
+      [#insert block:b0 e:"r1" a:"name" v:"zomg"]
+
+      b1 = [#block name:"b1"]
+      [#scan block:b1 e:"r1" a:"tag" v:"foo"]
+      [#scan block:b1 e:"r1" a:"name" v:"zomg"]
+      [#insert block:b1 e:"r2" a:"tag" v:"yar"]
+
+      b2 = [#block name:"b2"]
+      [#scan block:b2 e:"r1" a:"tag" v:"yar"]
+      [#scan block:b2 e:"r1" a:"meep" v:"r2"]
+      [#insert block:b2 e:"r1" a:"meep" v:"moop"]
+
+      b3 = [#block name:"b3"]
+      [#scan block:b3 e:"r1" a:"tag" v:"system/timer/change"]
+      [#insert block:b3 e:"r2" a:"tag" v:"yar"]
+      [#insert block:b3 e:"r2" a:"meep" v:"foo"]
+    end
+
