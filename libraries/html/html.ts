@@ -423,26 +423,29 @@ export class HTML extends Library {
       else if(button === 1) eavs.push([eventId, "button", "middle"]);
       else if(button) eavs.push([eventId, "button", button]);
 
-      let capturesContextMenu = false;
       if(this.isInstance(target)) {
         eavs.push([eventId, "target", target.__element]);
-
-        let current:Element|null = target;
-        while(current && current != this._container) {
-          if(this.isInstance(current)) {
-            eavs.push([eventId, "element", current.__element]);
-            if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
-              capturesContextMenu = true;
-            }
-          }
-          current = current.parentElement;
-        }
       }
+
+      let capturesContextMenu = false;
+      let anyInstances = false;
+      let current:Element|null = target as Element;
+      while(current && current != this._container) {
+        if(this.isInstance(current)) {
+          eavs.push([eventId, "element", current.__element]);
+          anyInstances = true;
+          if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
+            capturesContextMenu = true;
+          }
+        }
+        current = current.parentElement;
+      }
+
 
       // @NOTE: You'll get a mousedown but no mouseup for a right click if you don't capture the context menu,
       //   so we throw out the mousedown entirely in that case. :(
       if(button === 2 && !capturesContextMenu) return;
-      if(eavs.length) this._sendEvent(eavs);
+      if(anyInstances || current === this._container) this._sendEvent(eavs);
     };
   }
 
