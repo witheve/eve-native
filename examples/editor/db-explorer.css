@@ -12,11 +12,11 @@
 
 /* Symbols */
 
-.db-explorer-symbol-list { flex-wrap: wrap; margin: 0 20px; }
+.db-explorer-symbol-list { flex-wrap: wrap; margin: 0 20px; overflow-y: auto;  }
 .db-explorer-record-symbol { min-width: 10px; }
 .db-explorer-record-symbol:before { content: "⬢"; color: #888; }
 
 /* Cards */
 
-.db-explorer-card-list { flex-wrap: wrap; margin-bottom: 20px; }
+.db-explorer-card-list { flex-wrap: wrap; margin-bottom: 20px; min-height: 300px; }
 .db-explorer-card { position: relative; z-index: 1; overflow-y: auto;  }
