@@ -133,7 +133,7 @@ search
   [#html/event/click element: [#record-card/tag text]]
   root = [#db-explorer/root]
   query = [#ui/token-completer #db-explorer/query item]
-  item.value = text
+  item.text = "#{{text}}"
 bind
   [#ui/event/select element: query item]
 end
