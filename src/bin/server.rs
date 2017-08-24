@@ -65,7 +65,7 @@ pub struct ClientHandler {
 }
 
 impl ClientHandler {
-    pub fn new(out:WSSender, router: Arc<Mutex<Router>>, eve_paths:&EvePaths, clean: bool, client_name:&str) -> ClientHandler {
+    pub fn new(out:WSSender, router: Arc<Mutex<Router>>, eve_paths:&EvePaths, clean: bool, editor: bool, client_name:&str) -> ClientHandler {
         let router_channel = router.lock().expect("ERROR: Failed to lock router: Cannot clone channel.").deref().get_channel();
         let mut runner = ProgramRunner::new(client_name);
         let outgoing = runner.program.outgoing.clone();
@@ -78,9 +78,10 @@ impl ClientHandler {
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().expect("ERROR: Failed to lock router: Cannot init RemoteWatcher.").deref())));
-
-            let editor_watcher = EditorWatcher::new(&mut runner, router.clone(), out.clone(), eve_paths.libraries(), eve_paths.programs());
-            runner.program.attach(Box::new(editor_watcher));
+            if editor {
+                let editor_watcher = EditorWatcher::new(&mut runner, router.clone(), out.clone(), eve_paths.libraries(), eve_paths.programs());
+                runner.program.attach(Box::new(editor_watcher));
+            }
         }
 
         if let Some(path) = eve_paths.libraries() {
@@ -166,7 +167,7 @@ fn http_server(address: String) -> std::thread::JoinHandle<()> {
     })
 }
 
-fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool) {
+fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool, editor: bool) {
     println!("{} Websocket Server at {}... ", BrightGreen.paint("Starting:"), address);
 
     // create a server program
@@ -200,7 +201,7 @@ fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool) {
     match listen(address, |out| {
         ix += 1;
         let client_name = format!("ws_client_{}", ix);
-        ClientHandler::new(out, router.clone(), eve_paths, clean, &client_name)
+        ClientHandler::new(out, router.clone(), eve_paths, clean, editor, &client_name)
     }) {
         Ok(_) => {},
         Err(why) => println!("{} Failed to start Websocket Server: {}", BrightRed.paint("Error:"), why),
@@ -216,6 +217,10 @@ fn main() {
                           .version("0.4")
                           .author("Kodowa Inc.")
                           .about("Creates an instance of the Eve server. Default values for options are in parentheses.")
+                          .arg(Arg::with_name("editor")
+                               .short("E")
+                               .long("editor")
+                               .help("Attaches an editor instance to each client program."))
                           .arg(Arg::with_name("persist")
                                .short("s")
                                .long("persist")
@@ -264,6 +269,7 @@ fn main() {
     println!("");
 
     let clean = matches.is_present("clean");
+    let editor = matches.is_present("editor");
 
     let eve_paths = EvePaths::new(clean,
                                   matches.values_of("EVE_FILES").map_or(vec![], |files| files.collect()),
@@ -279,5 +285,5 @@ fn main() {
     let websocket_address = format!("{}:{}",address,wport);
 
     http_server(http_address);
-    websocket_server(websocket_address, &eve_paths, clean);
+    websocket_server(websocket_address, &eve_paths, clean, editor);
 }
