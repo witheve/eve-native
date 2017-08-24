@@ -13,7 +13,7 @@ use super::super::ops::{Internable, Interner, RawChange, RunLoop, RunLoopMessage
 use super::Watcher;
 use super::system::{SystemTimerWatcher, PanicWatcher};
 use super::compiler::{CompilerWatcher};
-use super::compiler2::{RawTextCompilerWatcher};
+use super::textcompiler::{RawTextCompilerWatcher};
 use super::console::{ConsoleWatcher};
 use super::remote::{Router, RemoteWatcher};
 use super::websocket::{WebsocketClientWatcher};
