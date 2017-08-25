@@ -2360,6 +2360,7 @@ impl MetaMessage {
                 prev.count += cur.count;
             }
         }
+        if prev.count != 0 { neue.push(prev); }
         neue
     }
 }
