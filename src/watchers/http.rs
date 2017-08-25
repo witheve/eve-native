@@ -16,11 +16,10 @@ use self::hyper_tls::HttpsConnector;
 use self::tokio_core::reactor::Core;
 use self::hyper::{Method};
 use std::thread;
-use std::io;
 use std::io::{Write};
 extern crate iron;
 use self::iron::prelude::*;
-use self::iron::status;
+use self::iron::{status, url};
 use std::collections::HashMap;
 
 pub struct HttpWatcher {
@@ -68,7 +67,7 @@ impl Watcher for HttpWatcher {
                             _         => Method::Get
                         };
                         let req = hyper::Request::new(rmethod, url);
-                        requests.insert(id.clone(),req);
+                        requests.insert(id.clone(), req);
                     }
                     let req = requests.get_mut(&id).unwrap();
                     if key != "" {
@@ -79,8 +78,7 @@ impl Watcher for HttpWatcher {
                     }                    
                 },
                 "server" => {
-                    let body = Internable::to_string(interner.get_value(add[3]));
-                    http_server(address, body);
+                    http_server(address, &self.outgoing);
                 },
                 "body" => {
                     let response_id = Internable::to_string(interner.get_value(add[1]));
@@ -92,7 +90,7 @@ impl Watcher for HttpWatcher {
                             _ => (),
                         }
                     } else {
-                        self.responses.insert(response_id,vec![(index.clone(),chunk.clone())]);
+                        self.responses.insert(response_id, vec![(index.clone(), chunk.clone())]);
                     }
                 }
                 _ => {},
@@ -100,7 +98,7 @@ impl Watcher for HttpWatcher {
         }
         // Send the HTTP request
         for (id, request) in requests.drain() {
-          send_http_request(&id,request,&self.outgoing);
+          send_http_request(&id, request, &self.outgoing);
         };
         
         for (response_id, mut chunk_vec) in self.responses.drain() {
@@ -118,10 +116,35 @@ impl Watcher for HttpWatcher {
     }
 }
 
-fn http_server(address: String, body: String) -> thread::JoinHandle<()> {
+fn http_server(address: String, outgoing: &Sender<RunLoopMessage>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         Iron::new(|req: &mut Request| {
-            Ok(Response::with((status::Ok, "Hello")))
+            println!("STARTED SERVER");
+            let node = "http/server";
+            let hostname: String = match req.url.host() {
+                url::Host::Domain(s) => s.to_string(),
+                url::Host::Ipv4(s) => s.to_string(),
+                url::Host::Ipv6(s) => s.to_string(),
+            };
+            let request_id = format!("http/request|{:?}",req.url);
+            let url_id = format!("http/url|{:?}",request_id);
+            let mut request_changes: Vec<RawChange> = vec![];
+            request_changes.push(new_change(&request_id, "tag", Internable::from_str("http/request"), node));
+            request_changes.push(new_change(&request_id, "url", Internable::String(url_id.clone()), node));
+            request_changes.push(new_change(&url_id, "tag", Internable::from_str("http/url"), node));
+            request_changes.push(new_change(&url_id, "hostname", Internable::String(hostname), node));
+            request_changes.push(new_change(&url_id, "port", Internable::String(req.url.port().to_string()), node));
+            request_changes.push(new_change(&url_id, "protocol", Internable::from_str(req.url.scheme()), node));
+            match req.url.fragment() {
+                Some(s) => request_changes.push(new_change(&url_id, "hash", Internable::from_str(s), node)),
+                _ => (),
+            };
+            match req.url.query() {
+                Some(s) => request_changes.push(new_change(&url_id, "query", Internable::from_str(s), node)),
+                _ => (),
+            };
+            //outgoing.send(RunLoopMessage::Transaction(request_changes));
+            Ok(Response::with((status::Ok, "")))
         }).http(address).unwrap();
     })
 }
@@ -170,9 +193,9 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
             outgoing.send(RunLoopMessage::Transaction(error_changes)).unwrap();
         },
     }
-    let error_id = format!("http/request/error|123456");
-    let mut changes: Vec<RawChange> = vec![];
-    changes.push(new_change(&error_id, "tag", Internable::from_str("http/request/done"), node));
-    changes.push(new_change(&error_id, "request", Internable::from_str(id), node));
-    outgoing.send(RunLoopMessage::Transaction(changes)).unwrap();
+    let finished_id = format!("http/request/finished|{:?}",id);
+    outgoing.send(RunLoopMessage::Transaction(vec![
+        new_change(&finished_id, "tag", Internable::from_str("http/request/finished"), node),
+        new_change(&finished_id, "request", Internable::from_str(id), node),
+    ])).unwrap();
 }
