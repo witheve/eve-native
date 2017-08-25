@@ -33,11 +33,11 @@ fn main() {
         None => vec![]
     };
 
-    let mut program = Program::new();
+    let mut program = Program::new("analyzer");
 
     let mut blocks = vec![];
     for file in files {
-        blocks.extend(parse_file(&mut program.state.interner, file, true));
+        blocks.extend(parse_file(&mut program.state.interner, file, true, false));
     }
 
     let mut analysis = Analysis::new(&mut program.state.interner);
