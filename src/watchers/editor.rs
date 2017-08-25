@@ -107,36 +107,38 @@ impl EditorWatcher {
                         // for output in outputs.iter() { println!("    {:?}", output); }
                         // println!("  ]\n");
 
-                        let event = format!("|{}|editor/event/meta-transaction|", rand::thread_rng().next_u64());
+                        let event = format!("|{}|editor/event/meta-transaction", rand::thread_rng().next_u64());
                         let event_id = Internable::String(event.to_owned());
                         let mut changes = vec![
                             make_change_str(event_id.clone(), "tag", "editor/event"),
                             make_change_str(event_id.clone(), "tag", "editor/event/meta-transaction"),
                         ];
                         for input in inputs.iter() {
-                            let attr = if let &Internable::String(ref a) = &input.a {
-                                if a == "tag" { "__tag".to_owned() } else { a.to_owned() }
-                            } else {
-                                panic!("Non-string attribute");
-                            };
+                            let kind = if input.count > 0 { "add" } else { "remove" };
 
                             // @FIXME: don't use debug print here.
-                            let input_id = Internable::String(format!("{}input|{:?}", event, input.e));
+                            let input_id = Internable::String(format!("{}|input|{:?}", event, input.e));
+                            let av_id = Internable::String(format!("{}|input|{:?}|av|{:?}|{:?}", event, input.e, input.a, input.v));
                             changes.push(make_change(event_id.clone(), "input", input_id.clone()));
-                            changes.push(make_change(input_id.clone(), &attr, input.v.clone()));
+                            changes.push(make_change(input_id.clone(), "entity", input.e.clone()));
+                            changes.push(make_change(input_id.clone(), "av", av_id.clone()));
+                            changes.push(make_change(av_id.clone(), "attribute", input.a.clone()));
+                            changes.push(make_change(av_id.clone(), "value", input.v.clone()));
+                            changes.push(make_change_str(av_id.clone(), "type", kind));
                         }
 
                         for output in outputs.iter() {
-                            let attr = if let &Internable::String(ref a) = &output.a {
-                                if a == "tag" { "__tag".to_owned() } else { a.to_owned() }
-                            } else {
-                                panic!("Non-string attribute");
-                            };
+                            let kind = if output.count > 0 { "add" } else { "remove" };
 
                             // @FIXME: don't use debug print here.
-                            let output_id = Internable::String(format!("{}output|{:?}", event, output.e));
+                            let output_id = Internable::String(format!("{}|output|{:?}", event, output.e));
+                            let av_id = Internable::String(format!("{}|output|{:?}|av|{:?}|{:?}", event, output.e, output.a, output.v));
                             changes.push(make_change(event_id.clone(), "output", output_id.clone()));
-                            changes.push(make_change(output_id.clone(), &attr, output.v.clone()));
+                            changes.push(make_change(output_id.clone(), "entity", output.e.clone()));
+                            changes.push(make_change(output_id.clone(), "av", av_id.clone()));
+                            changes.push(make_change(av_id.clone(), "attribute", output.a.clone()));
+                            changes.push(make_change(av_id.clone(), "value", output.v.clone()));
+                            changes.push(make_change_str(av_id.clone(), "type", kind));
                         }
 
                         outgoing.send(RunLoopMessage::Transaction(changes));
