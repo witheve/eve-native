@@ -100,17 +100,18 @@ impl Watcher for HttpWatcher {
         for (id, request) in requests.drain() {
           send_http_request(&id, request, &self.outgoing);
         };
-        
+        // Reconstruct the body from chunks
         for (response_id, mut chunk_vec) in self.responses.drain() {
             chunk_vec.sort();
             let body: String = chunk_vec.iter().fold("".to_string(), |acc, ref x| {
                 let &&(ref ix, ref chunk) = x;
                 acc + chunk
             });
-            let response_id = format!("http/full-body|{:?}",response_id);
+            let full_body_id = format!("http/full-body|{:?}",response_id);
             self.outgoing.send(RunLoopMessage::Transaction(vec![
-                new_change(&response_id, "tag", Internable::from_str("http/fully-body"), "http/request"),
-                new_change(&response_id, "body", Internable::String(body), "http/request"),
+                new_change(&full_body_id, "tag", Internable::from_str("http/full-body"), "http/request"),
+                new_change(&full_body_id, "body", Internable::String(body), "http/request"),
+                new_change(&full_body_id, "response", Internable::String(response_id), "http/request"),
             ])).unwrap();
         };
     }
@@ -173,7 +174,7 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
             let body_string = String::from_utf8(vector).unwrap();
             outgoing.send(RunLoopMessage::Transaction(vec![
                 new_change(&chunk_id, "tag", Internable::from_str("http/body-chunk"), node),
-                new_change(&chunk_id, "request", Internable::from_str(id), node),
+                new_change(&chunk_id, "response", Internable::String(response_id), node),
                 new_change(&chunk_id, "chunk", Internable::String(body_string), node),
                 new_change(&chunk_id, "index", Internable::from_number(ix), node)
             ])).unwrap();

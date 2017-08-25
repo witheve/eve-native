@@ -59,22 +59,45 @@ commit
   request.error := error
 end
 
-Reconstruct a body from chunks
+Tag a finished request as such
 
 search
-  [#http/body-chunk request chunk index]
-  [#http/request/done request]
-watch http
-  ("body", request, chunk, index)
+  [#http/request/finished request]
+commit
+  request += #finished
 end
 
+Reconstruct a body from chunks, only after the request is`#finished`
+
+search
+  [#http/body-chunk response chunk index]
+  response = [#http/response request]
+  request = [#http/request #finished]
+watch http
+  ("body", response, chunk, index)
+end
+
+When the full body is reconstructed, attach it to the response
+
+search
+  q = [#http/full-body body response]
+commit
+  response.body := body
+end
+
+Clean up body chunks once the body is reconstructed
+
+search
+  chunk = [#http/body-chunk response]
+  response = [#http/response body]
+commit
+  chunk := none
+end
 
 ## Process HTTP Requests
 
 search
   server = [#http/server address]
-  body = if server.body then server.body
-         else ""
 watch http
-  ("server", server, address, body)
+  ("server", server, address)
 end
