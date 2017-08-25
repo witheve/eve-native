@@ -9,6 +9,7 @@ use std::path::{PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
+use std::collections::HashSet;
 use super::super::indexes::{WatchDiff};
 use super::super::ops::{Internable, Interner, RawChange, RunLoop, RunLoopMessage, MetaMessage, ProgramRunner};
 
@@ -98,6 +99,10 @@ impl EditorWatcher {
 
     pub fn make_meta_thread(name:&str, incoming: mpsc::Receiver<MetaMessage>, outgoing: Sender<RunLoopMessage>) -> thread::JoinHandle<()> {
         thread::Builder::new().name(name.to_owned()).spawn(move || {
+
+            let TAG = Internable::String("tag".to_owned());
+            let ignored_tags:HashSet<Internable> = vec!["html/instance", "editor/tag-metrics"].iter().map(|str| Internable::String(str.to_string())).collect();
+
             loop {
                 match incoming.recv() {
                     Ok(MetaMessage::Transaction{inputs, outputs}) => {
@@ -106,10 +111,11 @@ impl EditorWatcher {
                         // println!("  \n  outputs: [");
                         // for output in outputs.iter() { println!("    {:?}", output); }
                         // println!("  ]\n");
+                        let mut ignored_entities = HashSet::new();
 
                         let event = format!("|{}|editor/event/meta-transaction", rand::thread_rng().next_u64());
                         let event_id = Internable::String(event.to_owned());
-                        let mut changes = vec![
+                        let mut changes:Vec<RawChange> = vec![
                             make_change_str(event_id.clone(), "tag", "editor/event"),
                             make_change_str(event_id.clone(), "tag", "editor/event/meta-transaction"),
                         ];
@@ -127,7 +133,15 @@ impl EditorWatcher {
                             changes.push(make_change_str(av_id.clone(), "type", kind));
                         }
 
+                        // Figure out which entities to ignore.
                         for output in outputs.iter() {
+                            if output.a == TAG && ignored_tags.contains(&output.v) {
+                                ignored_entities.insert(output.e.clone());
+                            }
+                        }
+
+                        for output in outputs.iter() {
+                            if ignored_entities.contains(&output.e) { continue; }
                             let kind = if output.count > 0 { "add" } else { "remove" };
 
                             // @FIXME: don't use debug print here.
@@ -140,7 +154,6 @@ impl EditorWatcher {
                             changes.push(make_change(av_id.clone(), "value", output.v.clone()));
                             changes.push(make_change_str(av_id.clone(), "type", kind));
                         }
-
                         outgoing.send(RunLoopMessage::Transaction(changes));
 
                     },
