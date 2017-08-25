@@ -30,7 +30,7 @@ step there is to check if we have multiple types.
       set.domain += [#domain type:"multi-type"]
     end
 
-To figure out what our real domain is given all the potential options we have,
+To figure out what our final domain is given all the potential options we have,
 we look for the type with the highest defined sort.
 
     search
@@ -203,8 +203,39 @@ It's also useful to be able to take an arbitrary value and turn it into a domain
     end
 
 
+Tag info
+------------------------------------------------------
+
+We want to keep information that we know about tags based on all the blocks in
+the programs we see so that we can use the combined information to make some
+optimizations. So first step is to find all the tags, which are hidden away in
+scans and inserts.
+
+    search
+      [#scan a:"tag" v:tag-name]
+    bind
+      [#tag-info tag-name]
+    end
+
+    search
+      [#insert a:"tag" v:tag-name]
+    bind
+      [#tag-info tag-name]
+    end
+
+
 Blocks and constraints
 ------------------------------------------------------
+
+There's some useful information we can adorn blocks with, like how many
+constraints they have.
+
+    search
+      block = [#block constraint]
+      num-constraints = gather/count[for:constraint per:block]
+    bind
+      block <- [num-constraints]
+    end
 
 We need to gather what tag each e belongs to in each block. We then
 need to gather our inputs and outputs for the block based on what tag they
@@ -279,8 +310,9 @@ chains of execution in the compiled program.
 
     search
       block = [#root]
+      [#block-input block tag-name]
     bind
-      [#chain type:"root" start:block]
+      [#chain type:"root" tag-name | start:block]
     end
 
 We create this chain by walking the links between blocks starting at the #root
@@ -290,13 +322,22 @@ for a link that has the same to, but a lower level
     search
       chain = [#chain start]
       [#link from:start to]
+      start != to
     bind
       [#chain-link chain from:start to level:1]
     end
 
     search
-      [#chain-link chain to:from level]
+      chain = [#chain start]
+      [#link from:start to:start]
+    bind
+      [#chain-link #cycle chain from:start to:start level:1]
+    end
+
+    search
+      link = [#chain-link chain to:from level]
       [#link from to]
+      not(link.tag = "cycle")
       not(
         prev = [#chain-link chain to]
         prev.level <= level
@@ -308,11 +349,13 @@ for a link that has the same to, but a lower level
 
     search
       cur = [#chain-link chain to:from level]
+      not(link.tag = "cycle")
       [#link from to]
       prev = [#chain-link chain to]
+      not(prev.tag = "cycle")
       prev.level <= level
     bind
-      cur.back-link += prev
+      [#chain-link #cycle chain from to level]
     end
 
 Turn output constraints into their "real" equivalents
@@ -344,6 +387,27 @@ Turn output constraints into their "real" equivalents
       not([#set block e a])
     bind
       [#real/remove block e a v]
+    end
+
+
+Block heuristics
+------------------------------------------------------
+
+Event-like things follow a common pattern where they exist for exactly one
+frame. This is accomplished by looking for a tag and then removing any full
+record that matches. We've seen these called "pulses" elsewhere, so that's the
+name we'll use here. We conservatively look for these by checking for blocks
+with only two constraints, one that is a tag lookup and the other that is
+remove-entity for that record.
+
+    search
+      block.num-constraints = 2
+      [#scan block e a:"tag" v: tag-name]
+      [#remove-entity block e]
+      tag-info = [#tag-info tag-name]
+    bind
+      block += #pulse
+      tag-info += #pulse
     end
 
 
@@ -457,14 +521,72 @@ Functions...
                       b: [#domain/from-value output value:right]]
     end
 
+
+Block -> tag domains
+------------------------------------------------------
+
+For input/output tag in our block, we need to determine what the domains of the
+attributes of that tag are. We'll then use this information in the chain
+optimizer to remove nodes that can't actually follow after eachother.
+
+    search
+      [#scan block e a v]
+      [#block-tag block e tag-name]
+      input = [#block-input block tag-name a]
+      [#domain-set register:v final]
+    bind
+      input.domain += final
+    end
+
+    search
+      [#insert block e a v]
+      [#block-tag block e tag-name]
+      output = [#block-output block tag-name a]
+      [#domain-set register:v final]
+    bind
+      output.domain += final
+    end
+
+
 Optimizing
 ------------------------------------------------------
 
 While on the surface blocks tend to produce many cycles, they're often written
 in such a way that if you knew the bounds of their inputs and their outputs, you
 could prove that they don't actually form a cycle. Much of the optimizer is just
-us using the domain information we've collected to "simulate" the program's
-execution and start pruning chain-links.
+us using this domain information to "simulate" the program's execution and start
+pruning chain-links. Instead of modifying our original chain-links, we'll create
+a new set of optimized ones and any link that hasn't been removed by some
+optimization rule is part of the new, optimized chain.
+
+    search
+      link = [#chain-link chain from to level]
+      not([#link-removal link])
+    bind
+      [#chain-link/optimized chain from to level]
+    end
+
+    search
+      opt = [#chain-link/optimized chain link]
+      link = [#chain-link chain back-link]
+      not([#link-removal link back-link])
+    bind
+      opt.back-link += back-link
+    end
+
+On to the link removers. The first one we'll do is that if a block has a pulse
+as an input, and the from of a chain-link doesn't output that input, then the to
+can't run.
+
+    search
+      link = [#chain-link from to]
+      [#block-input block:to tag-name]
+      [#tag-info #pulse tag-name]
+      not([#block-output block:from tag-name a:"tag"])
+    bind
+      [#link-removal link reason: "Relies on a pulse that has already been removed"]
+    end
+
 
 
 Intermediate Representation (IR)
@@ -492,11 +614,18 @@ Drawing
         [#ui/text sort:level text: "{{level}}: {{from}} -> {{to}}"]]
     end
 
-    disabled search
-      [#block-input block tag-name a]
+    search
+      [#block-input block tag-name a domain]
     bind
       [#ui/column #block-tags | children:
-        [#ui/text text: "{{block}} - {{tag-name}} {{a}}"]]
+        [#ui/text text: "INPUT: {{block}} - {{tag-name}} {{a}} {{domain.type}}"]]
+    end
+
+    search
+      [#block-output block tag-name a domain]
+    bind
+      [#ui/column #block-output-tags | children:
+        [#ui/text text: "OUTPUT: {{block}} - {{tag-name}} {{a}} {{domain.type}}"]]
     end
 
 
@@ -508,28 +637,19 @@ Test
     end
 
     commit
-      b0 = [#block name:"b0"]
-      [#insert block:b0 e:"r1" a:"tag" v:"foo"]
-      [#insert block:b0 e:"r1" a:"name" v:"zomg"]
-
-      b1 = [#block name:"b1"]
-      r1 = [#register block:b1 offset:1]
-      r2 = [#register block:b1 offset:2]
-      r3 = [#register block:b1 offset:3]
-      [#scan block:b1 e:r1 a:"tag" v:"foo"]
-      [#scan block:b1 e:r1 a:"name" v:"zomg"]
-      [#scan block:b1 e:r1 a:"score" v:r2]
-      [#filter block:b1 op:">" left:r2 right:10]
-      [#function block:b1 op:"*" params: [index:1 value: r2] [index:2 value:-1] output: r3]
-      [#insert block:b1 e:r2 a:"tag" v:"yar"]
-
-      b2 = [#block name:"b2"]
-      [#scan block:b2 e:"r1" a:"tag" v:"yar"]
-      [#scan block:b2 e:"r1" a:"meep" v:"r2"]
-      [#insert block:b2 e:"r1" a:"meep" v:"moop"]
-
+      r1 = [#register block:b3 offset:1]
+      r2 = [#register block:b3 offset:2]
+      r3 = [#register block:b3 offset:3]
       b3 = [#block name:"b3"]
-      [#scan block:b3 e:"r1" a:"tag" v:"system/timer/change"]
-      [#insert block:b3 e:"r2" a:"tag" v:"yar"]
-      [#insert block:b3 e:"r2" a:"meep" v:"foo"]
+      [#scan block:b3 e:r1 a:"tag" v:"system/timer/change"]
+      [#scan block:b3 e:r1 a:"score" v:r2]
+      [#function block:b3
+                 params: [index:1 value:r2] [index:2 value:1]
+                 output:r3]
+      [#insert block:b3 e:r1 a:"score" v:r3]
+
+      b4r1 = [#register block:b4 offset:1]
+      b4 = [#block name:"b4" | constraint:
+             [#scan block:b4 e:b4r1 a:"tag" v:"system/timer/change"]
+             [#remove-entity block:b4 e:b4r1]]
     end
