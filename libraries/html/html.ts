@@ -566,6 +566,9 @@ export class HTML extends Library {
           }
           current = current.parentElement;
         };
+      } else if ((target as any).__element) {
+        // If the target belongs to another program, bail.
+        return;
       }
 
       if(eavs.length) this._sendEvent(eavs);
