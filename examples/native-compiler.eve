@@ -603,6 +603,18 @@ From the IR we can generate actual source code in some language that we can then
 execute. At this point, code generation is a largely mechanical process of
 looking at IR nodes and constructing code strings out of them.
 
+    search
+      (ir, js) =
+        if ir = [#ir/symbol name] then (ir, name)
+        if ir = [#ir/string str] then (ir, "\"{{str}}\"")
+        if ir = [#ir/number num] then (ir, "{{num}}")
+        if ir = [#ir/infix op left right] then (ir, "{{left.js}} {{op}} {{right.js}}")
+        if ir = [#ir/let name value] then (ir, "var {{name.js}} = {{value.js}};")
+        if ir = [#ir/set symbol attribute value] then (ir, "{{symbol.js}}.{{attribute.javscript}} = {{value.js}};")
+        if ir = [#ir/get symbol attribute] then (ir, "{{symbol.js}}.{{attribute.js}}")
+    bind
+      ir <- [js]
+    end
 
 Drawing
 ------------------------------------------------------
