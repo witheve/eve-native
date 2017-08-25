@@ -218,3 +218,25 @@ test!(stdlib_string_length, {
         [#success]
     end
 });
+
+test!(stdlib_string_join, {
+    commit
+        [#input text: "a", separator: ","]
+        [#input text: "c", separator: "|"]
+        [#input text: "d", separator: "}"]
+        [#input text: "b", separator: ":"]
+    end
+
+    search
+        item = [#input text separator]
+        string = gather!/string!-join![for:text value:text separator]
+    bind
+        [#result string]
+    end
+
+    search
+        [#result string:"a,b:c|d"]
+    bind
+        [#success]
+    end
+});

@@ -38,6 +38,7 @@ pub enum FunctionKind {
     Scalar,
     Sum,
     Sort,
+    SortedSum,
     NeedleSort,
 }
 
@@ -115,6 +116,7 @@ lazy_static! {
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));
         m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["sum"], FunctionKind::Sum));
         m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["average"], FunctionKind::Sum));
+        m.insert("gather/string-join".to_string(), FunctionInfo::aggregate(vec!["value", "separator"], vec!["string"], FunctionKind::SortedSum));
         m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], vec!["count"], FunctionKind::Sum));
         m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["top"], FunctionKind::Sort));
         m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["bottom"], FunctionKind::Sort));
@@ -707,8 +709,8 @@ impl<'a> Node<'a> {
                             ParamType::Output(ix) => { cur_outputs[ix] = v; }
                             ParamType::Invalid => {
                                 match (info.kind, a) {
-                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") | (FunctionKind::NeedleSort, "per") => { group.push(v) }
-                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") | (FunctionKind::NeedleSort, "for") => { projection.push(v) }
+                                    (FunctionKind::Sum, "per") | (FunctionKind::SortedSum, "per") | (FunctionKind::Sort, "per") | (FunctionKind::NeedleSort, "per") => { group.push(v) }
+                                    (FunctionKind::Sum, "for") | (FunctionKind::SortedSum, "for") | (FunctionKind::Sort, "for") | (FunctionKind::NeedleSort, "for") => { projection.push(v) }
                                     (FunctionKind::NeedleSort, "from") => { needle.push(v) }
                                     _ => {
                                         cur_block.error(span, error::Error::UnknownFunctionParam(op.to_string(), a.to_string()));
@@ -768,7 +770,7 @@ impl<'a> Node<'a> {
                     FunctionKind::Multi => {
                         cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
                     },
-                    FunctionKind::Sort | FunctionKind::Sum => {
+                    FunctionKind::Sort | FunctionKind::Sum | FunctionKind::SortedSum => {
                         let mut sub_block = Compilation::new_child(cur_block);
                         let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
                         sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));

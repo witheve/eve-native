@@ -14,7 +14,7 @@ use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIn
     CollapsedChanges, RemoteIndex, RemoteChange, RawRemoteChange};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
-use std::collections::{HashMap, HashSet, Bound};
+use std::collections::{HashMap, HashSet, Bound, BTreeMap};
 use std::mem::transmute;
 use std::cmp::{self, Eq, PartialOrd};
 use std::collections::hash_map::{DefaultHasher, Entry};
@@ -872,7 +872,7 @@ impl Interner {
 type FilterFunction = fn(&Internable, &Internable) -> bool;
 type Function = fn(Vec<&Internable>) -> Option<Internable>;
 type MultiFunction = fn(Vec<&Internable>) -> Option<Vec<Vec<Internable>>>;
-pub type AggregateFunction = fn(&mut AggregateEntry, &Vec<Internable>);
+pub type AggregateFunction = fn(&mut AggregateEntry, &Vec<Internable>, &Vec<Internable>);
 
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
@@ -1274,6 +1274,7 @@ pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params
         "gather/sum" => (aggregate_sum_add, aggregate_sum_remove),
         "gather/count" => (aggregate_count_add, aggregate_count_remove),
         "gather/average" => (aggregate_avg_add, aggregate_avg_remove),
+        "gather/string-join" => (aggregate_string_join_add, aggregate_string_join_remove),
         "gather/top" => (aggregate_top_add, aggregate_top_remove),
         "gather/bottom" => (aggregate_bottom_add, aggregate_bottom_remove),
         "gather/next" => (aggregate_next_add, aggregate_next_remove),
@@ -1636,7 +1637,7 @@ pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
 // Aggregates
 //-------------------------------------------------------------------------
 
-pub fn aggregate_sum_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_sum_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1649,7 +1650,7 @@ pub fn aggregate_sum_add(current: &mut AggregateEntry, params: &Vec<Internable>)
     };
 }
 
-pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1662,21 +1663,21 @@ pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: &Vec<Internabl
     };
 }
 
-pub fn aggregate_count_add(current: &mut AggregateEntry, _: &Vec<Internable>) {
+pub fn aggregate_count_add(current: &mut AggregateEntry, _: &Vec<Internable>, _: &Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res + 1.0; }
         _ => { *current = AggregateEntry::Result(1.0); }
     }
 }
 
-pub fn aggregate_count_remove(current: &mut AggregateEntry, _: &Vec<Internable>) {
+pub fn aggregate_count_remove(current: &mut AggregateEntry, _: &Vec<Internable>, _: &Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res - 1.0; }
         _ => { *current = AggregateEntry::Result(-1.0); }
     }
 }
 
-pub fn aggregate_avg_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_avg_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1693,7 +1694,7 @@ pub fn aggregate_avg_add(current: &mut AggregateEntry, params: &Vec<Internable>)
     };
 }
 
-pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1714,6 +1715,75 @@ pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: &Vec<Internabl
     };
 }
 
+
+pub fn aggregate_string_join_add(current: &mut AggregateEntry, params: &Vec<Internable>, projection: &Vec<Internable>) {
+    let value = params.iter().map(|x| {
+        match x {
+            &Internable::Number(_) => { Internable::String(Internable::to_string(x)) },
+            &Internable::String(_) => { x.clone() },
+            _ => unreachable!(),
+        }
+    }).collect::<Vec<_>>();
+    match current {
+        &mut AggregateEntry::SortedSum { ref mut items, ref mut result } => {
+            items.insert(projection.clone(), value);
+            let mut neue = String::new();
+            let mut separator_len = 0;
+            for info in items.values() {
+                for item in info.iter() {
+                    match item {
+                        &Internable::String(ref s) => {
+                            neue.push_str(s.as_str());
+                            separator_len = s.len();
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }
+            // remove the last, extraneous separator
+            let len = neue.len();
+            neue.truncate(len - separator_len);
+            *result = Internable::String(neue);
+        }
+        _ => {
+            let result = value[0].clone();
+            let mut items = BTreeMap::new();
+            items.insert(projection.clone(), value);
+            *current = AggregateEntry::SortedSum { items, result };
+        }
+    }
+}
+
+pub fn aggregate_string_join_remove(current: &mut AggregateEntry, _: &Vec<Internable>, projection: &Vec<Internable>) {
+    match current {
+        &mut AggregateEntry::SortedSum { ref mut items, ref mut result } => {
+            items.remove(projection);
+            let mut neue = String::new();
+            let mut separator_len = 0;
+            for info in items.values() {
+                for item in info.iter() {
+                    match item {
+                        &Internable::String(ref s) => {
+                            neue.push_str(s.as_str());
+                            separator_len = s.len();
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }
+            // remove the last, extraneous separator
+            let len = neue.len();
+            neue.truncate(len - separator_len);
+            *result = Internable::String(neue);
+        }
+        _ => {
+            let items = BTreeMap::new();
+            let result = Internable::String("".to_owned());
+            *current = AggregateEntry::SortedSum { items, result };
+        }
+    }
+}
+
 //-------------------------------------------------------------------------
 // Sort Aggregates
 //-------------------------------------------------------------------------
@@ -1723,7 +1793,7 @@ fn is_aggregate_in_round(&(_, v): &(&Vec<Internable>, &Vec<Count>), round:Round)
     sum > 0
 }
 
-pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1754,7 +1824,7 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
     }
 }
 
-pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1788,7 +1858,7 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
     }
 }
 
-pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1819,7 +1889,7 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
     }
 }
 
-pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1853,7 +1923,7 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
     }
 }
 
-pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1885,7 +1955,7 @@ pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>
     }
 }
 
-pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1917,7 +1987,7 @@ pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internab
     }
 }
 
-pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1949,7 +2019,7 @@ pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>
     }
 }
 
-pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1980,6 +2050,8 @@ pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internab
         }
     }
 }
+
+
 
 //-------------------------------------------------------------------------
 // Bit helpers
