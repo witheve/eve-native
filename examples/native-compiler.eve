@@ -305,14 +305,14 @@ chains of execution in the compiled program.
     search
       block = [#setup]
     bind
-      [#chain type:"setup" start:block]
+      [#chain type:"setup" to:block]
     end
 
     search
       block = [#root]
       [#block-input block tag-name]
     bind
-      [#chain type:"root" tag-name | start:block]
+      [#chain type:"root" tag-name | to:block]
     end
 
 We create this chain by walking the links between blocks starting at the #root
@@ -320,18 +320,18 @@ or #setup. We also want to discover cycles here, which we figure out by looking
 for a link that has the same to, but a lower level
 
     search
-      chain = [#chain start]
+      chain = [#chain to:start]
       [#link from:start to]
       start != to
     bind
-      [#chain-link chain from:start to level:1]
+      [#chain-link chain from:chain to level:1]
     end
 
     search
-      chain = [#chain start]
+      chain = [#chain to:start]
       [#link from:start to:start]
     bind
-      [#chain-link #cycle chain from:start to:start level:1]
+      [#chain-link #cycle chain from:chain to:start level:1]
     end
 
     search
@@ -344,7 +344,7 @@ for a link that has the same to, but a lower level
       )
       next-level = level + 1
     bind
-      [#chain-link chain from to level:next-level]
+      [#chain-link chain from:link to level:next-level]
     end
 
     search
@@ -355,7 +355,7 @@ for a link that has the same to, but a lower level
       not(prev.tag = "cycle")
       prev.level <= level
     bind
-      [#chain-link #cycle chain from to level]
+      [#chain-link #cycle chain from:cur to level]
     end
 
 Turn output constraints into their "real" equivalents
@@ -582,7 +582,7 @@ can't run.
       link = [#chain-link from to]
       [#block-input block:to tag-name]
       [#tag-info #pulse tag-name]
-      not([#block-output block:from tag-name a:"tag"])
+      not([#block-output block:from.to tag-name a:"tag"])
     bind
       [#link-removal link reason: "Relies on a pulse that has already been removed"]
     end
