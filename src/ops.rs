@@ -606,7 +606,7 @@ pub enum Internable {
 impl PartialOrd for Internable {
     fn partial_cmp(&self, rhs:&Self) -> Option<cmp::Ordering> {
         let priority = self.to_sort_priority();
-        let right_priority = self.to_sort_priority();
+        let right_priority = rhs.to_sort_priority();
         if priority != right_priority {
             return Some(priority.cmp(&right_priority));
         }
