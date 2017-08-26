@@ -98,6 +98,7 @@ export class HTML extends Library {
     this._container.appendChild(this._syntheticStyleContainer);
     this._dummy = document.createElement("div");
 
+    window.addEventListener("resize", this._resizeEventHandler("resize-window"));
     window.addEventListener("click", this._mouseEventHandler("click"));
     window.addEventListener("dblclick", this._mouseEventHandler("double-click"));
     window.addEventListener("mousedown", this._mouseEventHandler("mouse-down"));
@@ -403,7 +404,28 @@ export class HTML extends Library {
   // Event Handlers
   //////////////////////////////////////////////////////////////////////
 
-    _mouseEventHandler(tagname:string) {
+  _resizeTimeout: any; // @FIXME: what's up with this.
+  _resizeEventHandler(tagname:string) {
+    return (event:Event) => {
+      if(!this._resizeTimeout) {
+        this._resizeTimeout = setTimeout(() => {
+          this._resizeTimeout = null;
+          let width = window.innerWidth || document.documentElement.clientWidth;
+          let height = window.innerHeight || document.documentElement.clientHeight;
+          let eventId = createId();
+          let eavs:RawEAV[] = [
+            [eventId, "tag", "html/event"],
+            [eventId, "tag", `html/event/${tagname}`],
+            [eventId, "width", width],
+            [eventId, "height", height]
+          ];
+          this._sendEvent(eavs);
+        }, 1000 / 5);
+      }
+    };
+  }
+
+  _mouseEventHandler(tagname:string) {
     return (event:MouseEvent) => {
       let {target} = event;
 
@@ -423,30 +445,33 @@ export class HTML extends Library {
       else if(button === 1) eavs.push([eventId, "button", "middle"]);
       else if(button) eavs.push([eventId, "button", button]);
 
-      let capturesContextMenu = false;
       if(this.isInstance(target)) {
         eavs.push([eventId, "target", target.__element]);
-
-        let current:Element|null = target;
-        while(current && current != this._container) {
-          if(this.isInstance(current)) {
-            eavs.push([eventId, "element", current.__element]);
-            if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
-              capturesContextMenu = true;
-            }
-          }
-          current = current.parentElement;
-        }
       }
+
+      let capturesContextMenu = false;
+      let anyInstances = false;
+      let current:Element|null = target as Element;
+      while(current && current != this._container) {
+        if(this.isInstance(current)) {
+          eavs.push([eventId, "element", current.__element]);
+          anyInstances = true;
+          if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
+            capturesContextMenu = true;
+          }
+        }
+        current = current.parentElement;
+      }
+
 
       // @NOTE: You'll get a mousedown but no mouseup for a right click if you don't capture the context menu,
       //   so we throw out the mousedown entirely in that case. :(
       if(button === 2 && !capturesContextMenu) return;
-      if(eavs.length) this._sendEvent(eavs);
+      if(anyInstances || current === this._container) this._sendEvent(eavs);
     };
   }
 
-    _captureContextMenuHandler() {
+  _captureContextMenuHandler() {
     return (event:MouseEvent) => {
       let captureContextMenu = false;
       let current:Element|null = event.target as Element;
@@ -563,6 +588,9 @@ export class HTML extends Library {
           }
           current = current.parentElement;
         };
+      } else if ((target as any).__element) {
+        // If the target belongs to another program, bail.
+        return;
       }
 
       if(eavs.length) this._sendEvent(eavs);

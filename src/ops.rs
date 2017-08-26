@@ -19,7 +19,7 @@ use std::mem::transmute;
 use std::cmp::{self, Eq, PartialOrd};
 use std::collections::hash_map::{DefaultHasher, Entry};
 use std::hash::{Hash, Hasher};
-use std::iter::{Iterator};
+use std::iter::{Iterator, FromIterator};
 use std::fmt;
 use watchers::{Watcher};
 use std::sync::mpsc::{Sender, Receiver};
@@ -29,7 +29,8 @@ use serde::de::{Deserialize, Deserializer, Visitor};
 use std::error::Error;
 use std::thread::{self, JoinHandle};
 use std::io::{Write, BufReader, BufWriter};
-use std::fs::{OpenOptions, File};
+use std::fs::{OpenOptions, File, canonicalize};
+use std::path::Path;
 use std::f32::consts::{PI};
 use std::mem;
 use std::usize;
@@ -116,7 +117,7 @@ impl Change {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct RawChange {
     pub e: Internable,
     pub a: Internable,
@@ -139,6 +140,15 @@ impl RawChange {
     }
 }
 
+impl Ord for RawChange {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.e != other.e { self.e.cmp(&other.e) }
+        else if self.a != other.a { self.a.cmp(&other.a) }
+        else if self.v != other.v { self.v.cmp(&other.v) }
+        else { cmp::Ordering::Equal }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IntermediateChange {
     pub key: Vec<Interned>,
@@ -152,14 +162,14 @@ pub struct IntermediateChange {
 // Block
 //-------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum PipeShape {
     Scan(Interned, Interned, Interned),
     Intermediate(Interned),
     Remote(Interned),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub name: String,
     pub block_id: Interned,
@@ -279,6 +289,24 @@ impl Block {
         shapes
     }
 
+}
+
+impl PartialEq for Block {
+    fn eq(&self, other:&Self) -> bool {
+        if self.constraints.len() != other.constraints.len() { return false; }
+        let my_constraints:HashSet<Constraint> = HashSet::from_iter(self.constraints.iter().cloned());
+        let other_constraints:HashSet<Constraint> = HashSet::from_iter(other.constraints.iter().cloned());
+        my_constraints == other_constraints
+    }
+}
+impl Eq for Block {}
+
+impl Hash for Block {
+    fn hash<H: Hasher>(&self, state:&mut H) {
+        for constraint in self.constraints.iter() {
+            constraint.hash(state);
+        }
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -615,7 +643,7 @@ pub enum Internable {
 impl PartialOrd for Internable {
     fn partial_cmp(&self, rhs:&Self) -> Option<cmp::Ordering> {
         let priority = self.to_sort_priority();
-        let right_priority = self.to_sort_priority();
+        let right_priority = rhs.to_sort_priority();
         if priority != right_priority {
             return Some(priority.cmp(&right_priority));
         }
@@ -2412,11 +2440,50 @@ impl BlockInfo {
 
 pub enum RunLoopMessage {
     Stop,
+    Reload(String),
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
     CodeTransaction(Vec<Block>, Vec<String>),
     RemoteCodeTransaction(Vec<PortableBlock>, Vec<String>)
 }
+
+#[derive(Debug, Clone)]
+pub enum MetaMessage {
+    Transaction{inputs: Vec<RawChange>, outputs: Vec<RawChange>}
+}
+impl MetaMessage {
+    pub fn collapse(mut self) -> MetaMessage {
+        match self {
+            MetaMessage::Transaction{mut inputs, mut outputs} => {
+                MetaMessage::Transaction{
+                    inputs: MetaMessage::collapse_changes(inputs),
+                    outputs: MetaMessage::collapse_changes(outputs)
+                }
+            }
+            _ => self
+        }
+    }
+
+    fn collapse_changes(mut vec: Vec<RawChange>) -> Vec<RawChange> {
+        let mut neue = vec![];
+        if vec.len() == 0 { return neue; }
+        vec.sort();
+
+        let mut prev = vec.remove(0);
+        for cur in vec.drain(..) {
+            if cur.e != prev.e || cur.a != prev.a || cur.v != prev.v {
+                if prev.count != 0 { neue.push(prev); }
+                prev = cur;
+                continue;
+            } else {
+                prev.count += cur.count;
+            }
+        }
+        if prev.count != 0 { neue.push(prev); }
+        neue
+    }
+}
+
 
 pub struct Program {
     pub name: String,
@@ -2663,6 +2730,10 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
 }
 
 fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
+    transaction_flow_meta(commits, frame, iter_pool, program, None)
+}
+
+fn transaction_flow_meta(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program, maybe_meta: Option<&mut MetaMessage>) {
     {
         let mut pipes = HashSet::new();
         let mut next_frame = true;
@@ -2685,7 +2756,10 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // separation of insert and remove.
                     if change.count > 0 {
                         if program.state.distinct_index.insert_active(change.e, change.a, change.v, change.round) {
-                            program.state.index.insert(change.e, change.a, change.v);
+                            let added = program.state.index.insert(change.e, change.a, change.v);
+                            if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                                if added { outputs.push(change.to_raw(&program.state.interner)); }
+                            }
                         }
                     }
                     pipes.clear();
@@ -2701,10 +2775,17 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // for AB and BA, they find the same values as when they were added.
                     if change.count < 0 {
                         if program.state.distinct_index.remove_active(change.e, change.a, change.v, change.round) {
-                            program.state.index.remove(change.e, change.a, change.v);
+                            let removed = program.state.index.remove(change.e, change.a, change.v);
+                            if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                                if removed { outputs.push(change.to_raw(&program.state.interner)); }
+                            }
+
                         }
                     }
                     if current_round == 0 { commits.push(change.clone()); }
+                    if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                        outputs.push(change.to_raw(&program.state.interner));
+                    }
                 }
                 intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, current_round, &mut max_round);
                 max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
@@ -2748,10 +2829,16 @@ impl<'a> Transaction<'a> {
     }
 
     pub fn exec(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>) {
+        self.exec_meta(program, persistence_channel, None);
+    }
+    pub fn exec_meta(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>, maybe_meta: Option<&mut MetaMessage>) {
+        if let Some(&mut MetaMessage::Transaction{ref mut inputs, ..}) = maybe_meta {
+            inputs.extend(self.changes.iter().map(|c| c.to_raw(&program.state.interner)));
+        }
         for change in self.changes.iter() {
             program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, self.iter_pool, program);
+        transaction_flow_meta(&mut self.commits, &mut self.frame, self.iter_pool, program, maybe_meta);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -3118,12 +3205,13 @@ pub struct ProgramRunner {
     paths: Vec<String>,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
-    debug_modes: HashSet<DebugMode>
+    debug_modes: HashSet<DebugMode>,
+    pub meta_channel: Option<Sender<MetaMessage>>
 }
 
 impl ProgramRunner {
     pub fn new(name:&str) -> ProgramRunner {
-        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![], debug_modes: HashSet::new() }
+        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![], debug_modes: HashSet::new(), meta_channel: None }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -3141,17 +3229,25 @@ impl ProgramRunner {
 
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
+        let echo_channel = outgoing.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
         let initial_commits = self.initial_commits;
         let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
+        let meta_channel = self.meta_channel.map(|c| c.clone());
+
+        let mut file_blocks:HashMap<String, HashSet<String>> = HashMap::new();
 
         let thread = thread::Builder::new().name(program.name.to_owned()).spawn(move || {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                blocks.extend(parse_file(&mut program.state.interner, &path, true, debug_compile));
+                let my_blocks = parse_file(&mut program.state.interner, &path, true, debug_compile);
+                let canonical = Path::new(&path).canonicalize().unwrap();
+                let resolved_path = canonical.to_str().unwrap();
+                file_blocks.insert(resolved_path.to_owned(), my_blocks.iter().map(|block| block.name.to_owned()).collect());
+                blocks.extend(my_blocks);
             }
             let mut end_ns = time::precise_time_ns();
             println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
@@ -3170,6 +3266,54 @@ impl ProgramRunner {
 
             'outer: loop {
                 match program.incoming.recv() {
+                    Ok(RunLoopMessage::Stop) => {
+                        break 'outer;
+                    }
+                    Ok(RunLoopMessage::Reload(path)) => {
+                        let canonical = Path::new(&path).canonicalize().unwrap();
+                        let resolved_path = canonical.to_str().unwrap();
+                        println!("Gotta reload {}!", resolved_path);
+                        let mut file_block_list = file_blocks.entry(resolved_path.to_owned()).or_insert_with(|| HashSet::new());
+                        let mut my_blocks = parse_file(&mut program.state.interner, resolved_path, true, debug_compile);
+                        let mut new_blocks:HashSet<&Block> = my_blocks.iter().collect();
+                        let mut old_blocks:HashSet<&Block> = file_block_list.iter()
+                            .map(|name| {
+                                if let Some(ix) = program.block_info.block_names.get(name) {
+                                    program.block_info.blocks.get(*ix)
+                                } else {
+                                    None
+                                }
+                            })
+                            .filter(|maybe_block| maybe_block.is_some())
+                            .map(|maybe_block| maybe_block.unwrap())
+                            .collect();
+
+                        for block in new_blocks.iter() {
+                            let mut state = DefaultHasher::new();
+                            block.hash(&mut state);
+                            println!("NEW BLOCK: {:?}", state.finish())
+                        }
+                        for block in old_blocks.iter() {
+                            let mut state = DefaultHasher::new();
+                            block.hash(&mut state);
+                            println!("OLD BLOCK: {:?}", state.finish())
+                        }
+
+                        let mut added = &new_blocks - &old_blocks;
+                        let mut removed = &old_blocks - &new_blocks;
+
+                        let added_blocks:Vec<Block> = added.drain().map(|block| block.clone()).collect();
+                        let removed_blocks:Vec<String> = removed.drain().map(|block| block.name.to_owned()).collect();
+
+                        for remove in removed_blocks.iter() {
+                            file_block_list.remove(remove);
+                        }
+                        for add in added_blocks.iter() {
+                            file_block_list.insert(add.name.to_owned());
+                        }
+
+                        echo_channel.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks));
+                    }
                     Ok(RunLoopMessage::Transaction(v)) => {
                         println!("[{}] Txn started", &program.name);
                         let start_ns = time::precise_time_ns();
@@ -3178,7 +3322,16 @@ impl ProgramRunner {
                             // println!("  -> {:?}", cur);
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
-                        txn.exec(&mut program, &mut persistence_channel);
+
+                        if let Some(ref meta_chan) = meta_channel {
+                            let mut meta_message = MetaMessage::Transaction{inputs: vec![], outputs: vec![]};
+                            txn.exec_meta(&mut program, &mut persistence_channel, Some(&mut meta_message));
+                            meta_chan.send(meta_message.collapse());
+                        } else {
+                            txn.exec(&mut program, &mut persistence_channel);
+                        }
+
+
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
                         println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
@@ -3194,9 +3347,6 @@ impl ProgramRunner {
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
                         println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
-                    }
-                    Ok(RunLoopMessage::Stop) => {
-                        break 'outer;
                     }
                     Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
                         let start_ns = time::precise_time_ns();

@@ -15,13 +15,17 @@ extern crate serde_json;
 extern crate serde;
 use serde_json::{Error};
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
+
+extern crate notify;
+use notify::{RecommendedWatcher, Watcher, RecursiveMode, DebouncedEvent};
+use std::time::Duration;
 
 extern crate time;
 
 extern crate eve;
 use eve::paths::EvePaths;
-use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Persister, JSONInternable};
+use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Persister, JSONInternable};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::textcompiler::{RawTextCompilerWatcher};
@@ -65,12 +69,12 @@ pub struct ClientHandler {
 }
 
 impl ClientHandler {
-    pub fn new(out:WSSender, router: Arc<Mutex<Router>>, eve_paths:&EvePaths, clean: bool, editor: bool, client_name:&str) -> ClientHandler {
+    pub fn new(client_name:&str, out:WSSender, router: Arc<Mutex<Router>>, eve_paths:&EvePaths, eve_flags:&EveFlags) -> ClientHandler {
         let router_channel = router.lock().expect("ERROR: Failed to lock router: Cannot clone channel.").deref().get_channel();
         let mut runner = ProgramRunner::new(client_name);
         let outgoing = runner.program.outgoing.clone();
         router.lock().expect("ERROR: Failed to lock router: Cannot register new client.").register(&client_name, outgoing.clone());
-        if !clean {
+        if !eve_flags.clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone(), false)));
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
@@ -78,7 +82,7 @@ impl ClientHandler {
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().expect("ERROR: Failed to lock router: Cannot init RemoteWatcher.").deref())));
-            if editor {
+            if eve_flags.editor {
                 let editor_watcher = EditorWatcher::new(&mut runner, router.clone(), out.clone(), eve_paths.libraries(), eve_paths.programs());
                 runner.program.attach(Box::new(editor_watcher));
             }
@@ -93,7 +97,62 @@ impl ClientHandler {
 
         let running = runner.run();
 
+        if eve_flags.watch {
+            println!("Starting file watcher!");
+            ClientHandler::make_file_notifier(eve_paths, &running);
+        }
+
         ClientHandler {out, running, client_name: client_name.to_owned(), router, router_channel }
+    }
+
+    fn make_file_notifier(eve_paths:&EvePaths, run_loop:&RunLoop) {
+        println!("WARN: @TODO: Make this die when the client DC's!");
+        let client_channel = run_loop.channel();
+        let files:Vec<String> = eve_paths.files.iter().map(|f| f.to_string()).collect();
+        let libraries = eve_paths.libraries().map(|s| s.to_owned());
+
+        thread::Builder::new().name("client file watcher".to_owned()).spawn(move || {
+            let (outgoing, incoming) = mpsc::channel();
+            let mut watcher:RecommendedWatcher = Watcher::new(outgoing, Duration::from_secs(1)).unwrap();
+
+            if let Some(path) = libraries {
+                watcher.watch(path, RecursiveMode::Recursive).unwrap();
+            }
+            for file in files.iter() {
+                watcher.watch(file, RecursiveMode::Recursive).unwrap();
+            }
+
+            loop {
+                match incoming.recv() {
+                    Ok(event) => {
+                        match event {
+                            DebouncedEvent::NoticeRemove(_) |
+                            DebouncedEvent::NoticeWrite(_) => {},
+                            DebouncedEvent::Error(err, ..) => {
+                                println!("Closing client file watcher due to unforeseen error: {:?}", err);
+                                break;
+                            },
+                            DebouncedEvent::Create(path) |
+                            DebouncedEvent::Chmod(path) |
+                            DebouncedEvent::Remove(path) |
+                            DebouncedEvent::Write(path) => {
+                                let file = path.to_str().expect("Unable to convert path buffer to string.");
+                                println!("File changed: '{}'..., hot-reloading.", file);
+                                if let Err(_) = client_channel.send(RunLoopMessage::Reload(file.to_owned())) {
+                                    println!("Closing client file watcher.");
+                                    break;
+                                }
+                            },
+                            DebouncedEvent::Rename(..) | // (old, new) (gotta pass in both)
+                            DebouncedEvent::Rescan => {
+                                unimplemented!();
+                            }
+                        };
+                    },
+                    Err(err) => println!("ERROR: {:?}", err)
+                }
+            }
+        });
     }
 }
 
@@ -167,7 +226,7 @@ fn http_server(address: String) -> std::thread::JoinHandle<()> {
     })
 }
 
-fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool, editor: bool) {
+fn websocket_server(address: String, eve_paths:&EvePaths, eve_flags:&EveFlags) {
     println!("{} Websocket Server at {}... ", BrightGreen.paint("Starting:"), address);
 
     // create a server program
@@ -176,7 +235,7 @@ fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool, editor: b
     let router = Arc::new(Mutex::new(Router::new(outgoing.clone())));
     router.lock().unwrap().register("server", outgoing.clone());
 
-    if !clean {
+    if !eve_flags.clean {
         runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
         runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone(), false)));
         runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
@@ -201,7 +260,7 @@ fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool, editor: b
     match listen(address, |out| {
         ix += 1;
         let client_name = format!("ws_client_{}", ix);
-        ClientHandler::new(out, router.clone(), eve_paths, clean, editor, &client_name)
+        ClientHandler::new(&client_name, out, router.clone(), eve_paths, eve_flags)
     }) {
         Ok(_) => {},
         Err(why) => println!("{} Failed to start Websocket Server: {}", BrightRed.paint("Error:"), why),
@@ -212,6 +271,12 @@ fn websocket_server(address: String, eve_paths:&EvePaths, clean: bool, editor: b
 // Main
 //-------------------------------------------------------------------------
 
+pub struct EveFlags {
+    editor: bool,
+    watch: bool,
+    clean: bool
+}
+
 fn main() {
     let matches = App::new("Eve")
                           .version("0.4")
@@ -221,6 +286,10 @@ fn main() {
                                .short("E")
                                .long("editor")
                                .help("Attaches an editor instance to each client program."))
+                          .arg(Arg::with_name("watch")
+                               .short("w")
+                               .long("watch")
+                               .help("Watches eve files for changes, and injects them into your running program."))
                           .arg(Arg::with_name("persist")
                                .short("s")
                                .long("persist")
@@ -268,10 +337,11 @@ fn main() {
 
     println!("");
 
-    let clean = matches.is_present("clean");
-    let editor = matches.is_present("editor");
+    let eve_flags = EveFlags{clean: matches.is_present("clean"),
+                             editor: matches.is_present("editor"),
+                             watch: matches.is_present("watch")};
 
-    let eve_paths = EvePaths::new(clean,
+    let eve_paths = EvePaths::new(eve_flags.clean,
                                   matches.values_of("EVE_FILES").map_or(vec![], |files| files.collect()),
                                   matches.value_of("server-file").map_or(vec![], |file| vec![file]),
                                   matches.value_of("persist"),
@@ -285,5 +355,5 @@ fn main() {
     let websocket_address = format!("{}:{}",address,wport);
 
     http_server(http_address);
-    websocket_server(websocket_address, &eve_paths, clean, editor);
+    websocket_server(websocket_address, &eve_paths, &eve_flags);
 }

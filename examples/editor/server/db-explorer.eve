@@ -4,12 +4,14 @@
 
 ~~~ eve
 commit
-  [#ui/row #db-explorer/root | children:
-    [#ui/row #db-explorer/query-box | children:
-      [#ui/token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
-      [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
-    [#ui/row #db-explorer/symbol-list]
-    [#ui/row #db-explorer/card-list]]
+  [#ui/row #editor/root | children:
+    [#ui/column #editor/timeline/root]
+    [#ui/column #db-explorer/root | children:
+      [#ui/row #db-explorer/query-box | children:
+        [#ui/token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
+        [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
+      [#ui/row #db-explorer/symbol-list]
+      [#ui/row #db-explorer/card-list]]]
 end
 ~~~
 

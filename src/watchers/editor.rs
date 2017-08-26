@@ -3,12 +3,15 @@ use self::ws::{Sender as WSSender, Message};
 
 extern crate serde_json;
 
+use rand::{self, Rng};
 use std::ops::Deref;
 use std::path::{PathBuf};
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{Sender};
+use std::sync::mpsc::{self, Sender};
+use std::thread::{self, JoinHandle};
+use std::collections::HashSet;
 use super::super::indexes::{WatchDiff};
-use super::super::ops::{Internable, Interner, RawChange, RunLoop, RunLoopMessage, ProgramRunner};
+use super::super::ops::{Internable, Interner, RawChange, RunLoop, RunLoopMessage, MetaMessage, ProgramRunner};
 
 use super::Watcher;
 use super::system::{SystemTimerWatcher, PanicWatcher};
@@ -29,6 +32,7 @@ fn to_s(string:&str) -> Internable {
 pub struct EditorWatcher {
     name: String,
     running: RunLoop,
+    meta_thread: thread::JoinHandle<()>,
     ws_out: WSSender,
     client_name: String,
     client_out: Sender<RunLoopMessage>,
@@ -82,10 +86,85 @@ impl EditorWatcher {
             Err(_) => panic!("Something has gone horribly awry in editor initialization."),
             _ => {}
         }
+
+        let (outgoing_meta, incoming_meta) = mpsc::channel();
+        client_runner.meta_channel = Some(outgoing_meta);
+        let meta_thread = EditorWatcher::make_meta_thread(&format!("{}-meta-receiver", editor_name), incoming_meta, editor_out.clone());
+
         EditorWatcher{name: "editor".to_string(),
-                      running, ws_out,
+                      running, meta_thread, ws_out,
                       client_name, client_out,
                       editor_name, editor_out}
+    }
+
+    pub fn make_meta_thread(name:&str, incoming: mpsc::Receiver<MetaMessage>, outgoing: Sender<RunLoopMessage>) -> thread::JoinHandle<()> {
+        thread::Builder::new().name(name.to_owned()).spawn(move || {
+
+            let TAG = Internable::String("tag".to_owned());
+            let ignored_tags:HashSet<Internable> = vec!["html/instance", "editor/tag-metrics"].iter().map(|str| Internable::String(str.to_string())).collect();
+
+            loop {
+                match incoming.recv() {
+                    Ok(MetaMessage::Transaction{inputs, outputs}) => {
+                        // println!("META MESSAGE:\n  inputs: [");
+                        // for input in inputs.iter() { println!("    {:?}", input); }
+                        // println!("  \n  outputs: [");
+                        // for output in outputs.iter() { println!("    {:?}", output); }
+                        // println!("  ]\n");
+                        let mut ignored_entities = HashSet::new();
+
+                        let event = format!("|{}|editor/event/meta-transaction", rand::thread_rng().next_u64());
+                        let event_id = Internable::String(event.to_owned());
+                        let mut changes:Vec<RawChange> = vec![
+                            make_change_str(event_id.clone(), "tag", "editor/event"),
+                            make_change_str(event_id.clone(), "tag", "editor/event/meta-transaction"),
+                        ];
+                        for input in inputs.iter() {
+                            let kind = if input.count > 0 { "add" } else { "remove" };
+
+                            // @FIXME: don't use debug print here.
+                            let input_id = Internable::String(format!("{}|input|{:?}", event, input.e));
+                            let av_id = Internable::String(format!("{}|input|{:?}|av|{:?}|{:?}", event, input.e, input.a, input.v));
+                            changes.push(make_change(event_id.clone(), "input", input_id.clone()));
+                            changes.push(make_change(input_id.clone(), "entity", input.e.clone()));
+                            changes.push(make_change(input_id.clone(), "av", av_id.clone()));
+                            changes.push(make_change(av_id.clone(), "attribute", input.a.clone()));
+                            changes.push(make_change(av_id.clone(), "value", input.v.clone()));
+                            changes.push(make_change_str(av_id.clone(), "type", kind));
+                        }
+
+                        // Figure out which entities to ignore.
+                        for output in outputs.iter() {
+                            if output.a == TAG && ignored_tags.contains(&output.v) {
+                                ignored_entities.insert(output.e.clone());
+                            }
+                        }
+
+                        for output in outputs.iter() {
+                            if ignored_entities.contains(&output.e) { continue; }
+                            let kind = if output.count > 0 { "add" } else { "remove" };
+
+                            // @FIXME: don't use debug print here.
+                            let output_id = Internable::String(format!("{}|output|{:?}", event, output.e));
+                            let av_id = Internable::String(format!("{}|output|{:?}|av|{:?}|{:?}", event, output.e, output.a, output.v));
+                            changes.push(make_change(event_id.clone(), "output", output_id.clone()));
+                            changes.push(make_change(output_id.clone(), "entity", output.e.clone()));
+                            changes.push(make_change(output_id.clone(), "av", av_id.clone()));
+                            changes.push(make_change(av_id.clone(), "attribute", output.a.clone()));
+                            changes.push(make_change(av_id.clone(), "value", output.v.clone()));
+                            changes.push(make_change_str(av_id.clone(), "type", kind));
+                        }
+                        outgoing.send(RunLoopMessage::Transaction(changes));
+
+                    },
+                    Ok(msg) => panic!("Unknown meta message: {:?}", msg),
+                    Err(_) => {
+                        println!("Closing meta channel.");
+                        break;
+                    }
+                }
+            }
+        }).unwrap()
     }
 }
 
@@ -106,4 +185,17 @@ impl Drop for EditorWatcher {
         let text = serde_json::to_string(&json!({"type": "unload-bundle", "bundle": "programs/editor", "client": &self.editor_name})).unwrap();
         self.ws_out.send(Message::Text(text)).unwrap();
     }
+}
+
+
+fn make_change(e: Internable, a: &str, v: Internable) -> RawChange {
+    RawChange{e, a: Internable::String(a.to_owned()), v, n: Internable::String("editor".to_owned()), count: 1}
+}
+
+fn make_change_str(e: Internable, a: &str, v: &str) -> RawChange {
+    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::String(v.to_owned()), n: Internable::String("editor".to_owned()), count: 1}
+}
+
+fn make_change_num(e: Internable, a: &str, v: f32) -> RawChange {
+    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::from_number(v), n: Internable::String("editor".to_owned()), count: 1}
 }
