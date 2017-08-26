@@ -15,13 +15,17 @@ extern crate serde_json;
 extern crate serde;
 use serde_json::{Error};
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
+
+extern crate notify;
+use notify::{RecommendedWatcher, Watcher, RecursiveMode, DebouncedEvent};
+use std::time::Duration;
 
 extern crate time;
 
 extern crate eve;
 use eve::paths::EvePaths;
-use eve::ops::{ProgramRunner, RunLoop, RawChange, Internable, Persister, JSONInternable};
+use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Persister, JSONInternable};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::textcompiler::{RawTextCompilerWatcher};
@@ -93,7 +97,62 @@ impl ClientHandler {
 
         let running = runner.run();
 
+        if eve_flags.watch {
+            println!("Starting file watcher!");
+            ClientHandler::make_file_notifier(eve_paths, &running);
+        }
+
         ClientHandler {out, running, client_name: client_name.to_owned(), router, router_channel }
+    }
+
+    fn make_file_notifier(eve_paths:&EvePaths, run_loop:&RunLoop) {
+        println!("WARN: @TODO: Make this die when the client DC's!");
+        let client_channel = run_loop.channel();
+        let files:Vec<String> = eve_paths.files.iter().map(|f| f.to_string()).collect();
+        let libraries = eve_paths.libraries().map(|s| s.to_owned());
+
+        thread::Builder::new().name("client file watcher".to_owned()).spawn(move || {
+            let (outgoing, incoming) = mpsc::channel();
+            let mut watcher:RecommendedWatcher = Watcher::new(outgoing, Duration::from_secs(1)).unwrap();
+
+            if let Some(path) = libraries {
+                watcher.watch(path, RecursiveMode::Recursive).unwrap();
+            }
+            for file in files.iter() {
+                watcher.watch(file, RecursiveMode::Recursive).unwrap();
+            }
+
+            loop {
+                match incoming.recv() {
+                    Ok(event) => {
+                        match event {
+                            DebouncedEvent::NoticeRemove(_) |
+                            DebouncedEvent::NoticeWrite(_) => {},
+                            DebouncedEvent::Error(err, ..) => {
+                                println!("Closing client file watcher due to unforeseen error: {:?}", err);
+                                break;
+                            },
+                            DebouncedEvent::Create(path) |
+                            DebouncedEvent::Chmod(path) |
+                            DebouncedEvent::Remove(path) |
+                            DebouncedEvent::Write(path) => {
+                                let file = path.to_str().expect("Unable to convert path buffer to string.");
+                                println!("File changed: '{}'..., hot-reloading.", file);
+                                if let Err(_) = client_channel.send(RunLoopMessage::Reload(file.to_owned())) {
+                                    println!("Closing client file watcher.");
+                                    break;
+                                }
+                            },
+                            DebouncedEvent::Rename(..) | // (old, new) (gotta pass in both)
+                            DebouncedEvent::Rescan => {
+                                unimplemented!();
+                            }
+                        };
+                    },
+                    Err(err) => println!("ERROR: {:?}", err)
+                }
+            }
+        });
     }
 }
 

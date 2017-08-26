@@ -2,7 +2,9 @@ extern crate time;
 extern crate walkdir;
 extern crate term_painter;
 
+use std::hash::Hash;
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::RandomState;
 use std::collections::hash_map::Entry;
 use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan, Internable,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
@@ -89,9 +91,21 @@ impl FunctionInfo {
 }
 
 lazy_static! {
+    static ref DETERMINISTIC_STATE: RandomState = RandomState::new();
+}
+
+pub fn make_det_hash_map<K: Hash + Eq, V>() -> HashMap<K, V> {
+    HashMap::with_hasher(DETERMINISTIC_STATE.clone())
+}
+
+pub fn make_det_hash_set<V: Hash + Eq>() -> HashSet<V> {
+    HashSet::with_hasher(DETERMINISTIC_STATE.clone())
+}
+
+lazy_static! {
     static ref FUNCTION_INFO: HashMap<String, FunctionInfo> = {
-        let mut m = HashMap::new();
-        let mut info = HashMap::new();
+        let mut m = make_det_hash_map();
+        let mut info = make_det_hash_map();
         info.insert("degrees".to_string(), 0);
         m.insert("math/sin".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
@@ -1312,7 +1326,7 @@ impl<'a> Node<'a> {
 
     pub fn sub_blocks(&self, interner:&mut Interner, parent:&mut Compilation) {
         // gather all the registers that we know about at the root
-        let mut parent_registers:HashSet<Field> = HashSet::new();
+        let mut parent_registers:HashSet<Field> = make_det_hash_set();
         for constraint in parent.constraints.iter() {
             parent_registers.extend(constraint.get_registers().iter());
         }
@@ -1322,11 +1336,11 @@ impl<'a> Node<'a> {
 
         let ref mut ancestor_constraints = parent.constraints;
 
-        let mut block_to_inputs = vec![HashSet::new(); parent.sub_blocks.len()];
+        let mut block_to_inputs = vec![make_det_hash_set(); parent.sub_blocks.len()];
         // go through the sub blocks to determine what their inputs are and generate their
         // outputs
         for (ix, sub_block) in parent.sub_blocks.iter_mut().enumerate() {
-            let mut sub_registers = HashSet::new();
+            let mut sub_registers = make_det_hash_set();
             sub_registers.extend(sub_block.get_all_registers().iter());
             block_to_inputs[ix].extend(parent_registers.intersection(&sub_registers).cloned());
             ancestor_constraints.push(self.sub_block_output(interner, sub_block, ix, &block_to_inputs[ix]));
@@ -1462,7 +1476,7 @@ impl<'a> Node<'a> {
 }
 
 pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
-    let mut related = HashSet::new();
+    let mut related = make_det_hash_set();
     for hay in haystack {
         let mut found = false;
         let outs = hay.get_output_registers();
@@ -1512,7 +1526,7 @@ pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>)
 
 pub fn get_input_constraints_transitive(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
     let mut transitive_needles = needles.clone();
-    let mut related = HashSet::new();
+    let mut related = make_det_hash_set();
     let mut changed = true;
     while changed {
         changed = false;
@@ -1571,7 +1585,7 @@ pub struct Compilation {
 
 impl Compilation {
     pub fn new(block_name:String) -> Compilation {
-        Compilation { mode: CompilationMode::Search, vars:HashMap::new(), var_values:HashMap::new(), unified_registers:HashMap::new(), provided_registers:HashMap::new(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false, errors: vec![] }
+        Compilation { mode: CompilationMode::Search, vars:make_det_hash_map(), var_values:make_det_hash_map(), unified_registers:make_det_hash_map(), provided_registers:make_det_hash_map(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false, errors: vec![] }
     }
 
     pub fn new_child(parent:&Compilation) -> Compilation {
@@ -1630,8 +1644,8 @@ impl Compilation {
     }
 
     pub fn get_inputs(&self, haystack: &Vec<Constraint>) -> HashSet<Field> {
-        let mut regs = HashSet::new();
-        let mut input_regs = HashSet::new();
+        let mut regs = make_det_hash_set();
+        let mut input_regs = make_det_hash_set();
         for needle in self.constraints.iter() {
             for reg in needle.get_registers() {
                 regs.insert(reg);
@@ -1650,13 +1664,13 @@ impl Compilation {
 
     pub fn finalize(&mut self) {
         self.reassign_registers();
-        let mut collapsed = HashSet::new();
+        let mut collapsed = make_det_hash_set();
         collapsed.extend(self.constraints.drain(..));
         self.constraints.extend(collapsed);
     }
 
     pub fn reassign_registers(&mut self) {
-        let mut regs = HashMap::new();
+        let mut regs = make_det_hash_map();
         let ref var_values = self.var_values;
         let mut ix = 0;
         for c in self.constraints.iter() {

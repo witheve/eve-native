@@ -19,7 +19,7 @@ use std::mem::transmute;
 use std::cmp::{self, Eq, PartialOrd};
 use std::collections::hash_map::{DefaultHasher, Entry};
 use std::hash::{Hash, Hasher};
-use std::iter::{Iterator};
+use std::iter::{Iterator, FromIterator};
 use std::fmt;
 use watchers::{Watcher};
 use std::sync::mpsc::{Sender, Receiver};
@@ -29,7 +29,8 @@ use serde::de::{Deserialize, Deserializer, Visitor};
 use std::error::Error;
 use std::thread::{self, JoinHandle};
 use std::io::{Write, BufReader, BufWriter};
-use std::fs::{OpenOptions, File};
+use std::fs::{OpenOptions, File, canonicalize};
+use std::path::Path;
 use std::f32::consts::{PI};
 use std::mem;
 use std::usize;
@@ -161,14 +162,14 @@ pub struct IntermediateChange {
 // Block
 //-------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum PipeShape {
     Scan(Interned, Interned, Interned),
     Intermediate(Interned),
     Remote(Interned),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub name: String,
     pub block_id: Interned,
@@ -288,6 +289,24 @@ impl Block {
         shapes
     }
 
+}
+
+impl PartialEq for Block {
+    fn eq(&self, other:&Self) -> bool {
+        if self.constraints.len() != other.constraints.len() { return false; }
+        let my_constraints:HashSet<Constraint> = HashSet::from_iter(self.constraints.iter().cloned());
+        let other_constraints:HashSet<Constraint> = HashSet::from_iter(other.constraints.iter().cloned());
+        my_constraints == other_constraints
+    }
+}
+impl Eq for Block {}
+
+impl Hash for Block {
+    fn hash<H: Hasher>(&self, state:&mut H) {
+        for constraint in self.constraints.iter() {
+            constraint.hash(state);
+        }
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -2394,6 +2413,7 @@ impl BlockInfo {
 
 pub enum RunLoopMessage {
     Stop,
+    Reload(String),
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
     CodeTransaction(Vec<Block>, Vec<String>),
@@ -3182,6 +3202,7 @@ impl ProgramRunner {
 
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
+        let echo_channel = outgoing.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
@@ -3189,11 +3210,17 @@ impl ProgramRunner {
         let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
         let meta_channel = self.meta_channel.map(|c| c.clone());
 
+        let mut file_blocks:HashMap<String, HashSet<String>> = HashMap::new();
+
         let thread = thread::Builder::new().name(program.name.to_owned()).spawn(move || {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                blocks.extend(parse_file(&mut program.state.interner, &path, true, debug_compile));
+                let my_blocks = parse_file(&mut program.state.interner, &path, true, debug_compile);
+                let canonical = Path::new(&path).canonicalize().unwrap();
+                let resolved_path = canonical.to_str().unwrap();
+                file_blocks.insert(resolved_path.to_owned(), my_blocks.iter().map(|block| block.name.to_owned()).collect());
+                blocks.extend(my_blocks);
             }
             let mut end_ns = time::precise_time_ns();
             println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
@@ -3212,6 +3239,54 @@ impl ProgramRunner {
 
             'outer: loop {
                 match program.incoming.recv() {
+                    Ok(RunLoopMessage::Stop) => {
+                        break 'outer;
+                    }
+                    Ok(RunLoopMessage::Reload(path)) => {
+                        let canonical = Path::new(&path).canonicalize().unwrap();
+                        let resolved_path = canonical.to_str().unwrap();
+                        println!("Gotta reload {}!", resolved_path);
+                        let mut file_block_list = file_blocks.entry(resolved_path.to_owned()).or_insert_with(|| HashSet::new());
+                        let mut my_blocks = parse_file(&mut program.state.interner, resolved_path, true, debug_compile);
+                        let mut new_blocks:HashSet<&Block> = my_blocks.iter().collect();
+                        let mut old_blocks:HashSet<&Block> = file_block_list.iter()
+                            .map(|name| {
+                                if let Some(ix) = program.block_info.block_names.get(name) {
+                                    program.block_info.blocks.get(*ix)
+                                } else {
+                                    None
+                                }
+                            })
+                            .filter(|maybe_block| maybe_block.is_some())
+                            .map(|maybe_block| maybe_block.unwrap())
+                            .collect();
+
+                        for block in new_blocks.iter() {
+                            let mut state = DefaultHasher::new();
+                            block.hash(&mut state);
+                            println!("NEW BLOCK: {:?}", state.finish())
+                        }
+                        for block in old_blocks.iter() {
+                            let mut state = DefaultHasher::new();
+                            block.hash(&mut state);
+                            println!("OLD BLOCK: {:?}", state.finish())
+                        }
+
+                        let mut added = &new_blocks - &old_blocks;
+                        let mut removed = &old_blocks - &new_blocks;
+
+                        let added_blocks:Vec<Block> = added.drain().map(|block| block.clone()).collect();
+                        let removed_blocks:Vec<String> = removed.drain().map(|block| block.name.to_owned()).collect();
+
+                        for remove in removed_blocks.iter() {
+                            file_block_list.remove(remove);
+                        }
+                        for add in added_blocks.iter() {
+                            file_block_list.insert(add.name.to_owned());
+                        }
+
+                        echo_channel.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks));
+                    }
                     Ok(RunLoopMessage::Transaction(v)) => {
                         println!("[{}] Txn started", &program.name);
                         let start_ns = time::precise_time_ns();
@@ -3245,9 +3320,6 @@ impl ProgramRunner {
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
                         println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
-                    }
-                    Ok(RunLoopMessage::Stop) => {
-                        break 'outer;
                     }
                     Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
                         let start_ns = time::precise_time_ns();
