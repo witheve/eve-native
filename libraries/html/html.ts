@@ -98,6 +98,7 @@ export class HTML extends Library {
     this._container.appendChild(this._syntheticStyleContainer);
     this._dummy = document.createElement("div");
 
+    window.addEventListener("resize", this._resizeEventHandler("resize-window"));
     window.addEventListener("click", this._mouseEventHandler("click"));
     window.addEventListener("dblclick", this._mouseEventHandler("double-click"));
     window.addEventListener("mousedown", this._mouseEventHandler("mouse-down"));
@@ -403,7 +404,28 @@ export class HTML extends Library {
   // Event Handlers
   //////////////////////////////////////////////////////////////////////
 
-    _mouseEventHandler(tagname:string) {
+  _resizeTimeout: any; // @FIXME: what's up with this.
+  _resizeEventHandler(tagname:string) {
+    return (event:Event) => {
+      if(!this._resizeTimeout) {
+        this._resizeTimeout = setTimeout(() => {
+          this._resizeTimeout = null;
+          let width = window.innerWidth || document.documentElement.clientWidth;
+          let height = window.innerHeight || document.documentElement.clientHeight;
+          let eventId = createId();
+          let eavs:RawEAV[] = [
+            [eventId, "tag", "html/event"],
+            [eventId, "tag", `html/event/${tagname}`],
+            [eventId, "width", width],
+            [eventId, "height", height]
+          ];
+          this._sendEvent(eavs);
+        }, 1000 / 5);
+      }
+    };
+  }
+
+  _mouseEventHandler(tagname:string) {
     return (event:MouseEvent) => {
       let {target} = event;
 
@@ -449,7 +471,7 @@ export class HTML extends Library {
     };
   }
 
-    _captureContextMenuHandler() {
+  _captureContextMenuHandler() {
     return (event:MouseEvent) => {
       let captureContextMenu = false;
       let current:Element|null = event.target as Element;
