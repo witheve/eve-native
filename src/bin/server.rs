@@ -143,7 +143,7 @@ impl ClientHandler {
                                     break;
                                 }
                             },
-                            DebouncedEvent::Rename | // (old, new) (gotta pass in both)
+                            DebouncedEvent::Rename(..) | // (old, new) (gotta pass in both)
                             DebouncedEvent::Rescan => {
                                 unimplemented!();
                             }
