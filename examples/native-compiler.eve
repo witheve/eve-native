@@ -595,25 +595,142 @@ Intermediate Representation (IR)
 With a set of optimized chains, we can now generate a language agnostic IR tree
 that represents the optimized program.
 
+    search
+      [#program]
+    bind
+      [#ir/main]
+    end
+
 
 Code Generation
 ------------------------------------------------------
 
 From the IR we can generate actual source code in some language that we can then
-execute. At this point, code generation is a largely mechanical process of
+execute. At this point, code generation is largely a mechanical process of
 looking at IR nodes and constructing code strings out of them.
 
     search
       (ir, js) =
-        if ir = [#ir/symbol name] then (ir, name)
+        if ir = [#ir/symbol name_js] then (ir, name_js)
         if ir = [#ir/string str] then (ir, "\"{{str}}\"")
         if ir = [#ir/number num] then (ir, "{{num}}")
         if ir = [#ir/infix op left right] then (ir, "{{left.js}} {{op}} {{right.js}}")
         if ir = [#ir/let name value] then (ir, "var {{name.js}} = {{value.js}};")
-        if ir = [#ir/set symbol attribute value] then (ir, "{{symbol.js}}.{{attribute.javscript}} = {{value.js}};")
+        if ir = [#ir/set symbol attribute value] then (ir, "{{symbol.js}}.{{attribute.js}} = {{value.js}};")
         if ir = [#ir/get symbol attribute] then (ir, "{{symbol.js}}.{{attribute.js}}")
+        if ir = [#ir/do items_js] then (ir, items_js)
+        if ir = [#ir/and items_js] then (ir, "({{items_js}})")
+        if ir = [#ir/or items_js] then (ir, "({{items_js}})")
+        if ir = [#ir/call func_js args_js] then (ir, "{{func_js}}({{args_js}})")
+        if ir = [#ir/create-struct symbol args_js] then (ir, "{{symbol.js}}_struct({{args_js}})")
+        if ir = [#ir/define-struct symbol args_js setters_js]
+          then (ir, "var all_{{symbol.js}} = [];
+                     function {{symbol.js}}_struct({{args_js}}) {
+                        {{setters_js}}
+                        all_{{symbol.js}}.push(this);
+                        return this;
+                     }")
+        if ir = [#ir/if cond items_js]
+          then (ir, "if( {{cond.js}} ) {
+                        {{items_js}}
+                     }")
+        if ir = [#ir/range symbol start stop items_js]
+          then (ir, "for(var {{symbol.js}} = {{start.js}}; {{symbol.js}} <= {{stop.js}}; {{symbol.js}}++) {
+                        {{items_js}}
+                     }")
+        if ir = [#ir/for symbol tag-name items_js]
+          then (ir, "for(var {{symbol.js}} of all_{{tag-name.js}}) {
+                        {{items_js}}
+                     }")
+        if ir = [#ir/on symbol tag-name items_js]
+          then (ir, "function on_{{tag-name.js}}({{symbol.js}})
+                        {{items_js}}
+                     }")
+        if ir = [#ir/main items_js]
+          then (ir, "(function main()
+                        {{items_js}}
+                     })()")
     bind
       ir <- [js]
+    end
+
+For symbols, we sadly can't just take the name, we have to make sure that any
+characters that aren't allowed in JS symbols are replaced with _
+
+    search
+      ir = [#ir/symbol name]
+      name2 = string/replace[text:name replace:"-" with:"_"]
+      name3 = string/replace[text:name2 replace:"/" with:"_"]
+      name_js = string/replace[text:name3 replace:" " with:"_"]
+    bind
+      ir <- [name_js]
+    end
+
+All of the ir nodes that are wrappers around a set of items (e.g. do) need to
+have their items concatenated into a string with each item on its own line.
+
+    search
+      ir = if ir = [#ir/do item] then ir
+           if ir = [#ir/and item] then ir
+           if ir = [#ir/or item] then ir
+           if ir = [#ir/if item] then ir
+           if ir = [#ir/range item] then ir
+           if ir = [#ir/for item] then ir
+           if ir = [#ir/on item] then ir
+           if ir = [#ir/main item] then ir
+      items_js = gather/string-join[for:ir.item value:ir.item separator:"\n" per:node]
+    bind
+      node <- [items_js]
+    end
+
+For functions we may need to map an eve function name to a particular javascript
+function and we also need to gather the arguments to the function and
+concatenate them together.
+
+    commit
+      [#function-mapping eve: "random/number" js: "Math.random"]
+      [#function-mapping eve: "math/sin" js: "Math.sin"]
+      [#function-mapping eve: "math/cos" js: "Math.cos"]
+    end
+
+    search
+      ir = [#ir/call func]
+      func_js = if [#function-mapping eve:func js] then js
+                else func.js
+    bind
+      ir <- [func_js]
+    end
+
+    search
+      ir = [#ir/call arg]
+      args_js = gather/string-join[for:arg value:arg.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
+    end
+
+Structs also have args that need to be concatenated together as well as the
+setters for define-struct
+
+    search
+      ir = [#ir/define-struct field:[#ir/field name]]
+      args_js = gather/string-join[for:name value:name.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
+    end
+
+    search
+      ir = [#ir/define-struct field:[#ir/field name]]
+      setter = "  this.{{name.js}} = {{name.js}}"
+      setters_js = gather/string-join[for:name value:setter separator:"\n" per:ir]
+    bind
+      ir <- [setters_js]
+    end
+
+    search
+      ir = [#ir/create-struct args:[#ir/field name value]]
+      args_js = gather/string-join[for:name value:value.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
     end
 
 Drawing
@@ -649,6 +766,8 @@ Test
     end
 
     commit
+      [#program]
+
       r1 = [#register block:b3 offset:1]
       r2 = [#register block:b3 offset:2]
       r3 = [#register block:b3 offset:3]
