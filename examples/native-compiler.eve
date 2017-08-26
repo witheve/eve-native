@@ -223,6 +223,16 @@ scans and inserts.
       [#tag-info tag-name]
     end
 
+We also want to capture all the attributes we've seen for each tag.
+
+    search
+      [#block-tag e tag-name]
+      [#insert e a]
+      info = [#tag-info tag-name]
+    bind
+      info.attribute += [#attribute a]
+    end
+
 
 Blocks and constraints
 ------------------------------------------------------
@@ -596,9 +606,22 @@ With a set of optimized chains, we can now generate a language agnostic IR tree
 that represents the optimized program.
 
     search
-      [#program]
+      program = [#program]
     bind
-      [#ir/main]
+      [#ir/main program]
+    end
+
+    search
+      tag-info = [#tag-info tag-name]
+    bind
+      [#ir/define-struct tag-info symbol: [#ir/symbol name:tag-name]]
+    end
+
+    search
+      ir = [#ir/define-struct tag-info]
+      attribute = tag-info.attribute
+    bind
+      ir.field += [#ir/field name:[#ir/symbol name:attribute.a]]
     end
 
 
@@ -720,7 +743,7 @@ setters for define-struct
 
     search
       ir = [#ir/define-struct field:[#ir/field name]]
-      setter = "  this.{{name.js}} = {{name.js}}"
+      setter = "  this.{{name.js}} = {{name.js}};"
       setters_js = gather/string-join[for:name value:setter separator:"\n" per:ir]
     bind
       ir <- [setters_js]
@@ -757,6 +780,12 @@ Drawing
         [#ui/text text: "OUTPUT: {{block}} - {{tag-name}} {{a}} {{domain.type}}"]]
     end
 
+    search
+      [#ir/define-struct js]
+    bind
+      [#html/element tagname:"pre" text:js]
+    end
+
 
 Test
 ------------------------------------------------------
@@ -778,6 +807,7 @@ Test
                  params: [index:1 value:r2] [index:2 value:1]
                  output:r3]
       [#insert block:b3 e:r1 a:"score" v:r3]
+      [#insert block:b3 e:r1 a:"meep" v:"moop"]
 
       b4r1 = [#register block:b4 offset:1]
       b4 = [#block name:"b4" | constraint:
