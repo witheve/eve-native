@@ -1,7 +1,6 @@
 # Setlist Aggregator
 
 
-
 This app takes a set of concerts, and accesses the setlist.fm api to retrieve
 the setlist that was played at that concert. This is cross-referenced with
 the MS Groove API to create playlists for those concerts.
@@ -9,57 +8,43 @@ the MS Groove API to create playlists for those concerts.
 The app configuration
 
 commit
-  [#setlist-app
-    groove-client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba"
-    groove-client-secret: "UskJMTfCRNffOLbuBnGSBb2"
-    groove-endpoint: "https://music.xboxlive.com"
-    setlist-api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275"
-    setlist-endpoint: "https://api.setlist.fm/rest"]
+  [#setlist-app groove: [#groove client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba" client-secret: "UskJMTfCRNffOLbuBnGSBb2" endpoint: "https://music.xboxlive.com" redirect-uri: "http://localhost:8081"]
+                setlist-fm: [#setlist-fm api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275" endpoint: "https://api.setlist.fm/rest"]]
 end
 
 
+# Groove API
 
-## Logging-in to MS Groove
+The groove API is configured with a record tagged `#groove` with the following shape:
 
-Logging in is kicked off by clicking the login button.
+`[#groove client-id client-secret endpoint redirect-uri]`
+
+
+## Logging Into Groove
+
+Commit a `#groove/login` to initiate the login process. This redirects to a 
+login portal, which asks the user to authorize access to Eve. Once the user
+grants access, the browser is redirect back to the supplied `redirect-uri`.
 
 search
-  not([#setlist-app user])
-bind
-  [#ui/button #groove-login text: "Login to Groove"]
-end
-
-Clicking this button redirects to a setlist login portal, where the user is 
-prompted to give the app access to his or her account.
-
-search
-  [#html/event/click element: [#groove-login]]
-  [#setlist-app groove-client-id]
+  [#groove/login]
+  [#groove client-id client-secret redirect-uri]
   response-type = "token"
   scopes = string/url-encode[text: "MicrosoftMediaServices.GrooveApiAccess offline_access"]
-  redirect-uri = string/url-encode[text: "http://localhost:8081"]
-  address = "https://login.live.com/oauth20_authorize.srf/?client_id={{groove-client-id}}&response_type={{response-type}}&redirect_uri={{redirect-uri}}&scope={{scopes}}"
+  encoded-redirect-uri = string/url-encode[text: redirect-uri]
+  address = "https://login.live.com/oauth20_authorize.srf/?client_id={{client-id}}&response_type={{response-type}}&redirect_uri={{encoded-redirect-uri}}&scope={{scopes}}"
 commit
-  [#html/redirect #req url: address]
+  [#html/redirect url: address]
 end
 
 A successful login will return to the app an access token
 
 search
-  [#html/event/page-show url: [#html/url query: [#html/url/query key: "access_token" value: access-token]]]
-  app = [#setlist-app groove-client-id groove-client-secret]
-  //redirect-uri = string/url-encode[text: "http://localhost:8081/#setlist-callback"]
-  //auth-token = string/encode[text: "{{groove-client-id}}:{{groove-client-secret}}"]
-  //body = "grant_type=authorization_code&code={{code}}&redirect_uri={{redirect-uri}}"
-  //content-length = string/length[text: body]
+  [#html/url query: [#html/url/query key: "access_token" value: access-token]]
+  groove = [#groove]
 commit
-  app.groove-access-token := access-token
-  //[#http/request #setlist-token address: "https://accounts.setlist.com/api/token" method: "POST" body headers: 
-    //[#http/header key: "Authorization" value: "Basic {{auth-token}}"]
-    //[#http/header key: "Content-Type" value: "application/x-www-form-urlencoded"]
-    //[#http/header key: "Content-Length" value: "{{content-length}}"]]
+  groove.access-token := access-token
 end
-
 
 
 ## Getting Groove User Data
@@ -67,89 +52,165 @@ end
 With an access token in hand, we can use that to get user-specific information.
 
 search
-  [#setlist-app groove-access-token]
+  [#groove/get-user]
+  [#groove access-token endpoint]
 commit
-  [#http/request #groove-profile address: "https://music.xboxlive.com/1/user/music/profile" method: "GET" headers: 
-    [#http/header key: "Authorization" value: "Bearer  {{groove-access-token}}"]]
+  [#http/request #groove-profile address: "{{endpoint}}/1/user/music/profile" method: "GET" headers: 
+    [#http/header key: "Authorization" value: "Bearer  {{access-token}}"]]
 end
 
 search
   [#groove-profile response]
-  setlist = [#setlist-app]
 commit
-  setlist.user := [#setlist/user]
-  //[#json/decode #groove-profile json: response.body]
+  [#json/decode #groove-profile json: response.body]
 end
 
-Create a user record on the app
+Create a Groove user from the response
 
 search
   [#groove-profile json-object: profile]
-  setlist = [#setlist-app]
 commit
-  setlist.user := [#setlist/user]
+  [#groove/user region: profile.Culture subscription: profile.HasSubscription]
+end
+
+
+## Search Groove
+
+search
+  [#groove/search-track query]
+  [#groove access-token endpoint]
+  artist = string/replace[text: query replace: " " with: "+"]
+  address = "{{endpoint}}/1/content/music/search?q={{query}}&filters=tracks"
+commit
+  [#http/request #groove-search address headers: 
+    [#http/header key: "Authorization" value: "Bearer {{access-token}}"]]
+end
+
+search
+  [#groove-search response: [body]]
+commit
+  [#json/decode #groove-search json: body]
+end
+
+search
+  [#groove-search json-object]
+  track = [Id Name ReleaseDate Duration]
+commit
+  [#track name: Name groove-id: Id duration: Duration image: track.ImageUrl]
+end
+
+
+## Get a full song strem
+
+search
+  [#groove/full-stream track-id]
+  [#groove access-token endpoint]
+  address = "{{endpoint}}/1/content/{{track-id}}/stream?clientInstanceId=2E19AC92-8600-11E7-8200-4CC9641576C9"
+commit  
+  [#http/request #groove-get-song track-id address headers: 
+    [#http/header key: "Authorization" value: "Bearer {{access-token}}"]]
+end
+
+search
+  [#groove-get-song track-id response: [body]]
+commit
+  [#json/decode #groove-get-song track-id json: body]
+end
+
+search
+  [#groove-get-song track-id json-object]
+  groove-stream = [#groove/full-stream track-id]
+commit
+  groove-stream <- [stream: json-object.Url content-type: json-object.ContentType]
 end
 
 
 
-## The User Interface
+# The User Interface
+
+Logging in is kicked off by clicking the login button.
 
 search
-  [#setlist-app user: [name e-mail]]
+  not([#groove/user])
 bind
-  [#html/div text: "Welcome {{name}}!"]
+  [#ui/button #groove-login text: "Login to Groove"]
 end
+
+search
+  [#html/event/click element: [#groove-login]]
+commit
+  [#groove/login]
+end
+
+When we've gotten an access token, we get get the user profile.
+
+search
+  [#groove access-token]
+commit
+  [#groove/get-user]
+end
+
+## Searching for tracks
 
 commit
   [#html/div children: 
-    [#ui/input #artist-name]
-    [#ui/button #search-artist text: "Search"]]
-end
-
-commit
-  [#ui/button #get-song text: "Get a song"]
+    [#ui/input #track-search]
+    [#ui/button #track-search/button text: "Search"]]
 end
 
 search
-  [#html/event/click element: [#get-song]]
-  [#setlist-app groove-access-token groove-endpoint]
-  track-id = "music.8D6KGWZQ8TPR"
-  address = "{{groove-endpoint}}/1/content/{{track-id}}/stream?clientInstanceId=2E19AC92-8600-11E7-8200-4CC9641576C9"
+  [#track-search value]
+  [#html/event/click element: [#track-search/button]]
 commit
-  [#http/request #get-song-req address headers: 
-    [#http/header key: "Authorization" value: "Bearer {{groove-access-token}}"]]
+  [#groove/search-track query: value]
 end
 
 search
-  [#get-song-req response: [body]]
-commit
-  [#json/decode #get-song-req json: body]
+  track = [#track name image duration]
+bind
+  [#html/div track children:
+    [#html/img track src: image style: [width: "100px" height: "100px"]]
+    [#html/div track text: "{{name}} - {{duration}}"]
+    [#html/div #stream-control track]
+    [#html/button #groove/stream-player/playback-control track text: "Play"]]
 end
 
 search
-  [#get-song-req json-object: song]
+  [#html/event/click element: [#play-track track]]
+  track = [#track groove-id]
+  app = [#setlist-app]
 commit
-  [#html/div children: 
-    [#html/stream #song style: [display: "none"] source: song.Url type: song.ContentType]]
-end
-
-
-search
-  [#song #ready]
-commit
-  [#html/button #play-song text: "Play"]
+  app.playing := track
+  [#groove/full-stream track-id: groove-id]
 end
 
 search
-  [#html/event/click element]
-  element = [#play-song]
-  song = [#song]
-  (play, text) = if song = [play: "true"] then ("false","Play")
-                 if song = [play: "false"] then ("true","Pause")
+  [#groove/full-stream track-id stream content-type]
+  track = [#track groove-id: track-id]
+commit
+  track.stream := stream
+  track.content-type := content-type
+end
+
+search
+  stream-div = [#stream-control track]
+  [#setlist-app playing]
+  track = playing
+commit
+  [#html/div text: "Hello World"]
+  //stream-div.children += [#html/stream #groove/stream-player track play: "true" controls: "true" source: track.stream type: track.content-type]
+end
+
+search
+  [#html/event/click element: control]
+  control = [#groove/stream-player/playback-control track]
+  player = [#groove/stream-player track]
+  (play, text) = if player = [play: "true"] then ("false","Play")
+                 if player = [play: "false"] then ("true","Pause")
                  else ("true","Pause")
 commit
-  song.play := play
-  element.text := text
+  player.play := play
+  control.text := text
 end
 
 
@@ -179,46 +240,24 @@ commit
   [#html/div text: track-id] 
 end
 
+## seasrch setlist.fm
 
-
-## Search Groove
-
-search
-  [#setlist-app groove-access-token groove-endpoint]
-  [#html/event/click element: [#search-artist]]
-  [#artist-name value]
-  artist = string/replace[text: value replace: " " with: "+"]
+//search
+  [#disable]
   //address = "{{setlist-endpoint}}/1.0/search/artists?artistName={{artist}}"
   //address = "{{setlist-endpoint}}/1.0/search/setlists?artistName={{artist}}&date=16-08-2017&p=1"
-  address = "{{groove-endpoint}}/1/content/music/search?q={{artist}}"
-commit
-  [#http/request #groove-search address headers: 
-    [#http/header key: "Authorization" value: "Bearer {{groove-access-token}}"]]
+//commit
   //[#http/request #setlist-fm artist: value, address headers: 
       //[#http/header key: "x-api-key" value: setlist-api-key]
       //[#http/header key: "Accept" value: "application/json"]]
-end
+//end
 
-search
-  [#groove-search #foo response: [body]]
-commit
-  [#json/decode #groove-search json: body]
-end
-
-search
-  [#groove-search json-object: setlistsearch]
-  //setlistsearch.artist.value.name = artist
-  //artist = setlistsearch.artist.value
-commit
-  [#html/div text: "{{setlistsearch.tracks}}"] 
-end
 
 
 
 ## Misc Diagnostics
 
 search
-  [#disable]
   [#http/request/error error]
 commit
   [#html/div text: error]
@@ -226,32 +265,29 @@ end
 
 search
   [#disable]
-  [#http/response body]
+  [#http/request/finished request]
 commit
-  [#html/div text: "THIS IS PART OF HTE BODY {{body}}"]
+  [#html/div request text: "***Finished*** {{request}}"]
 end
 
 search
   [#disable]
-  q = [#http/body-chunk chunk request index]
+  q = [#http/response body]
 commit
-  [#html/div request children: 
-    [#html/div request text: index]
-    [#html/div request text: chunk]]
+  [#html/div text: "THIS IS THE BODY: {{body}}"]
+  //[#json/decode json: body]
 end
 
 search
   [#disable]
-  [#http/request/done request]
+  [#json/decode json-object]
 commit
-  [#html/div request text: "DONE!!@#!@#!@"]
+  [#html/div text: "{{json-object.Tracks.Items.value.Name}} {{json-object.Tracks.Items.value.Album.Name}}  - {{json-object.Tracks.Items.value.Id}}"] 
 end
 
 search
-  [#disable]
-  [#http/fully-body body]
-commit
-  [#html/div children: 
-    [#html/div text: "FULL TEXT"]
-    [#html/div text: body]]
+  request = [#http/request]
+  not(request = [#finished])
+bind
+  [#html/div text: "Processing request..."]
 end
