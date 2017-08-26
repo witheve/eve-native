@@ -116,7 +116,7 @@ impl Change {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct RawChange {
     pub e: Internable,
     pub a: Internable,
@@ -136,6 +136,15 @@ impl RawChange {
            transaction: 0,
            count: self.count,
        }
+    }
+}
+
+impl Ord for RawChange {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.e != other.e { self.e.cmp(&other.e) }
+        else if self.a != other.a { self.a.cmp(&other.a) }
+        else if self.v != other.v { self.v.cmp(&other.v) }
+        else { cmp::Ordering::Equal }
     }
 }
 
@@ -597,7 +606,7 @@ pub enum Internable {
 impl PartialOrd for Internable {
     fn partial_cmp(&self, rhs:&Self) -> Option<cmp::Ordering> {
         let priority = self.to_sort_priority();
-        let right_priority = self.to_sort_priority();
+        let right_priority = rhs.to_sort_priority();
         if priority != right_priority {
             return Some(priority.cmp(&right_priority));
         }
@@ -2391,6 +2400,44 @@ pub enum RunLoopMessage {
     RemoteCodeTransaction(Vec<PortableBlock>, Vec<String>)
 }
 
+#[derive(Debug, Clone)]
+pub enum MetaMessage {
+    Transaction{inputs: Vec<RawChange>, outputs: Vec<RawChange>}
+}
+impl MetaMessage {
+    pub fn collapse(mut self) -> MetaMessage {
+        match self {
+            MetaMessage::Transaction{mut inputs, mut outputs} => {
+                MetaMessage::Transaction{
+                    inputs: MetaMessage::collapse_changes(inputs),
+                    outputs: MetaMessage::collapse_changes(outputs)
+                }
+            }
+            _ => self
+        }
+    }
+
+    fn collapse_changes(mut vec: Vec<RawChange>) -> Vec<RawChange> {
+        let mut neue = vec![];
+        if vec.len() == 0 { return neue; }
+        vec.sort();
+
+        let mut prev = vec.remove(0);
+        for cur in vec.drain(..) {
+            if cur.e != prev.e || cur.a != prev.a || cur.v != prev.v {
+                if prev.count != 0 { neue.push(prev); }
+                prev = cur;
+                continue;
+            } else {
+                prev.count += cur.count;
+            }
+        }
+        if prev.count != 0 { neue.push(prev); }
+        neue
+    }
+}
+
+
 pub struct Program {
     pub name: String,
     pub state: RuntimeState,
@@ -2636,6 +2683,10 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
 }
 
 fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
+    transaction_flow_meta(commits, frame, iter_pool, program, None)
+}
+
+fn transaction_flow_meta(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program, maybe_meta: Option<&mut MetaMessage>) {
     {
         let mut pipes = HashSet::new();
         let mut next_frame = true;
@@ -2658,7 +2709,10 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // separation of insert and remove.
                     if change.count > 0 {
                         if program.state.distinct_index.insert_active(change.e, change.a, change.v, change.round) {
-                            program.state.index.insert(change.e, change.a, change.v);
+                            let added = program.state.index.insert(change.e, change.a, change.v);
+                            if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                                if added { outputs.push(change.to_raw(&program.state.interner)); }
+                            }
                         }
                     }
                     pipes.clear();
@@ -2674,10 +2728,17 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // for AB and BA, they find the same values as when they were added.
                     if change.count < 0 {
                         if program.state.distinct_index.remove_active(change.e, change.a, change.v, change.round) {
-                            program.state.index.remove(change.e, change.a, change.v);
+                            let removed = program.state.index.remove(change.e, change.a, change.v);
+                            if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                                if removed { outputs.push(change.to_raw(&program.state.interner)); }
+                            }
+
                         }
                     }
                     if current_round == 0 { commits.push(change.clone()); }
+                    if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                        outputs.push(change.to_raw(&program.state.interner));
+                    }
                 }
                 intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, current_round, &mut max_round);
                 max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
@@ -2721,10 +2782,16 @@ impl<'a> Transaction<'a> {
     }
 
     pub fn exec(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>) {
+        self.exec_meta(program, persistence_channel, None);
+    }
+    pub fn exec_meta(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>, maybe_meta: Option<&mut MetaMessage>) {
+        if let Some(&mut MetaMessage::Transaction{ref mut inputs, ..}) = maybe_meta {
+            inputs.extend(self.changes.iter().map(|c| c.to_raw(&program.state.interner)));
+        }
         for change in self.changes.iter() {
             program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, self.iter_pool, program);
+        transaction_flow_meta(&mut self.commits, &mut self.frame, self.iter_pool, program, maybe_meta);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -3091,12 +3158,13 @@ pub struct ProgramRunner {
     paths: Vec<String>,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
-    debug_modes: HashSet<DebugMode>
+    debug_modes: HashSet<DebugMode>,
+    pub meta_channel: Option<Sender<MetaMessage>>
 }
 
 impl ProgramRunner {
     pub fn new(name:&str) -> ProgramRunner {
-        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![], debug_modes: HashSet::new() }
+        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![], debug_modes: HashSet::new(), meta_channel: None }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -3119,6 +3187,7 @@ impl ProgramRunner {
         let mut persistence_channel = self.persistence_channel;
         let initial_commits = self.initial_commits;
         let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
+        let meta_channel = self.meta_channel.map(|c| c.clone());
 
         let thread = thread::Builder::new().name(program.name.to_owned()).spawn(move || {
             let mut blocks = vec![];
@@ -3151,7 +3220,16 @@ impl ProgramRunner {
                             // println!("  -> {:?}", cur);
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
-                        txn.exec(&mut program, &mut persistence_channel);
+
+                        if let Some(ref meta_chan) = meta_channel {
+                            let mut meta_message = MetaMessage::Transaction{inputs: vec![], outputs: vec![]};
+                            txn.exec_meta(&mut program, &mut persistence_channel, Some(&mut meta_message));
+                            meta_chan.send(meta_message.collapse());
+                        } else {
+                            txn.exec(&mut program, &mut persistence_channel);
+                        }
+
+
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
                         println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());

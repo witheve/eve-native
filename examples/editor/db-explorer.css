@@ -1,4 +1,7 @@
-.db-explorer-root {  display: flex; max-width: 900px; max-height: 100vh; flex-direction: column; }
+body { max-height: 100vh; }
+.program-pane { overflow-y: auto; }
+
+.db-explorer-root {  display: flex; max-width: 900px; max-height: 100vh; }
 
 
 /* Query */
