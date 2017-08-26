@@ -945,7 +945,7 @@ impl IntermediateIndex {
                             let mut cur_aggregate = AggregateEntry::Empty;
                             action(&mut cur_aggregate, &value, &projection);
                             // add an add for the new value
-                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), projection_len, round, 1));
+                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), 0, round, 1));
                             ent.insert(cur_aggregate);
                         }
                     }
