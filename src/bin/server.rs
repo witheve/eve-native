@@ -99,13 +99,13 @@ impl ClientHandler {
 
         if eve_flags.watch {
             println!("Starting file watcher!");
-            ClientHandler::make_watcher(eve_paths, &running);
+            ClientHandler::make_file_notifier(eve_paths, &running);
         }
 
         ClientHandler {out, running, client_name: client_name.to_owned(), router, router_channel }
     }
 
-    fn make_watcher(eve_paths:&EvePaths, run_loop:&RunLoop) {
+    fn make_file_notifier(eve_paths:&EvePaths, run_loop:&RunLoop) {
         println!("WARN: @TODO: Make this die when the client DC's!");
         let client_channel = run_loop.channel();
         let files:Vec<String> = eve_paths.files.iter().map(|f| f.to_string()).collect();
@@ -135,7 +135,6 @@ impl ClientHandler {
                             DebouncedEvent::Create(path) |
                             DebouncedEvent::Chmod(path) |
                             DebouncedEvent::Remove(path) |
-                            DebouncedEvent::Rename(path, _) | // (old, new)
                             DebouncedEvent::Write(path) => {
                                 let file = path.to_str().expect("Unable to convert path buffer to string.");
                                 println!("File changed: '{}'..., hot-reloading.", file);
@@ -144,6 +143,7 @@ impl ClientHandler {
                                     break;
                                 }
                             },
+                            DebouncedEvent::Rename | // (old, new) (gotta pass in both)
                             DebouncedEvent::Rescan => {
                                 unimplemented!();
                             }
