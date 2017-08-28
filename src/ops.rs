@@ -2464,7 +2464,7 @@ impl BlockInfo {
 
 pub enum RunLoopMessage {
     Stop,
-    Reload(PathBuf),
+    Reload(HashSet<PathBuf>),
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
     CodeTransaction(Vec<Block>, Vec<String>),
@@ -3386,43 +3386,34 @@ impl ProgramRunner {
                     Ok(RunLoopMessage::Stop) => {
                         break 'outer;
                     }
-                    Ok(RunLoopMessage::Reload(path)) => {
-                        let canonical = path.canonicalize();
-                        let resolved = match canonical {
-                            Ok(resolved) => resolved,
-                            Err(_) => path,
-                        };
-                        let resolved_path = resolved.to_str().unwrap();
-                        println!("Gotta reload {}!", resolved_path);
+                    Ok(RunLoopMessage::Reload(paths)) => {
+                        let mut added_blocks:Vec<Block> = vec![];
+                        let mut removed_blocks:Vec<String> = vec![];
+                        for path in paths {
+                            let canonical = path.canonicalize();
+                            let resolved = match canonical {
+                                Ok(resolved) => resolved,
+                                Err(_) => path,
+                            };
+                            let resolved_path = resolved.to_str().unwrap();
+                            println!("Hot-reloading {} ...", resolved_path);
 
+                            let mut parsed_blocks:Vec<Block> = if resolved.exists() {
+                                parse_file(&mut program.state.interner, resolved_path, true, debug_compile)
+                            } else {
+                                vec![]
+                            };
+                            let new_blocks:HashSet<&Block> = parsed_blocks.iter().collect();
 
-                        let mut parsed_blocks:Vec<Block> = if resolved.exists() {
-                            parse_file(&mut program.state.interner, resolved_path, true, debug_compile)
-                        } else {
-                            vec![]
-                        };
-                        let new_blocks:HashSet<&Block> = parsed_blocks.iter().collect();
+                            let mut old_blocks:HashSet<&Block> = HashSet::new();
+                            old_blocks.extend(program.blocks_by_path(resolved_path).iter());
 
-                        let mut old_blocks:HashSet<&Block> = HashSet::new();
-                        old_blocks.extend(program.blocks_by_path(resolved_path).iter());
+                            let mut added = &new_blocks - &old_blocks;
+                            let mut removed = &old_blocks - &new_blocks;
 
-                        for block in old_blocks.iter() {
-                            let mut state = DefaultHasher::new();
-                            block.hash(&mut state);
-                            println!("OLD BLOCK: {:?}", state.finish())
+                            added_blocks.extend(added.drain().map(|block| block.clone()));
+                            removed_blocks.extend(removed.drain().map(|block| block.name.to_owned()));
                         }
-
-                        for block in new_blocks.iter() {
-                            let mut state = DefaultHasher::new();
-                            block.hash(&mut state);
-                            println!("NEW BLOCK: {:?}", state.finish())
-                        }
-
-                        let mut added = &new_blocks - &old_blocks;
-                        let mut removed = &old_blocks - &new_blocks;
-
-                        let added_blocks = added.drain().map(|block| block.clone()).collect();
-                        let removed_blocks = removed.drain().map(|block| block.name.to_owned()).collect();
 
                         echo_channel.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks));
                     }

@@ -1,6 +1,6 @@
 extern {}
 
-use std::path::{Path};
+use std::path::{Path, PathBuf};
 
 extern crate clap;
 use clap::{Arg, App};
@@ -45,6 +45,7 @@ use mount::Mount;
 use std::thread;
 use std::sync::{Arc, Mutex};
 use std::ops::Deref;
+use std::collections::HashSet;
 
 extern crate term_painter;
 use self::term_painter::ToStyle;
@@ -125,14 +126,23 @@ impl ClientHandler {
             }
 
             loop {
+                let mut dirty:HashSet<PathBuf> = HashSet::new();
                 match incoming.recv() {
                     Ok(event) => {
                         match event {
-                            DebouncedEvent::NoticeRemove(_) |
-                            DebouncedEvent::NoticeWrite(_) => {},
                             DebouncedEvent::Error(err, ..) => {
                                 println!("Closing client file watcher due to unforeseen error: {:?}", err);
                                 break;
+                            },
+                            DebouncedEvent::NoticeRemove(path) |
+                            DebouncedEvent::NoticeWrite(path) => {
+                                let should_reload = match path.extension() {
+                                    Some(ext) => ext == "eve" || ext == "eve.md",
+                                    _ => false
+                                };
+                                if should_reload {
+                                    dirty.insert(path);
+                                }
                             },
                             DebouncedEvent::Create(path) |
                             DebouncedEvent::Chmod(path) |
@@ -143,10 +153,12 @@ impl ClientHandler {
                                     _ => false
                                 };
                                 if should_reload {
-                                    if let Err(_) = client_channel.send(RunLoopMessage::Reload(path)) {
+                                    dirty.insert(path);
+                                    if let Err(_) = client_channel.send(RunLoopMessage::Reload(dirty.clone())) {
                                         println!("Closing client file watcher.");
                                         break;
                                     }
+                                    dirty.clear();
                                 }
                             },
                             DebouncedEvent::Rename(..) | // (old, new) (gotta pass in both)
