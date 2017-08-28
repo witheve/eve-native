@@ -1767,13 +1767,17 @@ pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path
                 }
             }
             let interned_name = interner.string_id(&sub_name);
-            compilation_blocks.push(Block::new(interner, &sub_name, interned_name, sub_comp.constraints.clone()));
+            let mut block = Block::new(interner, &sub_name, interned_name, sub_comp.constraints.clone());
+            block.path = path.to_owned();
+            compilation_blocks.push(block);
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
     let interned_name = interner.string_id(&block_name);
-    compilation_blocks.push(Block::new(interner, &block_name, interned_name, comp.constraints));
+    let mut block = Block::new(interner, &block_name, interned_name, comp.constraints);
+    block.path = path.to_owned();
+    compilation_blocks.push(block);
     compilation_blocks
 }
 
@@ -1802,7 +1806,7 @@ pub fn parse_string(interner:&mut Interner, content:&str, path:&str, debug: bool
                         println!("   {:?}", c);
                     }
                 }
-                program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content, debug));
+                program_blocks.extend(compilation_to_blocks(comp, interner, path, content, debug));
             }
             program_blocks
         } else {
@@ -1824,7 +1828,7 @@ pub fn parse_file(interner:&mut Interner, path:&str, report: bool, debug: bool) 
                let ext = entry.path().extension().map(|x| x.to_str().unwrap());
                match ext {
                    Some("eve") | Some("md") => {
-                       paths.push(entry.path().to_str().unwrap().to_string());
+                       paths.push(entry.path().canonicalize().unwrap().to_str().unwrap().to_string());
                    },
                    _ => {}
                }
