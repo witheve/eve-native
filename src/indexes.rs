@@ -948,9 +948,15 @@ impl IntermediateIndex {
                             update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &projection, &value, round);
                         }
                         btree_map::Entry::Vacant(ent) => {
-                            action(&mut cur_aggregate, &value, &projection);
-                            // add an add for the new value
-                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), 0, round, 1));
+                            match cur_aggregate {
+                                AggregateEntry::Empty => {
+                                    action(&mut cur_aggregate, &value, &projection);
+                                    changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), 0, round, 1));
+                                }
+                                _ => {
+                                    update_aggregate(interner, &mut changes, &out, action, &mut cur_aggregate, &projection, &value, round);
+                                }
+                            }
                             ent.insert(cur_aggregate);
                         }
                     }
