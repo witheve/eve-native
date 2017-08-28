@@ -1791,9 +1791,11 @@ pub fn aggregate_string_join_add(current: &mut AggregateEntry, params: &Vec<Inte
             _ => unreachable!(),
         }
     }).collect::<Vec<_>>();
+    let mut key = projection.clone();
+    key.extend(value.iter().cloned());
     match current {
         &mut AggregateEntry::SortedSum { ref mut items, ref mut result } => {
-            items.insert(projection.clone(), value);
+            items.insert(key, value);
             let mut neue = String::new();
             let mut separator_len = 0;
             for info in items.values() {
@@ -1815,16 +1817,25 @@ pub fn aggregate_string_join_add(current: &mut AggregateEntry, params: &Vec<Inte
         _ => {
             let result = value[0].clone();
             let mut items = BTreeMap::new();
-            items.insert(projection.clone(), value);
+            items.insert(key, value);
             *current = AggregateEntry::SortedSum { items, result };
         }
     }
 }
 
-pub fn aggregate_string_join_remove(current: &mut AggregateEntry, _: &Vec<Internable>, projection: &Vec<Internable>) {
+pub fn aggregate_string_join_remove(current: &mut AggregateEntry, params: &Vec<Internable>, projection: &Vec<Internable>) {
+    let value = params.iter().map(|x| {
+        match x {
+            &Internable::Number(_) => { Internable::String(Internable::to_string(x)) },
+            &Internable::String(_) => { x.clone() },
+            _ => unreachable!(),
+        }
+    }).collect::<Vec<_>>();
     match current {
         &mut AggregateEntry::SortedSum { ref mut items, ref mut result } => {
-            items.remove(projection);
+            let mut key = projection.clone();
+            key.extend(value.iter().cloned());
+            items.remove(&key);
             let mut neue = String::new();
             let mut separator_len = 0;
             for info in items.values() {
