@@ -2464,6 +2464,8 @@ impl BlockInfo {
 
 pub enum RunLoopMessage {
     Stop,
+    Pause,
+    Resume,
     Reload(HashSet<PathBuf>),
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
@@ -3381,12 +3383,20 @@ impl ProgramRunner {
             let mut iter_pool = EstimateIterPool::new();
             println!("[{}] Starting run loop.", &program.name);
 
+            let mut paused = false;
+
             'outer: loop {
-                match program.incoming.recv() {
-                    Ok(RunLoopMessage::Stop) => {
+                match (program.incoming.recv(), paused) {
+                    (Ok(RunLoopMessage::Stop), _) => {
                         break 'outer;
-                    }
-                    Ok(RunLoopMessage::Reload(paths)) => {
+                    },
+                    (Ok(RunLoopMessage::Pause), _) => {
+                        paused = true;
+                    },
+                    (Ok(RunLoopMessage::Resume), _) => {
+                        paused = false;
+                    },
+                    (Ok(RunLoopMessage::Reload(paths)), _) => {
                         let mut added_blocks:Vec<Block> = vec![];
                         let mut removed_blocks:Vec<String> = vec![];
                         for path in paths {
@@ -3417,7 +3427,8 @@ impl ProgramRunner {
 
                         echo_channel.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks));
                     }
-                    Ok(RunLoopMessage::Transaction(v)) => {
+                    (Ok(RunLoopMessage::Transaction(v)), true) => {},
+                    (Ok(RunLoopMessage::Transaction(v)), false) => {
                         println!("[{}] Txn started", &program.name);
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new(&mut iter_pool);
@@ -3439,7 +3450,8 @@ impl ProgramRunner {
                         let time = (end_ns - start_ns) as f64;
                         println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
-                    Ok(RunLoopMessage::RemoteTransaction(v)) => {
+                    (Ok(RunLoopMessage::RemoteTransaction(v)), true) => {},
+                    (Ok(RunLoopMessage::RemoteTransaction(v)), false) => {
                         let start_ns = time::precise_time_ns();
                         println!("[{}] Remote txn started", &program.name);
                         let mut txn = RemoteTransaction::new(&mut iter_pool);
@@ -3451,7 +3463,7 @@ impl ProgramRunner {
                         let time = (end_ns - start_ns) as f64;
                         println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
-                    Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                    (Ok(RunLoopMessage::CodeTransaction(adds, removes)), _) => {
                         let start_ns = time::precise_time_ns();
                         let mut tx = CodeTransaction::new();
                         println!("[{}] Code Txn started", &program.name);
@@ -3472,7 +3484,7 @@ impl ProgramRunner {
                         let time = (end_ns - start_ns) as f64;
                         println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
                     }
-                    Ok(RunLoopMessage::RemoteCodeTransaction(adds, removes)) => {
+                    (Ok(RunLoopMessage::RemoteCodeTransaction(adds, removes)), _) => {
                         let start_ns = time::precise_time_ns();
                         let mut tx = CodeTransaction::new();
                         println!("[{}] Remote Code Txn started", &program.name);
@@ -3497,7 +3509,7 @@ impl ProgramRunner {
                         println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
 
                     }
-                    Err(_) => { break; }
+                    (Err(_), _) => { break; }
                 }
             }
             if let Some(channel) = persistence_channel {
