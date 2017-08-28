@@ -30,7 +30,7 @@ use std::error::Error;
 use std::thread::{self, JoinHandle};
 use std::io::{Write, BufReader, BufWriter};
 use std::fs::{OpenOptions, File, canonicalize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::f32::consts::{PI};
 use std::mem;
 use std::usize;
@@ -185,6 +185,7 @@ pub enum PipeShape {
 pub struct Block {
     pub name: String,
     pub block_id: Interned,
+    pub path: String,
     pub constraints: Vec<Constraint>,
     pub solver: Option<Solver>,
     pub shapes: Vec<Vec<PipeShape>>
@@ -193,7 +194,7 @@ pub struct Block {
 impl Block {
 
     pub fn new(interner:&mut Interner, name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
-       let mut me = Block { name:name.to_string(), block_id, constraints, solver:None, shapes: vec![] };
+       let mut me = Block { name:name.to_string(), block_id, path: "".to_owned(), constraints, solver:None, shapes: vec![] };
        let shapes = me.to_shapes();
        me.shapes.extend(shapes);
        me.solver = Some(Solver::new(interner, block_id, 0, None, &me.constraints));
@@ -2463,7 +2464,7 @@ impl BlockInfo {
 
 pub enum RunLoopMessage {
     Stop,
-    Reload(String),
+    Reload(PathBuf),
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
     CodeTransaction(Vec<Block>, Vec<String>),
@@ -2631,6 +2632,10 @@ impl Program {
 
     pub fn raw_block(&mut self, block:Block) {
         self.register_block(block);
+    }
+
+    pub fn blocks_by_path(&self, path:&str) -> Vec<&Block> {
+        self.block_info.blocks.iter().filter(|block| block.path == path).collect()
     }
 
     pub fn attach(&mut self, watcher:Box<Watcher + Send>) {
@@ -3355,17 +3360,11 @@ impl ProgramRunner {
         let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
         let meta_channel = self.meta_channel.map(|c| c.clone());
 
-        let mut file_blocks:HashMap<String, HashSet<String>> = HashMap::new();
-
         let thread = thread::Builder::new().name(program.name.to_owned()).spawn(move || {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                let my_blocks = parse_file(&mut program.state.interner, &path, true, debug_compile);
-                let canonical = Path::new(&path).canonicalize().unwrap();
-                let resolved_path = canonical.to_str().unwrap();
-                file_blocks.insert(resolved_path.to_owned(), my_blocks.iter().map(|block| block.name.to_owned()).collect());
-                blocks.extend(my_blocks);
+                blocks.extend(parse_file(&mut program.state.interner, &path, true, debug_compile));
             }
             let mut end_ns = time::precise_time_ns();
             println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
@@ -3388,47 +3387,42 @@ impl ProgramRunner {
                         break 'outer;
                     }
                     Ok(RunLoopMessage::Reload(path)) => {
-                        let canonical = Path::new(&path).canonicalize().unwrap();
-                        let resolved_path = canonical.to_str().unwrap();
+                        let canonical = path.canonicalize();
+                        let resolved = match canonical {
+                            Ok(resolved) => resolved,
+                            Err(_) => path,
+                        };
+                        let resolved_path = resolved.to_str().unwrap();
                         println!("Gotta reload {}!", resolved_path);
-                        let mut file_block_list = file_blocks.entry(resolved_path.to_owned()).or_insert_with(|| HashSet::new());
-                        let mut my_blocks = parse_file(&mut program.state.interner, resolved_path, true, debug_compile);
-                        let mut new_blocks:HashSet<&Block> = my_blocks.iter().collect();
-                        let mut old_blocks:HashSet<&Block> = file_block_list.iter()
-                            .map(|name| {
-                                if let Some(ix) = program.block_info.block_names.get(name) {
-                                    program.block_info.blocks.get(*ix)
-                                } else {
-                                    None
-                                }
-                            })
-                            .filter(|maybe_block| maybe_block.is_some())
-                            .map(|maybe_block| maybe_block.unwrap())
-                            .collect();
 
-                        for block in new_blocks.iter() {
-                            let mut state = DefaultHasher::new();
-                            block.hash(&mut state);
-                            println!("NEW BLOCK: {:?}", state.finish())
-                        }
+
+                        let mut parsed_blocks:Vec<Block> = if resolved.exists() {
+                            parse_file(&mut program.state.interner, resolved_path, true, debug_compile)
+                        } else {
+                            vec![]
+                        };
+                        let new_blocks:HashSet<&Block> = parsed_blocks.iter().collect();
+
+                        let mut old_blocks:HashSet<&Block> = HashSet::new();
+                        old_blocks.extend(program.blocks_by_path(resolved_path).iter());
+
                         for block in old_blocks.iter() {
                             let mut state = DefaultHasher::new();
                             block.hash(&mut state);
                             println!("OLD BLOCK: {:?}", state.finish())
                         }
 
+                        for block in new_blocks.iter() {
+                            let mut state = DefaultHasher::new();
+                            block.hash(&mut state);
+                            println!("NEW BLOCK: {:?}", state.finish())
+                        }
+
                         let mut added = &new_blocks - &old_blocks;
                         let mut removed = &old_blocks - &new_blocks;
 
-                        let added_blocks:Vec<Block> = added.drain().map(|block| block.clone()).collect();
-                        let removed_blocks:Vec<String> = removed.drain().map(|block| block.name.to_owned()).collect();
-
-                        for remove in removed_blocks.iter() {
-                            file_block_list.remove(remove);
-                        }
-                        for add in added_blocks.iter() {
-                            file_block_list.insert(add.name.to_owned());
-                        }
+                        let added_blocks = added.drain().map(|block| block.clone()).collect();
+                        let removed_blocks = removed.drain().map(|block| block.name.to_owned()).collect();
 
                         echo_channel.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks));
                     }

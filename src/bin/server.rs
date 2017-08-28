@@ -138,11 +138,15 @@ impl ClientHandler {
                             DebouncedEvent::Chmod(path) |
                             DebouncedEvent::Remove(path) |
                             DebouncedEvent::Write(path) => {
-                                let file = path.to_str().expect("Unable to convert path buffer to string.");
-                                println!("File changed: '{}'..., hot-reloading.", file);
-                                if let Err(_) = client_channel.send(RunLoopMessage::Reload(file.to_owned())) {
-                                    println!("Closing client file watcher.");
-                                    break;
+                                let should_reload = match path.extension() {
+                                    Some(ext) => ext == "eve" || ext == "eve.md",
+                                    _ => false
+                                };
+                                if should_reload {
+                                    if let Err(_) = client_channel.send(RunLoopMessage::Reload(path)) {
+                                        println!("Closing client file watcher.");
+                                        break;
+                                    }
                                 }
                             },
                             DebouncedEvent::Rename(..) | // (old, new) (gotta pass in both)
