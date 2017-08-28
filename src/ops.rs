@@ -74,6 +74,14 @@ pub fn print_block_constraints(block:&Block) {
     println!("");
 }
 
+pub fn s(string: &str) -> Internable {
+   Internable::String(string.to_string())
+}
+
+pub fn n(num: f32) -> Internable {
+   Internable::from_number(num)
+}
+
 //-------------------------------------------------------------------------
 // Change
 //-------------------------------------------------------------------------
@@ -127,6 +135,10 @@ pub struct RawChange {
 }
 
 impl RawChange {
+    pub fn new(e:Internable, a:Internable, v:Internable, n:Internable, count:Count) -> RawChange {
+        RawChange {e,a,v,n,count}
+    }
+
     pub fn to_change(self, interner: &mut Interner) -> Change {
        Change {
            e: interner.internable_to_id(self.e),
@@ -3005,6 +3017,20 @@ impl PortableField {
             &PortableField::Value(ref internable) => Field::Value(interner.internable_to_id(internable.clone()))
         }
     }
+    pub fn to_eve_value(&self, block:&Internable, changes:&mut Vec<RawChange>) -> Internable {
+        match self {
+            &PortableField::Register(ix) => {
+                let id = gen_id(vec![&Internable::String("register".to_owned()), block, &Internable::from_number(ix as f32)]).unwrap();
+                changes.push(RawChange::new(id.clone(), s("tag"), s("register"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("block"), block.clone(), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("offset"), n(ix as f32), s("compiler"), 1));
+                id
+            }
+            &PortableField::Value(ref v) => {
+                v.clone()
+            }
+        }
+    }
 }
 impl Field {
     pub fn to_portable(&self, interner:&Interner) -> PortableField {
@@ -3017,11 +3043,12 @@ impl Field {
 
 pub enum PortableConstraint {
     Scan(PortableField, PortableField, PortableField),
-    Output(PortableField, PortableField, PortableField, bool),
-    Watch(String, Vec<PortableField>),
     Function(String, PortableField, Vec<PortableField>),
-    Variadic(String, PortableField, Vec<PortableField>),
-    GenId(PortableField, HashMap<String, PortableField>),
+    Output(PortableField, PortableField, PortableField, bool),
+    Remove(PortableField, PortableField, PortableField),
+    RemoveAttribute(PortableField, PortableField),
+    RemoveEntity(PortableField),
+    Watch(String, Vec<PortableField>),
 }
 
 impl PortableConstraint {
@@ -3040,6 +3067,72 @@ impl PortableConstraint {
             _ => unimplemented!()
         }
     }
+
+    pub fn to_raw_changes(&self, block:&Internable, ix:usize, changes:&mut Vec<RawChange>) -> Internable {
+        let id_str = Internable::to_string(block) + &ix.to_string();
+        let id = s(&id_str);
+        match self {
+            &PortableConstraint::Scan(ref e, ref a, ref v) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                let eve_v = v.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("scan"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("v"), eve_v, s("compiler"), 1));
+            }
+            &PortableConstraint::Output(ref e, ref a, ref v, commit) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                let eve_v = v.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("insert"), s("compiler"), 1));
+                if commit {
+                    changes.push(RawChange::new(id.clone(), s("tag"), s("commit"), s("compiler"), 1));
+                }
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("v"), eve_v, s("compiler"), 1));
+            }
+            &PortableConstraint::Remove(ref e, ref a, ref v) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                let eve_v = v.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("remove"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("v"), eve_v, s("compiler"), 1));
+            }
+            &PortableConstraint::RemoveAttribute(ref e, ref a) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("remove-attribute"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+            }
+            &PortableConstraint::RemoveEntity(ref e) => {
+                let eve_e = e.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("remove-entity"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+            }
+            &PortableConstraint::Function(ref name, ref output, ref args) => {
+                let eve_output = output.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("function"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("op"), s(name.as_str()), s("compiler"), 1));
+                for (ix, raw_arg) in args.iter().enumerate() {
+                    let arg = raw_arg.to_eve_value(block, changes);
+                    let eve_ix = n((ix + 1) as f32);
+                    let arg_id = gen_id(vec![&eve_ix, &arg]).unwrap();
+                    changes.push(RawChange::new(arg_id.clone(), s("value"), arg, s("compiler"), 1));
+                    changes.push(RawChange::new(arg_id.clone(), s("index"), eve_ix, s("compiler"), 1));
+                    changes.push(RawChange::new(id.clone(), s("params"), arg_id, s("compiler"), 1));
+                }
+                changes.push(RawChange::new(id.clone(), s("output"), eve_output, s("compiler"), 1));
+            },
+
+            _ => unimplemented!()
+        }
+        id
+    }
 }
 
 impl Constraint {
@@ -3047,6 +3140,9 @@ impl Constraint {
         match self {
             &Constraint::Scan{ref e, ref a, ref v, ..} => PortableConstraint::Scan(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
             &Constraint::Insert{ref e, ref a, ref v, commit} => PortableConstraint::Output(e.to_portable(i), a.to_portable(i), v.to_portable(i), commit),
+            &Constraint::Remove{ref e, ref a, ref v} => PortableConstraint::Remove(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
+            &Constraint::RemoveAttribute{ref e, ref a} => PortableConstraint::RemoveAttribute(e.to_portable(i), a.to_portable(i)),
+            &Constraint::RemoveEntity{ref e} => PortableConstraint::RemoveEntity(e.to_portable(i)),
             &Constraint::Watch{ref name, ref registers} => {
                 PortableConstraint::Watch(name.to_owned(), registers.iter().map(|v| v.to_portable(i)).collect())
             },
@@ -3070,6 +3166,17 @@ impl PortableBlock {
         let constraints = self.constraints.iter().map(|c| c.intern(interner)).collect();
         let block_id = interner.internable_to_id(self.block_id.clone());
         Block::new(interner, &self.name, block_id, constraints)
+    }
+
+    pub fn to_raw_changes(&self, changes:&mut Vec<RawChange>) {
+        let id_str = format!("block|{}", Internable::to_string(&self.block_id));
+        let id = s(&id_str);
+        changes.push(RawChange::new(id.clone(), s("tag"), s("block"), s("compiler"), 1));
+        changes.push(RawChange::new(id.clone(), s("name"), id.clone(), s("compiler"), 1));
+        for (ix, constraint) in self.constraints.iter().enumerate() {
+            let constraint_id = constraint.to_raw_changes(&id, ix, changes);
+            changes.push(RawChange::new(id.clone(), s("constraint"), constraint_id, s("compiler"), 1));
+        }
     }
 }
 

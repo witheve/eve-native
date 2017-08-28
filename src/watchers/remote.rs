@@ -1,22 +1,10 @@
 use super::super::indexes::{WatchDiff, RawRemoteChange};
-use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange};
+use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange, s};
 use super::Watcher;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::collections::HashMap;
-
-//-------------------------------------------------------------------------
-// Util
-//-------------------------------------------------------------------------
-
-fn s(string: &str) -> Internable {
-   Internable::String(string.to_string())
-}
-
-fn n(num: f32) -> Internable {
-   Internable::from_number(num)
-}
 
 //-------------------------------------------------------------------------
 // Router

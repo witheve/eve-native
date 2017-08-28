@@ -233,6 +233,12 @@ We also want to capture all the attributes we've seen for each tag.
       info.attribute += [#attribute a]
     end
 
+    search
+      info = [#tag-info tag-name attribute]
+      count = gather/count[for:attribute per:info]
+    bind
+      info.attribute-count += count
+    end
 
 Blocks and constraints
 ------------------------------------------------------
@@ -245,6 +251,12 @@ constraints they have.
       num-constraints = gather/count[for:constraint per:block]
     bind
       block <- [num-constraints]
+    end
+
+    search
+      block = [#block constraint]
+    bind
+      constraint <- [block #constraint]
     end
 
 We need to gather what tag each e belongs to in each block. We then
@@ -612,7 +624,7 @@ that represents the optimized program.
     end
 
     search
-      tag-info = [#tag-info tag-name]
+      tag-info = [#tag-info tag-name attribute-count > 1]
     bind
       [#ir/define-struct tag-info symbol: [#ir/symbol name:tag-name]]
     end
@@ -620,8 +632,87 @@ that represents the optimized program.
     search
       ir = [#ir/define-struct tag-info]
       attribute = tag-info.attribute
+      attribute.a != "tag"
     bind
       ir.field += [#ir/field name:[#ir/symbol name:attribute.a]]
+    end
+
+
+IR for constraints
+------------------------------------------------------
+
+Values to IR
+
+    search
+      ir = [#ir/from-value value]
+      not(value.tag = "register")
+      "string" = eve/type-of[value]
+    bind
+      ir += #ir/string
+    end
+
+    search
+      ir = [#ir/from-value value]
+      "number" = eve/type-of[value]
+    bind
+      ir += #ir/number
+    end
+
+    search
+      ir = [#ir/from-value value]
+      value = [#register block offset]
+    bind
+      ir <- [#ir/symbol name:"{{block}}_{{offset}}"]
+    end
+
+Scans
+
+
+Filters and infix functions
+
+    search
+      filter = [#filter op left right]
+    bind
+      [#ir/infix filter | op
+        left:[#ir/from-value value:left]
+        right:[#ir/from-value value:right]]
+    end
+
+    search
+      function = [#function output op params:[index:1 value:left] [index:2 value:right]]
+      [#define/function/infix name:op]
+    bind
+      [#ir/let function |
+        name: [#ir/from-value value:output]
+        value: [#ir/infix function | op
+                  left:[#ir/from-value value:left]
+                  right:[#ir/from-value value:right]]]
+    end
+
+Functions
+
+    search
+      function = [#function output op params]
+      not([#define/function/infix name:op])
+      op != "gen_id"
+    bind
+      [#ir/let function |
+        name: [#ir/from-value value:output]
+        value: [#ir/call function |
+                  func:[#ir/symbol name:op]
+                  arg: [#ir/from-value value:params.value index:params.index]]]
+    end
+
+    search
+      function = [#multi-function
+                   op:"math/range"
+                   outputs:[index:1 value:output]
+                   params:[index:1 value:start] [index:2 value:stop]]
+    bind
+      [#ir/range function |
+        symbol: [#ir/from-value value:output]
+        start: [#ir/from-value value:start]
+        stop: [#ir/from-value value:stop]]
     end
 
 
@@ -635,8 +726,8 @@ looking at IR nodes and constructing code strings out of them.
     search
       (ir, js) =
         if ir = [#ir/symbol name_js] then (ir, name_js)
-        if ir = [#ir/string str] then (ir, "\"{{str}}\"")
-        if ir = [#ir/number num] then (ir, "{{num}}")
+        if ir = [#ir/string value] then (ir, "\"{{value}}\"")
+        if ir = [#ir/number value] then (ir, "{{value}}")
         if ir = [#ir/infix op left right] then (ir, "{{left.js}} {{op}} {{right.js}}")
         if ir = [#ir/let name value] then (ir, "var {{name.js}} = {{value.js}};")
         if ir = [#ir/set symbol attribute value] then (ir, "{{symbol.js}}.{{attribute.js}} = {{value.js}};")
@@ -684,7 +775,8 @@ characters that aren't allowed in JS symbols are replaced with _
       ir = [#ir/symbol name]
       name2 = string/replace[text:name replace:"-" with:"_"]
       name3 = string/replace[text:name2 replace:"/" with:"_"]
-      name_js = string/replace[text:name3 replace:" " with:"_"]
+      name4 = string/replace[text:name3 replace:"|" with:"_"]
+      name_js = string/replace[text:name4 replace:" " with:"_"]
     bind
       ir <- [name_js]
     end
@@ -726,7 +818,7 @@ concatenate them together.
 
     search
       ir = [#ir/call arg]
-      args_js = gather/string-join[for:arg value:arg.js separator:", " per:ir]
+      args_js = gather/string-join[for:arg.index value:arg.js separator:", " per:ir]
     bind
       ir <- [args_js]
     end
@@ -756,29 +848,26 @@ setters for define-struct
       ir <- [args_js]
     end
 
-Drawing
+
+File parsing
 ------------------------------------------------------
 
     search
-      [#chain-link from to chain level]
+      program = [#program path]
     bind
-      [#ui/column #links chain | children:
-        [#ui/text sort:level text: "{{level}}: {{from}} -> {{to}}"]]
+      [#file/read path]
     end
 
     search
-      [#block-input block tag-name a domain]
-    bind
-      [#ui/column #block-tags | children:
-        [#ui/text text: "INPUT: {{block}} - {{tag-name}} {{a}} {{domain.type}}"]]
+      program = [#program path]
+      [#file/read path contents]
+    watch eve/text-compiler
+      ("to-blocks", program, path, contents)
     end
 
-    search
-      [#block-output block tag-name a domain]
-    bind
-      [#ui/column #block-output-tags | children:
-        [#ui/text text: "OUTPUT: {{block}} - {{tag-name}} {{a}} {{domain.type}}"]]
-    end
+
+Drawing
+------------------------------------------------------
 
     search
       [#ir/define-struct js]
@@ -786,31 +875,20 @@ Drawing
       [#html/element tagname:"pre" text:js]
     end
 
+    search
+      [#ir/let js]
+    bind
+      [#html/element tagname:"pre" text:js]
+    end
 
 Test
 ------------------------------------------------------
 
     commit
       [#external-tags tag-name: ("system/timer/change")]
+      [#define/function/infix name: ("+" "-" "/" "*")]
     end
 
     commit
-      [#program]
-
-      r1 = [#register block:b3 offset:1]
-      r2 = [#register block:b3 offset:2]
-      r3 = [#register block:b3 offset:3]
-      b3 = [#block name:"b3"]
-      [#scan block:b3 e:r1 a:"tag" v:"system/timer/change"]
-      [#scan block:b3 e:r1 a:"score" v:r2]
-      [#function block:b3
-                 params: [index:1 value:r2] [index:2 value:1]
-                 output:r3]
-      [#insert block:b3 e:r1 a:"score" v:r3]
-      [#insert block:b3 e:r1 a:"meep" v:"moop"]
-
-      b4r1 = [#register block:b4 offset:1]
-      b4 = [#block name:"b4" | constraint:
-             [#scan block:b4 e:b4r1 a:"tag" v:"system/timer/change"]
-             [#remove-entity block:b4 e:b4r1]]
+      [#program path:"examples/simple-bouncing.eve"]
     end

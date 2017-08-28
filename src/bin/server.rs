@@ -30,6 +30,7 @@ use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::textcompiler::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
+use eve::watchers::file::{FileWatcher};
 use eve::watchers::editor::EditorWatcher;
 use eve::watchers::remote::{Router, RouterMessage, RemoteWatcher};
 use eve::watchers::websocket::WebsocketClientWatcher;
@@ -78,6 +79,7 @@ impl ClientHandler {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone(), false)));
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(FileWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone(), client_name)));
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
