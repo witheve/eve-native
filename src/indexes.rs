@@ -754,7 +754,7 @@ impl RemoteIndex {
 // Intermediate Index
 //-------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AggregateEntry {
     Empty,
     Result(f32),
@@ -936,13 +936,18 @@ impl IntermediateIndex {
             });
             match cur {
                 &mut IntermediateLevel::SumAggregate(ref mut rounds) => {
+                    let mut cur_aggregate = AggregateEntry::Empty;
+                    if !rounds.contains_key(&round) {
+                        if let Some(cur) = rounds.range(..round).rev().next() {
+                            cur_aggregate = cur.1.clone();
+                        }
+                    }
                     match rounds.entry(round) {
                         btree_map::Entry::Occupied(mut ent) => {
                             let cur_aggregate = ent.get_mut();
                             update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &projection, &value, round);
                         }
                         btree_map::Entry::Vacant(ent) => {
-                            let mut cur_aggregate = AggregateEntry::Empty;
                             action(&mut cur_aggregate, &value, &projection);
                             // add an add for the new value
                             changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), 0, round, 1));

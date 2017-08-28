@@ -333,6 +333,7 @@ chains of execution in the compiled program.
     search
       block = [#root]
       [#block-input block tag-name]
+      [#external-tags tag-name]
     bind
       [#chain type:"root" tag-name | to:block]
     end
@@ -342,24 +343,27 @@ or #setup. We also want to discover cycles here, which we figure out by looking
 for a link that has the same to, but a lower level
 
     search
-      chain = [#chain to:start]
-      [#link from:start to]
-      start != to
+      chain = [#chain to]
     bind
       [#chain-link chain from:chain to level:1]
     end
 
     search
-      chain = [#chain to:start]
-      [#link from:start to:start]
+      link = [#chain-link to]
     bind
-      [#chain-link #cycle chain from:chain to:start level:1]
+      link.visited += to
+    end
+
+    search
+      link = [#chain-link from]
+    bind
+      link.visited += from.visited
     end
 
     search
       link = [#chain-link chain to:from level]
       [#link from to]
-      not(link.tag = "cycle")
+      not(link = [#cycle])
       not(
         prev = [#chain-link chain to]
         prev.level <= level
@@ -370,14 +374,11 @@ for a link that has the same to, but a lower level
     end
 
     search
-      cur = [#chain-link chain to:from level]
-      not(link.tag = "cycle")
-      [#link from to]
-      prev = [#chain-link chain to]
-      not(prev.tag = "cycle")
-      prev.level <= level
+      link = [#chain-link chain to:from visited level]
+      [#link from to:visited]
+      not(link = [#cycle])
     bind
-      [#chain-link #cycle chain from:cur to level]
+      [#chain-link #cycle chain from:link to:visited level:level + 1]
     end
 
 Turn output constraints into their "real" equivalents
@@ -588,14 +589,6 @@ optimization rule is part of the new, optimized chain.
       [#chain-link/optimized chain from to level]
     end
 
-    search
-      opt = [#chain-link/optimized chain link]
-      link = [#chain-link chain back-link]
-      not([#link-removal link back-link])
-    bind
-      opt.back-link += back-link
-    end
-
 On to the link removers. The first one we'll do is that if a block has a pulse
 as an input, and the from of a chain-link doesn't output that input, then the to
 can't run.
@@ -605,10 +598,10 @@ can't run.
       [#block-input block:to tag-name]
       [#tag-info #pulse tag-name]
       not([#block-output block:from.to tag-name a:"tag"])
+      not(from.tag-name = tag-name)
     bind
       [#link-removal link reason: "Relies on a pulse that has already been removed"]
     end
-
 
 
 Intermediate Representation (IR)
@@ -622,6 +615,8 @@ that represents the optimized program.
     bind
       [#ir/main program]
     end
+
+Define all the structs that we need.
 
     search
       tag-info = [#tag-info tag-name attribute-count > 1]
@@ -637,6 +632,73 @@ that represents the optimized program.
       ir.field += [#ir/field name:[#ir/symbol name:attribute.a]]
     end
 
+Roots
+
+    search
+      chain = [#chain type:"root" tag-name]
+    bind
+      sym = [#ir/symbol name:tag-name]
+      ir = [#ir/on symbol:sym tag-name:sym]
+      chain.provider += [#provider tag-name symbol:sym ir]
+    end
+
+    search
+      chain = [#chain provider]
+    bind
+      chain.child-container += provider
+    end
+
+    search
+      link = [#chain-link/optimized from]
+    bind
+      link.chain-providers += from.provider
+    end
+
+    search
+      link = [#chain-link/optimized provider]
+    bind
+      link.chain-providers += provider
+    end
+
+
+Blocks via chain-link/optimized
+
+    search
+      link = [#chain-link/optimized provider]
+      gather/top[for:provider per:link limit:1]
+    bind
+      link.child-container += provider
+    end
+
+    search
+      link = [#chain-link/optimized from provider]
+      gather/next[for:provider per:link]
+    bind
+      provider.item += provider.ir
+    end
+
+    search
+      link = [#chain-link/optimized from provider]
+      gather/bottom[for:provider per:link limit:1]
+    bind
+      from.child-container.ir.item += provider.ir
+    end
+
+    search
+      chain = [#chain-link/optimized to from]
+      [#block-input block:to tag-name]
+      not(from.provider.tag-name = tag-name)
+    bind
+      sym = [#ir/symbol name:tag-name]
+      ir = [#ir/for symbol:sym tag-name:sym]
+      chain.provider += [#provider tag-name symbol:sym ir]
+    end
+
+    search
+      link = [#chain-link/optimized to child-container]
+    bind
+      child-container.ir.item += to.constraint.ir
+    end
 
 IR for constraints
 ------------------------------------------------------
@@ -667,26 +729,38 @@ Values to IR
 
 Scans
 
+    search
+      [#chain-link/optimized to chain-providers: [#provider tag-name symbol]]
+      [#block-tag e tag-name]
+      scan = [#scan block:to e a v]
+      v = [#register]
+    bind
+      scan.ir += [#ir/let scan |
+                          name:[#ir/from-value value:v]
+                          value:[#ir/get symbol attribute:[#ir/symbol name:a]]]
+    end
 
 Filters and infix functions
 
     search
       filter = [#filter op left right]
     bind
-      [#ir/infix filter | op
-        left:[#ir/from-value value:left]
-        right:[#ir/from-value value:right]]
+      filter.ir +=
+        [#ir/infix filter | op
+          left:[#ir/from-value value:left]
+          right:[#ir/from-value value:right]]
     end
 
     search
       function = [#function output op params:[index:1 value:left] [index:2 value:right]]
       [#define/function/infix name:op]
     bind
-      [#ir/let function |
-        name: [#ir/from-value value:output]
-        value: [#ir/infix function | op
-                  left:[#ir/from-value value:left]
-                  right:[#ir/from-value value:right]]]
+      function.ir +=
+        [#ir/let function |
+          name: [#ir/from-value value:output]
+          value: [#ir/infix function | op
+                    left:[#ir/from-value value:left]
+                    right:[#ir/from-value value:right]]]
     end
 
 Functions
@@ -696,11 +770,12 @@ Functions
       not([#define/function/infix name:op])
       op != "gen_id"
     bind
-      [#ir/let function |
-        name: [#ir/from-value value:output]
-        value: [#ir/call function |
-                  func:[#ir/symbol name:op]
-                  arg: [#ir/from-value value:params.value index:params.index]]]
+      function.ir +=
+        [#ir/let function |
+          name: [#ir/from-value value:output]
+          value: [#ir/call function |
+                    func:[#ir/symbol name:op]
+                    arg: [#ir/from-value value:params.value index:params.index]]]
     end
 
     search
@@ -709,10 +784,11 @@ Functions
                    outputs:[index:1 value:output]
                    params:[index:1 value:start] [index:2 value:stop]]
     bind
-      [#ir/range function |
-        symbol: [#ir/from-value value:output]
-        start: [#ir/from-value value:start]
-        stop: [#ir/from-value value:stop]]
+      function.ir +=
+        [#ir/range function |
+          symbol: [#ir/from-value value:output]
+          start: [#ir/from-value value:start]
+          stop: [#ir/from-value value:stop]]
     end
 
 
@@ -785,17 +861,34 @@ All of the ir nodes that are wrappers around a set of items (e.g. do) need to
 have their items concatenated into a string with each item on its own line.
 
     search
-      ir = if ir = [#ir/do item] then ir
-           if ir = [#ir/and item] then ir
-           if ir = [#ir/or item] then ir
-           if ir = [#ir/if item] then ir
-           if ir = [#ir/range item] then ir
-           if ir = [#ir/for item] then ir
-           if ir = [#ir/on item] then ir
-           if ir = [#ir/main item] then ir
-      items_js = gather/string-join[for:ir.item value:ir.item separator:"\n" per:node]
+      ir = if ir = [#ir/do] then ir
+           if ir = [#ir/and] then ir
+           if ir = [#ir/or] then ir
+           if ir = [#ir/if] then ir
+           if ir = [#ir/range] then ir
+           if ir = [#ir/for] then ir
+           if ir = [#ir/on] then ir
+           if ir = [#ir/main] then ir
     bind
-      node <- [items_js]
+      ir += #ir/has-items
+    end
+
+    search
+      ir = [#ir/has-items item]
+      items_js = gather/string-join[for:item value:item.js separator:"\n" per:ir]
+    bind
+      ir <- [items_js]
+    end
+
+@FIXME: turning this on causes bad things to happen - it looks like something's
+not getting correctly retracted?
+
+    disabled search
+      ir = [#ir/has-items]
+      not(ir.item)
+      items_js = "meep"
+    bind
+      ir <- [items_js]
     end
 
 For functions we may need to map an eve function name to a particular javascript
@@ -876,7 +969,7 @@ Drawing
     end
 
     search
-      [#ir/let js]
+      ir = [#ir/on js]
     bind
       [#html/element tagname:"pre" text:js]
     end
