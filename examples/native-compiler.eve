@@ -234,6 +234,14 @@ We also want to capture all the attributes we've seen for each tag.
     end
 
     search
+      [#block-tag e tag-name]
+      [#scan e a]
+      info = [#tag-info tag-name]
+    bind
+      info.attribute += [#attribute a]
+    end
+
+    search
       info = [#tag-info tag-name attribute]
       count = gather/count[for:attribute per:info]
     bind
@@ -387,14 +395,16 @@ Turn output constraints into their "real" equivalents
       [#insert block e a v]
       [#remove-attribute block e a]
     bind
-      [#real/set block e a v]
+      set = [#real/set block e a v]
+      block.constraint += set
     end
 
     search
       [#function block op:"gen-id" output: e]
       [#insert block e a v]
     bind
-      [#real/create block e | attribute: [a v]]
+      create = [#real/create block e | attribute: [a v]]
+      block.constraint += create
     end
 
     search
@@ -402,14 +412,16 @@ Turn output constraints into their "real" equivalents
       not([#set block e a])
       not([#create block e])
     bind
-      [#real/update block e a v]
+      update = [#real/update block e a v]
+      block.constraint += update
     end
 
     search
       [#remove block e a v]
       not([#set block e a])
     bind
-      [#real/remove block e a v]
+      remove = [#real/remove block e a v]
+      block.constraint += remove
     end
 
 
@@ -700,6 +712,18 @@ Blocks via chain-link/optimized
       child-container.ir.item += to.constraint.ir
     end
 
+Now that we've set up providers for all the tags in our chain, it's useful to be
+able to lookup the symbol for a given register. To facilitate that, we'll creat
+a nice little mapping for it:
+
+    search
+      [#chain-link/optimized to chain-providers: [#provider tag-name symbol]]
+      block-tag = [#block-tag block:to e tag-name]
+    bind
+      block-tag.symbol += symbol
+    end
+
+
 IR for constraints
 ------------------------------------------------------
 
@@ -730,8 +754,7 @@ Values to IR
 Scans
 
     search
-      [#chain-link/optimized to chain-providers: [#provider tag-name symbol]]
-      [#block-tag e tag-name]
+      [#block-tag e symbol]
       scan = [#scan block:to e a v]
       v = [#register]
     bind
@@ -789,6 +812,18 @@ Functions
           symbol: [#ir/from-value value:output]
           start: [#ir/from-value value:start]
           stop: [#ir/from-value value:stop]]
+    end
+
+Updates
+
+    search
+      [#block-tag e symbol]
+      set = [#real/set block e a v]
+    bind
+      set.ir +=
+        [#ir/set set | symbol
+          attribute:[#ir/symbol name:a]
+          value:[#ir/from-value value:v]]
     end
 
 
