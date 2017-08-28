@@ -25,6 +25,19 @@ fn to_s(string:&str) -> Internable {
     return Internable::String(string.to_owned());
 }
 
+fn make_change(e: Internable, a: &str, v: Internable) -> RawChange {
+    RawChange{e, a: Internable::String(a.to_owned()), v, n: Internable::String("editor".to_owned()), count: 1}
+}
+
+fn make_change_str(e: Internable, a: &str, v: &str) -> RawChange {
+    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::String(v.to_owned()), n: Internable::String("editor".to_owned()), count: 1}
+}
+
+fn make_change_num(e: Internable, a: &str, v: f32) -> RawChange {
+    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::from_number(v), n: Internable::String("editor".to_owned()), count: 1}
+}
+
+
 //-------------------------------------------------------------------------
 // Editor Watcher
 //-------------------------------------------------------------------------
@@ -59,6 +72,7 @@ impl EditorWatcher {
         editor_runner.program.attach(Box::new(ConsoleWatcher::new()));
         editor_runner.program.attach(Box::new(PanicWatcher::new()));
         editor_runner.program.attach(Box::new(RemoteWatcher::new(&editor_name, &router.lock().unwrap().deref())));
+        editor_runner.program.attach(Box::new(EditorHostWatcher::new(client_out.clone())));
 
         let text = serde_json::to_string(&json!({"type": "load-bundle", "bundle": "programs/editor", "client": &editor_name})).unwrap();
         ws_out.send(Message::Text(text)).unwrap();
@@ -188,14 +202,48 @@ impl Drop for EditorWatcher {
 }
 
 
-fn make_change(e: Internable, a: &str, v: Internable) -> RawChange {
-    RawChange{e, a: Internable::String(a.to_owned()), v, n: Internable::String("editor".to_owned()), count: 1}
+//-------------------------------------------------------------------------
+// Editor Watcher
+//-------------------------------------------------------------------------
+
+pub struct EditorHostWatcher {
+    name: String,
+    client_out: Sender<RunLoopMessage>
 }
 
-fn make_change_str(e: Internable, a: &str, v: &str) -> RawChange {
-    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::String(v.to_owned()), n: Internable::String("editor".to_owned()), count: 1}
+impl EditorHostWatcher {
+    pub fn new(client_out:Sender<RunLoopMessage>) -> EditorHostWatcher {
+        EditorHostWatcher{name: "editor/host".to_owned(), client_out}
+    }
 }
 
-fn make_change_num(e: Internable, a: &str, v: f32) -> RawChange {
-    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::from_number(v), n: Internable::String("editor".to_owned()), count: 1}
+impl Watcher for EditorHostWatcher {
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
+    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+        for remove in diff.removes {
+            if let &Internable::String(ref kind) = interner.get_value(remove[0]) {
+                match (kind.as_ref(), &remove[1..]) {
+                    ("pause", &[]) => {
+                        self.client_out.send(RunLoopMessage::Resume);
+                    }
+                    _ => unimplemented!()
+                }
+            }
+        }
+        for add in diff.adds {
+            if let &Internable::String(ref kind) = interner.get_value(add[0]) {
+                match (kind.as_ref(), &add[1..]) {
+                    ("pause", &[]) => {
+                        self.client_out.send(RunLoopMessage::Pause);
+                    }
+                    _ => unimplemented!()
+                }
+            }
+        }
+    }
 }
