@@ -1,0 +1,340 @@
+# Snake Game
+
+Special thanks to Simon Craggs @ soundbible.com for `crunch.mp3` <http://soundbible.com/1968-Apple-Bite.html>,
+and Mike Koenig @ soundbible.com for `beep.mp3` <http://soundbible.com/1251-Beep.html>.
+
+We'll use a `#system/timer` to advance the game one frame each tick. The `#movement` records contain some housekeeping information about the ways a snake can move, and what precisely those movements mean. The `#pixel-scale` record can be adjusted in the future by a (not yet added) resize event to resample the board appropriately.
+
+~~~ eve
+commit
+  [#system/timer #time resolution: 1000 / 6] // Tick the game 6 times a second.
+  [#movement direction: "left"  dx: -1 dy: 0 | opposite: "right"]
+  [#movement direction: "right" dx: 1  dy: 0 | opposite: "left"]
+  [#movement direction: "up"    dx: 0  dy: -1 | opposite: "down"]
+  [#movement direction: "down"  dx: 0  dy: 1 | opposite: "up"]
+
+  [#audio-clip src: "examples/snake/crunch.mp3" duration: 6]
+  [#audio-clip src: "examples/snake/beep.mp3" duration: 12]
+
+  [#pixel-scale scale-x: 5 / 3 scale-y: 5 / 3 cell-width: 42 cell-height: 42] // Once we add window metadata events, we'll generate this live.
+  [#board width: 10 height: 10]
+  [#snake name: "Jeff the Snake" | x: 4 y: 4 length: 5 best: 0]
+  [#fruit x: 0 y: 0]
+end
+~~~
+
+# Input
+
+The Snake specification calls for inputs to be queued, such that only one executes each game tick in the order they are received. 180° turns are considered illegal and discarded, but 0° inputs allow building complex instruction chains like "move up 3, move left 2."
+
+Tapping the space par toggles pausing the game.
+~~~ eve
+search
+  event = [#html/event/key-down key: "space"]
+  not([#paused])
+commit
+  [#paused]
+end
+
+search
+  event = [#html/event/key-down key: "space"]
+  paused = [#paused]
+commit
+  paused := none
+end
+~~~
+
+Queue input events.
+~~~ eve
+search
+  event = [#html/event/key-down key]
+  [#movement direction: key]
+  sort = if existing = [#command sort: top]
+            gather/top[for: top limit: 1]
+            then top + 1
+         else 1
+commit
+  [#command event key sort]
+end
+~~~
+
+Mark the next command.
+~~~ eve
+search
+  command = [#command sort]
+  gather/bottom[for: sort limit: 1]
+bind
+  command += #next-command
+end
+~~~
+
+If the next command is invalid, delete it.
+~~~ eve
+search
+  command = [#next-command key]
+  [#snake direction]
+  [#movement direction opposite: key]
+commit
+  command := none
+end
+~~~
+
+Execute one command each tick.
+~~~ eve
+search
+  not([#paused])
+  [#system/timer/change]
+  snake = [#snake]
+  command = [#next-command key]
+commit
+  snake.direction := key
+  command := none
+end
+~~~
+
+
+# Movement
+
+Figure out where the snake will move next.
+~~~ eve
+search
+  [#system/timer/change tick]
+  snake = [#snake]
+  direction = if [#next-command key] then key else snake.direction
+  [#movement direction dx dy]
+  x = snake.x + dx
+  y = snake.y + dy
+bind
+  [#next-position x y]
+end
+~~~
+
+Scoot the snake each tick, wrapping if out of bounds.
+~~~ eve
+search
+  not([#paused])
+  [#system/timer/change tick]
+  snake = [#snake]
+  [#board width height]
+  [#next-position x y]
+
+  nx = if x < 0 then width - 1
+       else if x >= width then 0
+       else x
+
+  ny = if y < 0 then height - 1
+       else if y >= height then 0
+       else y
+
+commit
+  [#body tick | x: snake.x y: snake.y age: 1]
+  snake.x := nx
+  snake.y := ny
+end
+~~~
+
+
+## Collision
+
+When the snake's head hits it's body, it gets truncated to the collision site.
+~~~ eve
+search
+  snake = [#snake x y]
+  body = [#body x y age]
+  age != 0
+commit
+  snake.length := age - 1
+  [#sound-effect src: "examples/snake/beep.mp3" age: 0 body]
+end
+~~~
+
+When the snake's head hits the fruit, eat it!
+~~~ eve
+search
+  [#system/timer/change]
+  snake = [#snake x y length]
+  fruit = [#fruit x y]
+bind
+  [#eating]
+end
+~~~
+
+~~~ eve
+search
+  [#eating]
+  snake = [#snake x y length]
+  fruit = [#fruit x y]
+commit
+  snake.length := length + 1
+  fruit := none
+  [#sound-effect src: "examples/snake/crunch.mp3" age: 0 fruit]
+end
+~~~
+
+When there is no fruit, make a new random one!
+~~~ eve
+search
+  [#time tick]
+  [#board width height]
+  not([#fruit])
+  x = math/floor[value: random/number[seed: "x{{tick}}"] * width]
+  y = math/floor[value: random/number[seed: "y{{tick}}"] * height]
+commit
+  [#fruit x y]
+end
+~~~
+
+
+## Snake Maintenance
+
+Increase the age of each segment of the snake's body on tick. The age tells us how far away the body segment is from the head.
+~~~ eve
+search
+  not([#paused])
+  [#system/timer/change]
+  body = [#body age]
+  [#snake direction]
+commit
+  body.age := age + 1
+end
+~~~
+
+Any bodies older than the length of our snake die. If our snake is eating, he grows a little longer.
+~~~ eve
+search
+  body = [#body age]
+  [#snake length]
+  max = if [#eating] then length + 1 else length
+  age > max
+commit
+  body := none
+end
+~~~
+
+When the snake's length is higher than the best score, update it.
+~~~ eve
+search
+  snake = [#snake length best]
+  cur = length
+  cur > best
+commit
+  snake.best := cur
+end
+~~~
+
+
+## Sound Effects
+
+Decorate sound effects.
+~~~ eve
+search
+  effect = [#sound-effect src]
+bind
+  effect <- [#html/element tagname: "audio" autoplay: "true" children:
+    [#html/element tagname: "source" src]]
+end
+~~~
+
+Age sound effects.
+~~~ eve
+search
+  [#system/timer/change]
+  effect = [#sound-effect age]
+commit
+  effect.age := age + 1
+end
+~~~
+
+If the effect is over (it's age exceeds its duration), we can throw it away.
+~~~ eve
+search
+  effect = [#sound-effect age src]
+  [#audio-clip src duration]
+  age >= duration
+commit
+  effect := none
+end
+~~~
+
+
+
+
+
+## Drawing
+
+Placed elements are positioned in cell-coordinates in the world.
+~~~ eve
+search
+  [#pixel-scale scale-x scale-y cell-width cell-height]
+  placed = [#placed x y]
+  pad = if p = placed.pad then p else 0
+  left = (x * cell-width + pad) * scale-x
+  top = (y * cell-height + pad) * scale-y
+  width = (cell-width - pad * 2) * scale-x
+  height = (cell-height - pad * 2) * scale-y
+bind
+  placed.style += [#placement position: "absolute" top: "{{top}}px" left: "{{left}}px" width: "{{width}}px" height: "{{height}}px"]
+end
+~~~
+
+Draw a world for the snake to live in.
+~~~ eve
+search
+  snake = [#snake length best]
+bind
+  [#world #html/div | children:
+    [#html/div #score-text text: "{{length}}  high: {{best}}"]]
+  [#html/style text: ".world { position: relative; width: 700px; height: 700px; background: black; }
+                      .score-text { position: absolute; left: 0; right: 0; top: 0; margin: 5px; text-align: center; font-size: 1.5rem; color: rgba(255, 255, 255, 0.3); z-index: 2; }"]
+end
+~~~
+
+If the game is paused, indicate that.
+~~~ eve
+search
+  [#paused]
+  world = [#world]
+bind
+  world.children += [#html/div #pause-text text: "PAUSED"]
+  [#html/style text: ".pause-text {position: absolute; left: 0; right: 0; bottom: 0; margin: 5px; text-align: center; font-size: 1.5rem; color: rgba(255, 255, 255, 0.6); z-index: 2; }"]
+end
+~~~
+
+
+Draw the snake's head.
+~~~ eve
+search
+  world = [#world]
+  snake = [#snake x y]
+bind
+  world.children += snake
+  snake <- [#html/div #placed pad: 1]
+  [#html/style text: ".snake { border: 2px solid darkgreen; border-radius: 8px; background: limegreen; z-index: 1; }"]
+end
+~~~
+
+Draw the snake's body.
+~~~ eve
+search
+  world = [#world]
+  body = [#body age x y]
+  background = if 1 = math/mod[value: age by: 2] then "lawngreen" else "limegreen"
+bind
+  world.children += body
+  body <- [#html/div #placed pad: 1 | style: [background]]
+end
+~~~
+
+Draw the tasty fruit.
+~~~ eve
+search
+  fruit = [#fruit]
+  world = [#world]
+  x = fruit.x * 70 + 35
+  y = fruit.y * 70 + 35
+bind
+  world.children += fruit
+  fruit <- [#html/div #placed pad: 8]
+  [#html/style text: ".fruit { border-radius: 99px; background: crimson; }"]
+end
+~~~
