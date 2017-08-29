@@ -595,7 +595,16 @@ a new set of optimized ones and any link that hasn't been removed by some
 optimization rule is part of the new, optimized chain.
 
     search
+      from = [#chain]
       link = [#chain-link chain from to level]
+      not([#link-removal link])
+    bind
+      [#chain-link/optimized chain from-link:link from to level]
+    end
+
+    search
+      from = [#chain-link/optimized from-link]
+      link = [#chain-link chain from:from-link to level]
       not([#link-removal link])
     bind
       [#chain-link/optimized chain from to level]
@@ -613,6 +622,78 @@ can't run.
       not(from.tag-name = tag-name)
     bind
       [#link-removal link reason: "Relies on a pulse that has already been removed"]
+    end
+
+
+Constraint ordering
+------------------------------------------------------
+
+Within a block, constraints have to be ordered by their dependencies, otherwise
+we might end up trying to compute a function or filter before its inputs are
+actually available. While the constraint itself doesn't care about this
+information, we'll adorn it with an ordering so that we can use it during IR
+generation. Figuring this ordering out is a two step process. First, we need to
+annotate the registers with the level they are provided at. Then we take the max
+level for each constraint to determine its level.
+
+We'll have our rules annotate registers with a `maybe-level` since there could
+be multiple constraints that provide the value for some register at different
+levels. The real level of the register is just the min of those.
+
+    search
+      reg = [#register maybe-level]
+      gather/bottom[for:maybe-level per:reg limit:1]
+    bind
+      reg.level += maybe-level
+    end
+
+Scans are easy - all their registers are 1 and the scan itself is also 1.
+
+    search
+      scan = [#scan]
+      reg = if scan.e = [#register] then scan.e
+            if scan.a = [#register] then scan.a
+            if scan.v = [#register] then scan.v
+    bind
+      scan.level += 1
+      reg.maybe-level += 1
+    end
+
+Filters doesn't produce any output, but *do* rely on their left and right being
+provided, so their level is one higher than the max of their registers.
+
+    search
+      filter = [#filter]
+      reg = if filter.left = [#register] then filter.left
+            if filter.right = [#register] then filter.right
+      gather/top[for:reg.level per:filter limit:1]
+    bind
+      filter.level += reg.level + 1
+    end
+
+Functions are similar to filters, except we also have to level their output.
+It's also possible that this function has no register params, in which case,
+its level is 1.
+
+    search
+      func = [#function params]
+      gather/top[for:params.value.level per:func limit:1]
+    bind
+      func.level += params.value.level + 1
+    end
+
+    search
+      func = [#function output level]
+    bind
+      output.maybe-level += level + 1
+    end
+
+    search
+      func = [#function]
+      not(func.params.value.level)
+    bind
+      func.level += 1
+      func.output.level += 2
     end
 
 
@@ -651,7 +732,7 @@ Roots
     bind
       sym = [#ir/symbol name:tag-name]
       ir = [#ir/on symbol:sym tag-name:sym]
-      chain.provider += [#provider tag-name symbol:sym ir]
+      chain.provider += [#provider level:0 tag-name symbol:sym ir]
     end
 
     search
@@ -677,24 +758,32 @@ Blocks via chain-link/optimized
 
     search
       link = [#chain-link/optimized provider]
-      gather/top[for:provider per:link limit:1]
+      gather/top[for:(provider.level, provider) per:link limit:1]
     bind
       link.child-container += provider
     end
 
     search
       link = [#chain-link/optimized from provider]
-      gather/next[for:provider per:link]
+      level = if provider.level then provider.level
+              else 0
+      (_, next) = gather/next[for:(level, provider) per:link]
     bind
-      provider.item += provider.ir
+      provider.ir.item += next.ir
     end
 
     search
       link = [#chain-link/optimized from provider]
-      gather/bottom[for:provider per:link limit:1]
+      gather/bottom[for:(provider.level, provider) per:link limit:1]
     bind
       from.child-container.ir.item += provider.ir
     end
+
+We need to setup providers for the tags a block uses, as well as for every level
+the scans of this block belong to that wouldn't otherwise end up with a
+provider. We determine the latter by looking if there's a constraint that
+has-items. If there's not, then we'll need an `#ir/do` to wrap up the
+constraints that belong to that level.
 
     search
       chain = [#chain-link/optimized to from]
@@ -702,14 +791,33 @@ Blocks via chain-link/optimized
       not(from.provider.tag-name = tag-name)
     bind
       sym = [#ir/symbol name:tag-name]
-      ir = [#ir/for symbol:sym tag-name:sym]
-      chain.provider += [#provider tag-name symbol:sym ir]
+      ir = [#ir/for block:to | symbol:sym tag-name:sym]
+      chain.provider += [#provider level:0 tag-name symbol:sym ir]
     end
 
     search
-      link = [#chain-link/optimized to child-container]
+      chain = [#chain-link/optimized to:block]
+      constraint = [#constraint block level]
+      not(chain.provider = [#constraint-provided level])
     bind
-      child-container.ir.item += to.constraint.ir
+      chain.provider += [#provider block level |
+                          ir: [#ir/do block level]]
+    end
+
+We then put all the constraints in the appropriate container for their level, or
+if they don't have a level, in the child-container.
+
+    disabled search
+      link = [#chain-link/optimized to:[constraint] provider child-container]
+    bind
+      child-container.ir.item += constraint.ir
+    end
+
+    search
+      link = [#chain-link/optimized to:[constraint] provider]
+      provider.level = constraint.level
+    bind
+      provider.ir.item += constraint.ir
     end
 
 Now that we've set up providers for all the tags in our chain, it's useful to be
@@ -763,16 +871,32 @@ Scans
                           value:[#ir/get symbol attribute:[#ir/symbol name:a]]]
     end
 
-Filters and infix functions
+Filters
 
     search
-      filter = [#filter op left right]
+      chain = [#chain-link/optimized to:block]
+      [#filter level block]
     bind
-      filter.ir +=
+      chain.provider += [#provider #constraint-provided #filter-provider level block]
+    end
+
+    search
+      provider = [#filter-provider block level]
+    bind
+      provider.ir += [#ir/if block level | cond: [#ir/and]]
+    end
+
+    search
+      provider = [#filter-provider block]
+      filter = [#filter block op left right]
+    bind
+      provider.ir.cond.item +=
         [#ir/infix filter | op
           left:[#ir/from-value value:left]
           right:[#ir/from-value value:right]]
     end
+
+Functions
 
     search
       function = [#function output op params:[index:1 value:left] [index:2 value:right]]
@@ -785,8 +909,6 @@ Filters and infix functions
                     left:[#ir/from-value value:left]
                     right:[#ir/from-value value:right]]]
     end
-
-Functions
 
     search
       function = [#function output op params]
@@ -910,7 +1032,12 @@ have their items concatenated into a string with each item on its own line.
 
     search
       ir = [#ir/has-items item]
-      items_js = gather/string-join[for:item value:item.js separator:"\n" per:ir]
+      level = if item.level then item.level
+              else 0
+      separator = if ir.tag = "ir/and" then " && "
+                  else if ir.tag = "ir/or" then " || "
+                  else "\n"
+      items_js = gather/string-join[for:(level, item) value:item.js separator per:ir]
     bind
       ir <- [items_js]
     end

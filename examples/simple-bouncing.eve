@@ -10,12 +10,12 @@
 /*   [#boid order x y vx vy] */
 /* end */
 
-/* search */
-/*   boid = [#boid x > 490] */
-/*   boid.vx > 0 */
-/* commit */
-/*   boid.vx := boid.vx * -0.9 */
-/* end */
+search
+  boid = [#boid x > 490]
+  boid.vx > 0
+commit
+  boid.vx := boid.vx * -0.9
+end
 
 /* search */
 /*   boid = [#boid x < 10] */
@@ -31,12 +31,12 @@
 /*   boid.vy := boid.vy * -0.9 */
 /* end */
 
-/* search */
-/*   boid = [#boid y < 10] */
-/*   boid.vy < 0 */
-/* commit */
-/*   boid.vy := boid.vy * -0.9 */
-/* end */
+search
+  boid = [#boid y < 10]
+  boid.vy < 0
+commit
+  boid.vy := boid.vy * -0.9
+end
 
 search
   t = [#system/timer/change]

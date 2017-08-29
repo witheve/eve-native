@@ -3054,6 +3054,7 @@ impl Field {
 
 pub enum PortableConstraint {
     Scan(PortableField, PortableField, PortableField),
+    Filter(String, PortableField, PortableField),
     Function(String, PortableField, Vec<PortableField>),
     Output(PortableField, PortableField, PortableField, bool),
     Remove(PortableField, PortableField, PortableField),
@@ -3091,6 +3092,14 @@ impl PortableConstraint {
                 changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
                 changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
                 changes.push(RawChange::new(id.clone(), s("v"), eve_v, s("compiler"), 1));
+            }
+            &PortableConstraint::Filter(ref op, ref left, ref right) => {
+                let eve_left = left.to_eve_value(block, changes);
+                let eve_right = right.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("filter"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("op"), s(op.as_str()), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("left"), eve_left, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("right"), eve_right, s("compiler"), 1));
             }
             &PortableConstraint::Output(ref e, ref a, ref v, commit) => {
                 let eve_e = e.to_eve_value(block, changes);
@@ -3150,6 +3159,7 @@ impl Constraint {
     pub fn to_portable(&self, i:&Interner) -> PortableConstraint {
         match self {
             &Constraint::Scan{ref e, ref a, ref v, ..} => PortableConstraint::Scan(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
+            &Constraint::Filter{ref op, ref left, ref right, ..} => PortableConstraint::Filter(op.to_owned(), left.to_portable(i), right.to_portable(i)),
             &Constraint::Insert{ref e, ref a, ref v, commit} => PortableConstraint::Output(e.to_portable(i), a.to_portable(i), v.to_portable(i), commit),
             &Constraint::Remove{ref e, ref a, ref v} => PortableConstraint::Remove(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
             &Constraint::RemoveAttribute{ref e, ref a} => PortableConstraint::RemoveAttribute(e.to_portable(i), a.to_portable(i)),
