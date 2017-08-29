@@ -703,6 +703,31 @@ its level is 1.
       func.output.level += 2
     end
 
+Multi-functions are basically the same as functions in this regard except that
+they have multiple outputs instead of one.
+
+
+    search
+      func = [#multi-function params]
+      gather/top[for:params.value.level per:func limit:1]
+    bind
+      func.level += params.value.level + 1
+    end
+
+    search
+      func = [#multi-function outputs level]
+    bind
+      outputs.maybe-level += level + 1
+    end
+
+    search
+      func = [#multi-function]
+      not(func.params.value.level)
+    bind
+      func.level += 1
+      func.outputs.level += 2
+    end
+
 Updates should be in the highest level.
 
     search
@@ -956,14 +981,24 @@ Functions
                     arg: [#ir/from-value value:params.value index:params.index]]]
     end
 
+Multi-functions
+
     search
-      function = [#multi-function
+      chain = [#chain-link/optimized to:block]
+      func = [#multi-function level block]
+    bind
+      chain.provider += [#provider #constraint-provided #multi-function-provider chain level block func]
+    end
+
+    search
+      provider = [#multi-function-provider func]
+      func = [#multi-function
                    op:"math/range"
                    outputs:[index:1 value:output]
                    params:[index:1 value:start] [index:2 value:stop]]
     bind
-      function.ir +=
-        [#ir/range function |
+      provider.ir +=
+        [#ir/range func |
           symbol: [#ir/from-value value:output]
           start: [#ir/from-value value:start]
           stop: [#ir/from-value value:stop]]
