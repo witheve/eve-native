@@ -883,7 +883,7 @@ Filters
     search
       provider = [#filter-provider block level]
     bind
-      provider.ir += [#ir/if provider block level | cond: [#ir/and]]
+      provider.ir += [#ir/if provider block level | cond: [#ir/and provider]]
     end
 
     search

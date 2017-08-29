@@ -17,19 +17,19 @@ commit
   boid.vx := boid.vx * -0.9
 end
 
-/* search */
-/*   boid = [#boid x < 10] */
-/*   boid.vx < 0 */
-/* commit */
-/*   boid.vx := boid.vx * -0.9 */
-/* end */
+search
+  boid = [#boid x < 10]
+  boid.vx < 0
+commit
+  boid.vx := boid.vx * -0.9
+end
 
-/* search */
-/*   boid = [#boid y > 490] */
-/*   boid.vy > 0 */
-/* commit */
-/*   boid.vy := boid.vy * -0.9 */
-/* end */
+search
+  boid = [#boid y > 490]
+  boid.vy > 0
+commit
+  boid.vy := boid.vy * -0.9
+end
 
 search
   boid = [#boid y < 10]
