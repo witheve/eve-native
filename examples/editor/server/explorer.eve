@@ -1,46 +1,35 @@
-# DB Explorer
+# Explorer
 
 ## Root
 
 ~~~ eve
-commit
-  [#ui/row #editor/root | children:
-    [#ui/column #editor/timeline/root]
-    [#ui/column #db-explorer/root | children:
-      [#ui/row #db-explorer/query-box | children:
-        [#ui/token-completer #db-explorer/query placeholder: "search..." | completion-pattern: [#db-explorer/pattern]]
-        [#ui/button #db-explorer/query-button icon: "ios-search-strong"]]
-      [#ui/row #db-explorer/symbol-list]
-      [#ui/row #db-explorer/card-list]]]
+search
+  root = [#editor/explorer/root]
+bind
+  root <- [#ui/column children:
+    [#ui/row #editor/explorer/query-box | children:
+      [#ui/token-completer #editor/explorer/query placeholder: "search..." | completion-pattern: [#editor/explorer/pattern]]
+      [#ui/button #editor/explorer/query-button icon: "ios-search-strong"]]
+    [#ui/row #editor/explorer/symbol-list]
+    [#ui/row #editor/explorer/card-list]]
 end
 ~~~
 
 Draw each matching record as a record symbol.
 ~~~ eve
 search
-  [#db-explorer/root record]
-  symbol-list = [#db-explorer/symbol-list]
+  [#editor/explorer/root record]
+  symbol-list = [#editor/explorer/symbol-list]
 bind
-  symbol-list.children += [#db-explorer/record-symbol record]
-end
-~~~
-
-If no records are specified, show any client record.
-~~~ eve
-search
-  not([#db-explorer/completion-record])
-  root = [#db-explorer/root]
-  [#db-explorer/client-record value: record]
-bind
-  root.record += record
+  symbol-list.children += [#editor/explorer/record-symbol record]
 end
 ~~~
 
 Otherwise, show the completion records.
 ~~~ eve
 search
-  root = [#db-explorer/root]
-  [#db-explorer/completion-record record]
+  root = [#editor/explorer/root]
+  [#editor/explorer/completion-record record]
 bind
   root.record += record
 end
@@ -51,8 +40,8 @@ end
 
 ~~~ eve
 search
-  symbol = [#db-explorer/record-symbol record]
-  title = if [#db-explorer/client-name entity: record name: t] then t else "Untitled"
+  symbol = [#editor/explorer/record-symbol record]
+  title = if [#editor/explorer/client-name entity: record name: t] then t else "Untitled"
 bind
   symbol <- [#ui/button class: "flat" record sort: record text: title]
 end
@@ -61,8 +50,8 @@ end
 Clicking a record symbol opens its card.
 ~~~ eve
 search
-  [#html/event/click element: [#db-explorer/record-symbol record]]
-  root = [#db-explorer/root]
+  [#html/event/click element: [#editor/explorer/record-symbol record]]
+  root = [#editor/explorer/root]
 commit
   // root.open += record // @FIXME: Why doesn't this work if we do + and -
   root.open := record
@@ -74,20 +63,20 @@ end
 If a record is open, inject its card.
 ~~~ eve
 search
-  root = [#db-explorer/root open: record]
-  [#db-explorer/client-open-record record av]
-  card-list = [#db-explorer/card-list]
+  root = [#editor/explorer/root open: record]
+  [#editor/explorer/client-open-record record av]
+  card-list = [#editor/explorer/card-list]
 bind
   card-list.children +=
-  [#record-card/card #db-explorer/card sort: record entity: record | av]
+  [#record-card/card #editor/explorer/card sort: record entity: record | av]
 end
 ~~~
 
 Inject titles for open cards.
 ~~~ eve
 search
-  card = [#record-card/card #db-explorer/card entity]
-  [#db-explorer/client-name entity name]
+  card = [#record-card/card #editor/explorer/card entity]
+  [#editor/explorer/client-name entity name]
 bind
   card.title += name
 end
@@ -97,9 +86,9 @@ end
 Check if a value tile is a remote record.
 ~~~ eve
 search
-  card = [#db-explorer/card]
+  card = [#editor/explorer/card]
   attr-tile = [#record-card/attribute-tile card value]
-  [#db-explorer/client-record value]
+  [#editor/explorer/client-record value]
 bind
   attr-tile.type += "record"
 end
@@ -108,10 +97,10 @@ end
 Apply titles to record value tiles for remote records.
 ~~~ eve
 search
-  card = [#db-explorer/card]
+  card = [#editor/explorer/card]
   attr-tile = [#record-card/attribute-tile type: "record" card]
   attr-value = [#record-card/value attr-tile value]
-  [#db-explorer/client-name entity: value name: title]
+  [#editor/explorer/client-name entity: value name: title]
 bind
   attr-value.title += title
 end
@@ -123,7 +112,7 @@ Clicking a record button in a card opens its card too.
 ~~~ eve
 search
   [#html/event/click element: [#record-card/record value]]
-  root = [#db-explorer/root]
+  root = [#editor/explorer/root]
 commit
   root.open := value
 end
@@ -133,8 +122,8 @@ Clicking a tag button in a card adds that tag to the query.
 ~~~ eve
 search
   [#html/event/click element: [#record-card/tag text]]
-  root = [#db-explorer/root]
-  query = [#ui/token-completer #db-explorer/query item]
+  root = [#editor/explorer/root]
+  query = [#ui/token-completer #editor/explorer/query item]
   item.text = "#{{text}}"
 bind
   [#ui/event/select element: query item]
@@ -149,9 +138,9 @@ end
 Add tag completions to queries with no existing filters.
 ~~~ eve
 search
-  query = [#db-explorer/query]
+  query = [#editor/explorer/query]
   not(string/contains[text: query.value substring: " "])
-  [#db-explorer/client-tag value: tag]
+  [#editor/explorer/client-tag value: tag]
 bind
   query.completion += [value: tag text: "#{{tag}}"]
 end
@@ -160,9 +149,9 @@ end
 Add attribute completions to queries with no existing filters.
 ~~~ eve
 search
-  query = [#db-explorer/query]
+  query = [#editor/explorer/query]
   not(string/contains[text: query.value substring: " "])
-  [#db-explorer/client-attribute value: attribute]
+  [#editor/explorer/client-attribute value: attribute]
 bind
   query.completion += [value: attribute text: attribute]
 end
@@ -171,9 +160,9 @@ end
 Add tags that match possible completions.
 ~~~ eve
 search
-  query = [#db-explorer/query completion-pattern]
-  [#db-explorer/completion-record record]
-  [#db-explorer/completion-tag record value: tag]
+  query = [#editor/explorer/query completion-pattern]
+  [#editor/explorer/completion-record record]
+  [#editor/explorer/completion-tag record value: tag]
   not(completion-pattern.attribute = [attribute: "tag" value: tag])
 bind
   query.completion += [value: tag text: "#{{tag}}"]
@@ -183,9 +172,9 @@ end
 Add tags that match possible completions.
 ~~~ eve
 search
-  query = [#db-explorer/query]
-  [#db-explorer/completion-record record]
-  [#db-explorer/completion-attribute record value: attribute]
+  query = [#editor/explorer/query]
+  [#editor/explorer/completion-record record]
+  [#editor/explorer/completion-attribute record value: attribute]
   not(completion-pattern.attribute = [attribute])
 bind
   query.completion += [value: attribute text: attribute]
@@ -197,20 +186,20 @@ end
 If multiple tokens exist, assume all but the last are fully formed tags or attributes to filter upon.
 ~~~ eve
 search
-  query = [#db-explorer/query completion-pattern token last-ix]
+  query = [#editor/explorer/query completion-pattern token last-ix]
   token.ix != last-ix
 
 bind
-  [#db-explorer/tokens-to-pattern pattern: completion-pattern token: token.token]
+  [#editor/explorer/tokens-to-pattern pattern: completion-pattern token: token.token]
 end
 ~~~
 
-`#db-explorer/tokens-to-pattern` attaches AVs to the records attribute for each token.
+`#editor/explorer/tokens-to-pattern` attaches AVs to the records attribute for each token.
 
 If the token starts with `#`, it's a tag.
 ~~~ eve
 search
-  [#db-explorer/tokens-to-pattern pattern token]
+  [#editor/explorer/tokens-to-pattern pattern token]
   1 = string/index-of[text: token substring: "#"]
   value = string/substring[text: token from: 2 to: 0]
 bind
@@ -221,7 +210,7 @@ end
 If the token doesn't start with `#`, it's an attribute.
 ~~~ eve
 search
-  [#db-explorer/tokens-to-pattern pattern token]
+  [#editor/explorer/tokens-to-pattern pattern token]
   not(1 = string/index-of[text: token substring: "#"])
   token != ""
 bind
