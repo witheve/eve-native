@@ -1545,7 +1545,7 @@ pub fn random_number(params: Vec<&Internable>) -> Option<Internable> {
             let seed = hash.finish();
             let top = (seed << 32) as u32;
             let bottom = (seed >> 32) as u32;
-            let mut rng = XorShiftRng::from_seed([0x123, top, top - bottom, bottom]);
+            let mut rng = XorShiftRng::from_seed([0x123, top, top | bottom, bottom]);
             Some(Internable::from_number(rng.next_f32()))
         },
         _ => { None }
