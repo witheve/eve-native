@@ -800,8 +800,8 @@ constraints that belong to that level.
       constraint = [#constraint block level]
       not(chain.provider = [#constraint-provided level])
     bind
-      chain.provider += [#provider block level |
-                          ir: [#ir/do block level]]
+      chain.provider += [#provider chain block level |
+                          ir: [#ir/do chain block level]]
     end
 
 We then put all the constraints in the appropriate container for their level, or
@@ -877,13 +877,13 @@ Filters
       chain = [#chain-link/optimized to:block]
       [#filter level block]
     bind
-      chain.provider += [#provider #constraint-provided #filter-provider level block]
+      chain.provider += [#provider #constraint-provided #filter-provider chain level block]
     end
 
     search
       provider = [#filter-provider block level]
     bind
-      provider.ir += [#ir/if block level | cond: [#ir/and]]
+      provider.ir += [#ir/if provider block level | cond: [#ir/and]]
     end
 
     search
