@@ -647,6 +647,13 @@ levels. The real level of the register is just the min of those.
       reg.level += maybe-level
     end
 
+    search
+      reg = [#register block level]
+      gather/top[for:level per:block limit:1]
+    bind
+      block.max-register-level += level
+    end
+
 Scans are easy - all their registers are 1 and the scan itself is also 1.
 
     search
@@ -694,6 +701,32 @@ its level is 1.
     bind
       func.level += 1
       func.output.level += 2
+    end
+
+Updates should be in the highest level.
+
+    search
+      update = [#real/set block]
+    bind
+      update.level += block.max-register-level + 1
+    end
+
+    search
+      update = [#real/create block]
+    bind
+      update.level += block.max-register-level + 1
+    end
+
+    search
+      update = [#real/update block]
+    bind
+      update.level += block.max-register-level + 1
+    end
+
+    search
+      update = [#real/remove block]
+    bind
+      update.level += block.max-register-level + 1
     end
 
 

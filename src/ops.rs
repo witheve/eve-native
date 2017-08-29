@@ -3063,6 +3063,7 @@ pub enum PortableConstraint {
     Scan(PortableField, PortableField, PortableField),
     Filter(String, PortableField, PortableField),
     Function(String, PortableField, Vec<PortableField>),
+    MultiFunction(String, Vec<PortableField>, Vec<PortableField>),
     Output(PortableField, PortableField, PortableField, bool),
     Remove(PortableField, PortableField, PortableField),
     RemoveAttribute(PortableField, PortableField),
@@ -3155,7 +3156,26 @@ impl PortableConstraint {
                 }
                 changes.push(RawChange::new(id.clone(), s("output"), eve_output, s("compiler"), 1));
             },
-
+            &PortableConstraint::MultiFunction(ref name, ref outputs, ref args) => {
+                changes.push(RawChange::new(id.clone(), s("tag"), s("multi-function"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("op"), s(name.as_str()), s("compiler"), 1));
+                for (ix, raw_arg) in args.iter().enumerate() {
+                    let arg = raw_arg.to_eve_value(block, changes);
+                    let eve_ix = n((ix + 1) as f32);
+                    let arg_id = gen_id(vec![&eve_ix, &arg]).unwrap();
+                    changes.push(RawChange::new(arg_id.clone(), s("value"), arg, s("compiler"), 1));
+                    changes.push(RawChange::new(arg_id.clone(), s("index"), eve_ix, s("compiler"), 1));
+                    changes.push(RawChange::new(id.clone(), s("params"), arg_id, s("compiler"), 1));
+                }
+                for (ix, raw_output) in outputs.iter().enumerate() {
+                    let output = raw_output.to_eve_value(block, changes);
+                    let eve_ix = n((ix + 1) as f32);
+                    let output_id = gen_id(vec![&eve_ix, &output]).unwrap();
+                    changes.push(RawChange::new(output_id.clone(), s("value"), output, s("compiler"), 1));
+                    changes.push(RawChange::new(output_id.clone(), s("index"), eve_ix, s("compiler"), 1));
+                    changes.push(RawChange::new(id.clone(), s("outputs"), output_id, s("compiler"), 1));
+                }
+            },
             _ => unimplemented!()
         }
         id
@@ -3177,7 +3197,9 @@ impl Constraint {
             &Constraint::Function{ref op, ref output, ref params, ..} => {
                 PortableConstraint::Function(op.to_owned(), output.to_portable(i), params.iter().map(|v| v.to_portable(i)).collect())
             },
-
+            &Constraint::MultiFunction{ref op, ref outputs, ref params, ..} => {
+                PortableConstraint::MultiFunction(op.to_owned(), outputs.iter().map(|v| v.to_portable(i)).collect(), params.iter().map(|v| v.to_portable(i)).collect())
+            },
             _ => unimplemented!()
         }
     }

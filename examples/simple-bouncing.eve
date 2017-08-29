@@ -1,14 +1,14 @@
-/* search */
-/*   order = math/range[from:1 to:200] */
-/*   rand = random/number[seed: order] */
-/*   rand2 = random/number[seed: order * order] */
-/*   x = rand * 500 */
-/*   y = rand2 * 500 */
-/*   vx = rand * 3 + 1 */
-/*   vy = rand2 * 4 + 1 */
-/* commit */
-/*   [#boid order x y vx vy] */
-/* end */
+search
+  order = math/range[from:1 to:200]
+  rand = random/number[seed: order]
+  rand2 = random/number[seed: order * order]
+  x = rand * 500
+  y = rand2 * 500
+  vx = rand * 3 + 1
+  vy = rand2 * 4 + 1
+commit
+  [#boid order x y vx vy]
+end
 
 search
   boid = [#boid x > 490]
