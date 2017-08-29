@@ -144,7 +144,7 @@ impl EditorWatcher {
                             changes.push(make_change(input_id.clone(), "av", av_id.clone()));
                             changes.push(make_change(av_id.clone(), "attribute", input.a.clone()));
                             changes.push(make_change(av_id.clone(), "value", input.v.clone()));
-                            changes.push(make_change_str(av_id.clone(), "type", kind));
+                            changes.push(make_change_str(av_id.clone(), "change", kind));
                         }
 
                         // Figure out which entities to ignore.
@@ -166,7 +166,7 @@ impl EditorWatcher {
                             changes.push(make_change(output_id.clone(), "av", av_id.clone()));
                             changes.push(make_change(av_id.clone(), "attribute", output.a.clone()));
                             changes.push(make_change(av_id.clone(), "value", output.v.clone()));
-                            changes.push(make_change_str(av_id.clone(), "type", kind));
+                            changes.push(make_change_str(av_id.clone(), "change", kind));
                         }
                         outgoing.send(RunLoopMessage::Transaction(changes));
 

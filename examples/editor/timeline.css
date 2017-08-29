@@ -29,18 +29,3 @@
 .editor-transaction-viewer-output-name:before { content: "⬢"; color: #888; }
 .editor-transaction-viewer-output-name:not(:empty):before { margin-right: 8px; }
 .editor-transaction-viewer-output-name:after { content: "<-"; margin: 0 8px; color: #888; }
-
-.editor-record-literal { line-height: 1.4;}
-.editor-record-literal > * { display: inline-block; margin: 2px 0; }
-.editor-record-literal > * + * { margin-left: 8px; }
-.editor-record-literal:before { content: "["; margin: 2px 0; }
-.editor-record-literal:after { content: "]"; margin: 2px 0; }
-.editor-record-literal-tag { color: #0076ce; }
-.editor-record-literal-attribute:after { content: ": "; }
-
-.editor-record-literal-value { padding: 0 2px; }
-.editor-record-literal-value[change="remove"] { background: rgba(255, 0, 0, 0.15); }
-.editor-record-literal-value[type="string"] { color: #00a588; }
-.editor-record-literal-value[type="string"]:before,
-.editor-record-literal-value[type="string"]:after { content: "\""; }
-.editor-record-literal-value[type="number"] { color: rgb(74, 64, 136); }

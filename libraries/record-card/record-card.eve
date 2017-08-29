@@ -134,7 +134,7 @@ search
 
 bind
   attr-tile <- [#ui/row sort: attribute children:
-    [#ui/text #record-card/attribute sort: 1 attr-tile attribute text: "{{attribute}} "]
+    [#ui/text #record-card/attribute sort: 1 attr-tile attribute type text: "{{attribute}} "]
     [#record-card/value sort: "2|{{value}}" attr-tile type value]]
 end
 ~~~
@@ -161,5 +161,69 @@ search
           else value
 bind
   attr-value <- [#ui/button #record-card/record class: "flat" text: title]
+end
+~~~
+
+
+## Record Literal
+
+Decorate the literal.
+~~~ eve
+search
+  literal = [#record-card/record-literal]
+bind
+  literal += #html/div
+end
+~~~
+
+Render tags as the first elements of the literal.
+~~~ eve
+search
+  literal = [#record-card/record-literal av]
+  av = [attribute: "tag" value]
+bind
+  literal.children +=
+    [#ui/text #record-card/record-literal/tag literal sort: 0 text: "#{{value}}"]
+end
+~~~
+
+Render other attribute sets.
+~~~ eve
+search
+  literal = [#record-card/record-literal av]
+  av = [attribute]
+  attribute != "tag"
+  sort = if attribute = "name" then 1 else attribute
+bind
+  literal.children +=
+    [#ui/div literal attribute sort | children:
+      [#ui/text #record-card/record-literal/attribute sort: 1 text: attribute]
+      [#record-card/record-literal/value av]]
+end
+~~~
+
+Decorate regular AV values.
+~~~ eve
+search
+  literal-value = [#record-card/record-literal/value av]
+  av = [attribute value change]
+  not(av.type)
+
+  type = if x = value + 1 then "number" else "string"
+  (text, title) = if 0 = math/mod[value by: 1] then (value, "")
+                  else if fixed = math/to-fixed[value to: 3] then (fixed, value)
+                  else (value, "")
+bind
+  literal-value <- [#ui/text sort: "2|{{title}}|{{change}}" type change text title]
+end
+~~~
+
+Decorate record AV values.
+~~~ eve
+search
+  literal-value = [#record-card/record-literal/value av]
+  av = [attribute value change type: "record" text]
+bind
+  literal-value <- [#ui/button #record-card/record class: "flat" sort: "2|{{text}}|{{change}}" change text value: av.value]
 end
 ~~~

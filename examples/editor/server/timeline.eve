@@ -133,7 +133,7 @@ search
   viewer = [#editor/transaction-viewer transaction: [input]]
   inputs = [#editor/transaction-viewer/inputs viewer]
 bind
-  inputs.children += [#editor/record-literal input | av: input.av]
+  inputs.children += [#record-card/record-literal input | av: input.av]
 end
 ~~~
 
@@ -145,7 +145,7 @@ search
 bind
   outputs.children += [#html/div output | children:
     [#ui/button #record-card/record #editor/transaction-viewer/output/name value: output.entity]
-    [#editor/record-literal output | av: output.av]]
+    [#record-card/record-literal output | av: output.av]]
 end
 ~~~
 
@@ -159,48 +159,17 @@ bind
 end
 ~~~
 
-
-## Record Literal
-
-Decorate the literal.
+Decorate literal values as records, if relevant.
 ~~~ eve
 search
-  literal = [#editor/record-literal]
+  [#record-card/record-literal av]
+  [#editor/explorer/client-name entity: av.value name]
 bind
-  literal += #html/div
+  av.type += "record"
+  av.text += name
 end
 ~~~
 
-Render tags as the first elements of the literal.
-~~~ eve
-search
-  literal = [#editor/record-literal av]
-  av = [attribute: "tag" value]
-bind
-  literal.children +=
-    [#ui/text #editor/record-literal/tag literal sort: 0 text: "#{{value}}"]
-end
-~~~
-
-Render other AVs.
-~~~ eve
-search
-  literal = [#editor/record-literal av]
-  av = [attribute value type: change]
-  attribute != "tag"
-  sort = if attribute = "name" then 1
-         else attribute
-  type = if x = value + 1 then "number" else "string"
-  (text, title) = if 0 = math/mod[value by: 1] then (value, "")
-                  else if fixed = math/to-fixed[value to: 3] then (fixed, value)
-                  else (value, "")
-bind
-  literal.children +=
-    [#ui/div literal attribute sort | children:
-      [#ui/text #editor/record-literal/attribute sort: 1 text: attribute]
-      [#ui/text #editor/record-literal/value change type text title sort: "2|{{title}}|{{change}}"]]
-end
-~~~
 
 
 ## Transaction Saving

@@ -44,3 +44,21 @@ body { background: #f9f9f9; font-family: Lato, sans-serif; }
 .record-card-card .record-card-record:before { content: '⬢ '; color: #888; }
 .record-card-card .record-card-record:hover { background: var(--link-hover); }
 .record-card-card .record-card-record:active { background: var(--link-active); }
+
+/* Record Literal */
+
+.record-card-record-literal { line-height: 1.4;}
+.record-card-record-literal > * { display: inline-block; margin: 2px 0; }
+.record-card-record-literal > * + * { margin-left: 8px; }
+.record-card-record-literal:before { content: "["; margin: 2px 0; }
+.record-card-record-literal:after { content: "]"; margin: 2px 0; }
+.record-card-record-literal-tag { color: #0076ce; }
+.record-card-record-literal-attribute:after { content: ": "; }
+
+.record-card-record-literal-value { padding: 0 2px; }
+.record-card-record-literal-value[change="remove"] { background: rgba(255, 0, 0, 0.15); }
+.record-card-record-literal-value[type="string"] { color: #00a588; }
+.record-card-record-literal-value[type="string"]:before,
+.record-card-record-literal-value[type="string"]:after { content: "\""; }
+.record-card-record-literal-value[type="number"] { color: rgb(74, 64, 136); }
+.record-card-record-literal-value.record-card-record { padding: 5px 10px; display: inline-block; }
