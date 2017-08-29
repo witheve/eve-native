@@ -1,42 +1,42 @@
-/* search */
-/*   order = math/range[from:1 to:200] */
-/*   rand = random/number[seed: order] */
-/*   rand2 = random/number[seed: order * order] */
-/*   x = rand * 500 */
-/*   y = rand2 * 500 */
-/*   vx = rand * 3 + 1 */
-/*   vy = rand2 * 4 + 1 */
-/* commit */
-/*   [#boid order x y vx vy] */
-/* end */
+search
+  order = math/range[from:1 to:200]
+  rand = random/number[seed: order]
+  rand2 = random/number[seed: order * order]
+  x = rand * 500
+  y = rand2 * 500
+  vx = rand * 3 + 1
+  vy = rand2 * 4 + 1
+commit
+  [#boid order x y vx vy]
+end
 
-/* search */
-/*   boid = [#boid x > 490] */
-/*   boid.vx > 0 */
-/* commit */
-/*   boid.vx := boid.vx * -0.9 */
-/* end */
+search
+  boid = [#boid x > 490]
+  boid.vx > 0
+commit
+  boid.vx := boid.vx * -0.9
+end
 
-/* search */
-/*   boid = [#boid x < 10] */
-/*   boid.vx < 0 */
-/* commit */
-/*   boid.vx := boid.vx * -0.9 */
-/* end */
+search
+  boid = [#boid x < 10]
+  boid.vx < 0
+commit
+  boid.vx := boid.vx * -0.9
+end
 
-/* search */
-/*   boid = [#boid y > 490] */
-/*   boid.vy > 0 */
-/* commit */
-/*   boid.vy := boid.vy * -0.9 */
-/* end */
+search
+  boid = [#boid y > 490]
+  boid.vy > 0
+commit
+  boid.vy := boid.vy * -0.9
+end
 
-/* search */
-/*   boid = [#boid y < 10] */
-/*   boid.vy < 0 */
-/* commit */
-/*   boid.vy := boid.vy * -0.9 */
-/* end */
+search
+  boid = [#boid y < 10]
+  boid.vy < 0
+commit
+  boid.vy := boid.vy * -0.9
+end
 
 search
   t = [#system/timer/change]
