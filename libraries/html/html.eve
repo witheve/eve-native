@@ -16,6 +16,9 @@ commit
     "audio"
     "source"
     "video"
+    "table"
+    "tr"
+    "td"
     )]
 end
 ~~~

@@ -1,4 +1,4 @@
-import {Library, RawValue, RawEAV, handleTuples, libraries} from "../../ts";
+import {Library, createId, RawValue, RawEAV, handleTuples, libraries} from "../../ts";
 import Hls from "hls.js"
 
 const EMPTY:never[] = [];
@@ -19,19 +19,34 @@ export class Stream extends Library {
         if(Hls.isSupported()) {
             let video: any = document.getElementById(`${streamID}`);
             var hls = new Hls();
+            let program = this.program
             hls.loadSource(`${source}`);
             hls.attachMedia(video);
             hls.on(Hls.Events.MANIFEST_PARSED,function() {
-                console.log("Stream Ready");
+    
             });
             video.onplay = function () {
-                console.log("PLAYING");
+              let play_id = createId();
+              program.inputEAVs([
+                [play_id, "tag", "html/event/stream-play"],
+                [play_id, "stream", streamID],
+              ]);                
             };
             video.onpause = function () {
-                console.log("Paused");
+              let paused_id = createId();
+              program.inputEAVs([
+                [paused_id, "tag", "html/event/stream-pause"],
+                [paused_id, "stream", streamID],
+              ]);    
             };
-            this.program.inputEAVs([[streamID, "tag", "ready"]]);
-            window.addEventListener("pageshow", video.onplay());
+            video.onloadeddata = function () {
+              let ready_id = createId();
+              program.inputEAVs([
+                [ready_id, "tag", "html/event/stream-ready"],
+                [ready_id, "stream", streamID],
+              ]);  
+            }
+            //window.addEventListener("pageshow", video.onplay());
             this.streams[streamID] = video; 
          }
       }

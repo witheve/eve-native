@@ -5,136 +5,124 @@ This app takes a set of concerts, and accesses the setlist.fm api to retrieve
 the setlist that was played at that concert. This is cross-referenced with
 the MS Groove API to create playlists for those concerts.
 
-The app configuration
+## App Configuration
 
 commit
-  [#setlist-app groove: [#groove client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba" client-secret: "UskJMTfCRNffOLbuBnGSBb2" endpoint: "https://music.xboxlive.com" redirect-uri: "http://localhost:8081"]
-                setlist-fm: [#setlist-fm api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275" endpoint: "https://api.setlist.fm/rest"]]
+  playing = [#app/page name: "Now Playing" icon: "ios-musical-notes" sort: 0]
+  showlist = [#app/page name: "Show List" icon: "ios-list-outline" sort: 1]
+  collection = [#app/page name: "Collection" icon: "ios-albums-outline" sort: 2]
+  map = [#app/page name: "Map" icon: "map" sort: 3]  
+  settings = [#app/page name: "Settings" icon: "gear-a"] 
+  [#app/configuration groove: [#groove client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba" client-secret: "UskJMTfCRNffOLbuBnGSBb2" endpoint: "https://music.xboxlive.com" redirect-uri: "http://localhost:8081"]
+                      setlist-fm: [#setlist-fm api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275" endpoint: "https://api.setlist.fm/rest"]
+                      pages: (showlist, collection, map, playing)]
+  [#app/interface page: showlist]
 end
 
 
-# Groove API
+## Layout
 
-The groove API is configured with a record tagged `#groove` with the following shape:
-
-`[#groove client-id client-secret endpoint redirect-uri]`
-
-
-## Logging Into Groove
-
-Commit a `#groove/login` to initiate the login process. This redirects to a 
-login portal, which asks the user to authorize access to Eve. Once the user
-grants access, the browser is redirect back to the supplied `redirect-uri`.
+### Skeleton Layout
 
 search
-  [#groove/login]
-  [#groove client-id client-secret redirect-uri]
-  response-type = "token"
-  scopes = string/url-encode[text: "MicrosoftMediaServices.GrooveApiAccess offline_access"]
-  encoded-redirect-uri = string/url-encode[text: redirect-uri]
-  address = "https://login.live.com/oauth20_authorize.srf/?client_id={{client-id}}&response_type={{response-type}}&redirect_uri={{encoded-redirect-uri}}&scope={{scopes}}"
+  interface = [#app/interface]
 commit
-  [#html/redirect url: address]
+  interface <- [|children:
+    [#ui/column style: [width: "1600px" height: "900px"] | children:
+      [#header]
+      [#content]
+      [#global-playback]
+    ]]
 end
 
-A successful login will return to the app an access token
+### Header
 
 search
-  [#html/url query: [#html/url/query key: "access_token" value: access-token]]
-  groove = [#groove]
+  header = [#header]
+bind
+  header += #ui/row
+  header <- [|children:
+    [#html/div #header/top-left sort: 1]
+    [#ui/spacer sort: 2]
+    [#html/div sort: 3 text: "Setlist Aggregator"]
+    [#ui/spacer sort: 4]
+    [#html/div #header/top-right sort: 5]
+  ]
+end
+
+### Navigation
+
+search
+  nav = [#navigation]
+  [#app/configuration pages: page]
+  page = [#app/page name icon sort]
+  settings = [#app/page name: "Settings"]
+bind
+  nav <- [style: [width: "200px" height: "100%"]]
+  nav <- [#ui/column | children: 
+    [#ui/list #ui/selectable #ui/single-selectable #navigation/pages | item:
+      [#navigation/button #ui/button icon page text: name sort]]
+    [#ui/spacer sort: 99]
+    [#navigation/button #ui/button page: settings icon: settings.icon text: settings.name sort: 100]
+  ]
+end
+
+### Content
+
+search
+  content = [#content]
+bind
+  content <- [#ui/row style: [height: "100%"] |children:
+    [#navigation sort: 1]
+    [#page-container sort: 2]
+    [#ui/spacer sort: 3]
+  ]
+end
+
+### Footer
+
+search
+  playback = [#global-playback]
+  
+bind
+  playback += #ui/row
+  playback <- [|children:
+    []
+  ]
+end
+
+### Page Container
+
+search
+  page-container = [#page-container]
+  [#app/interface page]
 commit
-  groove.access-token := access-token
+  page-container += #html/div
+  page-container <- [|children: page]
 end
 
-
-## Getting Groove User Data
-
-With an access token in hand, we can use that to get user-specific information.
+### Navigate Between Pages
 
 search
-  [#groove/get-user]
-  [#groove access-token endpoint]
+  [#html/event/click element: [#navigation/button page]]
+  interface = [#app/interface]
 commit
-  [#http/request #groove-profile address: "{{endpoint}}/1/user/music/profile" method: "GET" headers: 
-    [#http/header key: "Authorization" value: "Bearer  {{access-token}}"]]
-end
-
-search
-  [#groove-profile response]
-commit
-  [#json/decode #groove-profile json: response.body]
-end
-
-Create a Groove user from the response
-
-search
-  [#groove-profile json-object: profile]
-commit
-  [#groove/user region: profile.Culture subscription: profile.HasSubscription]
+  interface.page := page
 end
 
 
-## Search Groove
+## Header 
 
 search
-  [#groove/search-track query]
-  [#groove access-token endpoint]
-  artist = string/replace[text: query replace: " " with: "+"]
-  address = "{{endpoint}}/1/content/music/search?q={{query}}&filters=tracks"
-commit
-  [#http/request #groove-search address headers: 
-    [#http/header key: "Authorization" value: "Bearer {{access-token}}"]]
-end
-
-search
-  [#groove-search response: [body]]
-commit
-  [#json/decode #groove-search json: body]
-end
-
-search
-  [#groove-search json-object]
-  track = [Id Name ReleaseDate Duration]
-commit
-  [#track name: Name groove-id: Id duration: Duration image: track.ImageUrl]
-end
-
-
-## Get a full song strem
-
-search
-  [#groove/full-stream track-id]
-  [#groove access-token endpoint]
-  address = "{{endpoint}}/1/content/{{track-id}}/stream?clientInstanceId=2E19AC92-8600-11E7-8200-4CC9641576C9"
-commit  
-  [#http/request #groove-get-song track-id address headers: 
-    [#http/header key: "Authorization" value: "Bearer {{access-token}}"]]
-end
-
-search
-  [#groove-get-song track-id response: [body]]
-commit
-  [#json/decode #groove-get-song track-id json: body]
-end
-
-search
-  [#groove-get-song track-id json-object]
-  groove-stream = [#groove/full-stream track-id]
-commit
-  groove-stream <- [stream: json-object.Url content-type: json-object.ContentType]
-end
-
-
-
-# The User Interface
-
-Logging in is kicked off by clicking the login button.
-
-search
+  top-right = [#header/top-right]
   not([#groove/user])
 bind
-  [#ui/button #groove-login text: "Login to Groove"]
+  top-right <- [|children: 
+    [#ui/button #groove-login text: "Log in to Groove"]
+  ]
 end
+
+Logging in is kicked off by clicking the login button.
 
 search
   [#html/event/click element: [#groove-login]]
@@ -150,109 +138,286 @@ commit
   [#groove/get-user]
 end
 
-## Searching for tracks
 
-commit
-  [#html/div children: 
-    [#ui/input #track-search]
-    [#ui/button #track-search/button text: "Search"]]
-end
+## Pages
+
+### Now Playing
 
 search
-  [#track-search value]
-  [#html/event/click element: [#track-search/button]]
-commit
-  [#groove/search-track query: value]
-end
-
-search
-  track = [#track name image duration]
+  page = [#app/page name: "Now Playing" stream]
+  [#app/interface page]
+  //stream.track = [#groove/track image name image duration artist album]
+  [#html/test ]
 bind
-  [#html/div track children:
-    [#html/img track src: image style: [width: "100px" height: "100px"]]
-    [#html/div track text: "{{name}} - {{duration}}"]
-    [#html/div #stream-control track]
-    [#html/button #groove/stream-player/playback-control track text: "Play"]]
+  page <- [#html/div text: stream]
+end
+
+Clicking on a playback control sets the stream attached to "Now Playing"
+
+search
+  [#html/event/click element: playback-control]
+  playback-control = [#groove/stream-player/playback-control stream]
+  now-playing = [#app/page name: "Now Playing"]
+commit
+  now-playing.stream := stream
+end
+
+### Collection
+
+search
+  page.name = "Collection"
+  [#app/interface page]
+  track = [#groove/track image name image duration artist album]
+bind
+  page <- [#html/div #scrollable | children: 
+    [#html/table #tracks | children:
+      [#html/tr track | children: 
+        [#html/td sort: 0 children: 
+            [#html/img src: image style: [width: "25px" height: "25px"]]]
+        [#html/td sort: 1 text: name]
+        [#html/td sort: 2 text: artist.Name]
+        [#html/td sort: 3 text: album.Name]          
+        [#html/td sort: 4 text: duration]]]]
+end
+
+### Show List
+
+search
+  page.name = "Show List"
+  [#app/interface page]
+bind
+  page <- [#ui/row | style: [width: "100%"] children: 
+    [#show-list/shows]
+    [#show-list/show-detail]
+    [#show-list/search-pane]
+  ]
+end
+
+#### List all the unmatched shows
+
+search
+  show-list = [#show-list/shows]
+  show = [#show artist date]
+  not(show = [#matched])
+bind
+  show-list += #ui/column
+  show-list <- [|children: 
+    [#html/div #ui/header text: "Unmatched Shows"]
+    [#show-list/unmatched-shows #ui/list #ui/selectable #ui/single-selectable | item:
+      [#html/div #show-list/unmatched-show sort: "{{date}}{{artist}}" show text: "{{date}} - {{artist}} "]
+  ]]
+end
+
+
+search
+  [#ui/list item]
+bind
+  item += #ui/list/item
+end
+
+
+
+Clicking on an unmatched show searches setlist.fm
+
+search
+  show-detail = [#show-list/show-detail]
+  [#html/event/click element: [#show-list/unmatched-show show]]
+commit
+  show-detail.show := show
+end
+
+Get the setlist details from the Setlist.fm API
+
+search
+  show-detail = [#show-list/show-detail show]
+  not(show = [#matched])
+commit
+  [#setlist-fm/search/setlists artist: show.artist date: show.date]
+end
+
+Commit the setlist to the show
+
+search
+  [#show-list/show-detail show]
+  [#setlist-fm/search/setlists artist: show.artist date: show.date setlist]
+commit
+  show.setlist += setlist
+end
+
+Display search results
+
+search
+  show-detail = [#show-list/show-detail show]
+  setlist = show.setlist
+  not(show = [#matched])
+bind
+  show-detail <- [#ui/column | children: 
+    [#html/div #tour sort: -2 text: setlist.tour]
+    [#html/div #artist sort: -1 text: setlist.artist.name]
+    [#html/div #date sort: 0 text: setlist.date]
+    [#html/div #venue sort: 0 text: setlist.venue.name]
+    [#html/div #setlists | children:
+      [#ui/list #ui/selectable #ui/single-selectable #setlist 
+       set: setlist.sets sort: setlist.sets.number | item:
+        [#ui/row #song song: setlist.sets.songs sort: setlist.sets.songs.number | children: 
+          [#ui/text #song-number text: setlist.sets.songs.number]
+          [#ui/text #song-name text: setlist.sets.songs.name]
+          [#ui/spacer]]]]]
+end
+
+Display a loading screen while results are being fetched
+
+search
+  show-detail = [#show-list/show-detail show]
+  find-setlist = [#setlist-fm/search/setlists artist: show.artist date: show.date]
+  not(find-setlist = [#finished])
+bind
+  show-detail <- [#html/div | children: 
+    [#html/div text: "Loading..."]
+  ]
+end
+
+#### Get search results for unmatched songs
+
+Clicking on an unmatched song kicks off a groove search for that track
+
+search
+  [#html/event/click element: [#song song]]
+  not(song = [#matched])
+  search-pane = [#show-list/search-pane]
+commit
+  search-pane.song := song
+  search-pane.query := "{{song.artist}} {{song.name}}"
+end
+
+Create a request for a query
+
+search
+  [#show-list/search-pane query]
+commit
+  [#groove/search-track query]
+end
+
+
+search
+
+  search-pane = [#show-list/search-pane song query]
+  track = [#groove/track query name image duration artist album]
+  song.artist = artist.Name
+bind
+  search-pane <- [#ui/column | children: 
+    [#html/div #track-search children:
+      [#ui/input value: query]]
+    [#html/div #results-list | children: 
+      [#ui/list | item:
+        [#ui/row track #album-result children: 
+          [#html/div #album-image children: 
+            [#html/img track src: image style: [width: "100px" height: "100px"]]]
+          [#ui/column #track-info track | children: 
+            [#html/div #track-name sort: 1 track text: name]
+            [#html/div sort: 2 track text: artist.Name]
+            [#html/div sort: 3 track text: album.Name]          
+            [#ui/spacer sort: 4]
+            [#html/div sort: 5 track text: duration]
+          ]
+          [#ui/spacer sort: 97]
+          [#ui/column track sort: 98 | children: 
+            [#ui/spacer sort: 1]
+            [#groove/stream-player #display sort: 2 track]
+            [#ui/spacer sort: 3]
+          ]
+          [#ui/spacer sort: 99]
+          [#ui/button #link-track track icon: "link" sort: 100]]]]] 
 end
 
 search
-  [#html/event/click element: [#play-track track]]
-  track = [#track groove-id]
-  app = [#setlist-app]
+  [#html/event/click element: [#link-track track]]
+  search-pane = [#show-list/search-pane song]
 commit
-  app.playing := track
-  [#groove/full-stream track-id: groove-id]
+  search-pane.query := none
+  song += #matched
+  song.track := track
 end
 
-search
-  [#groove/full-stream track-id stream content-type]
-  track = [#track groove-id: track-id]
-commit
-  track.stream := stream
-  track.content-type := content-type
-end
+Clicking on a matched song will play it
 
 search
-  stream-div = [#stream-control track]
-  [#setlist-app playing]
-  track = playing
-commit
-  [#html/div text: "Hello World"]
-  //stream-div.children += [#html/stream #groove/stream-player track play: "true" controls: "true" source: track.stream type: track.content-type]
+  matched-song = [#song song: [#matched track]]
+bind
+  matched-song.children += [#groove/stream-player #display track]
 end
 
-search
-  [#html/event/click element: control]
-  control = [#groove/stream-player/playback-control track]
-  player = [#groove/stream-player track]
-  (play, text) = if player = [play: "true"] then ("false","Play")
-                 if player = [play: "false"] then ("true","Pause")
-                 else ("true","Pause")
+
+
+
+
+
+
+
+## App Data
+
 commit
-  player.play := play
-  control.text := text
+  [#show artist: "Incubus" date: "16-08-2017"]
+  [#show artist: "Jimmy Eat World" date: "16-08-2017"]
 end
+
+
+### Settings
+
+search
+  page.name = "Settings"
+  [#app/interface page]
+bind
+  page <- [#html/div text: "Settings"]
+end
+
+
+
+
 
 
 
 ## Get Data From Setlist.fm
 
-disabled
 search
-  //[#setlist-app access-token setlist-endpoint]
-  //address = "{{setlist-endpoint}}/v1/search?q=incubus+glitterbomb+8&type=track"
+  find-setlist = [#setlist-fm/search/setlists artist date]
+  [#setlist-fm api-key endpoint]
+  encoded-artist = string/url-encode[text: artist]
+  address = "{{endpoint}}/1.0/search/setlists?artistName={{encoded-artist}}&date={{date}}&p=1"
 commit
-  //[#http/request #search-setlist address headers: 
-      //[#http/header key: "Authorization" value: "Bearer {{access-token}}"]
-      //[#http/header key: "Accept" value: "application/json"]]
+  [#http/request #find-setlist find-setlist address headers: 
+      [#http/header key: "x-api-key" value: api-key]
+      [#http/header key: "Accept" value: "application/json"]]
 end
 
 search
-  [#search-setlist response: [body]]
+  [#find-setlist find-setlist response: [body]]
 commit
-  [#json/decode #search-setlist json: body]
+  [#json/decode #find-setlist find-setlist json: body]
 end
 
 search
-  [#search-setlist json-object: spotsearch]
-  track-id = spotsearch.tracks.items.value.id
+  result = [#find-setlist find-setlist json-object]
+  not(result = [#finished])
+  json-object = [setlist: [value: [artist id eventDate tour venue sets: [set]]]]
+  set = [index: set-number value: [song: [index: song-number value: [name: song-name]]]]
 commit
-  [#html/div text: track-id] 
+  result += #finished
+  find-setlist += #finished
+  songs = [#setlist-fm/song artist: artist.name number: song-number, name: song-name]
+  sets  = [#setlist-fm/set id number: set-number | songs]
+  find-setlist.setlist += [#setlist-fm/setlist id artist venue date: eventDate, tour: tour.name | sets]
 end
 
-## seasrch setlist.fm
+Clean up records
 
-//search
-  [#disable]
-  //address = "{{setlist-endpoint}}/1.0/search/artists?artistName={{artist}}"
-  //address = "{{setlist-endpoint}}/1.0/search/setlists?artistName={{artist}}&date=16-08-2017&p=1"
-//commit
-  //[#http/request #setlist-fm artist: value, address headers: 
-      //[#http/header key: "x-api-key" value: setlist-api-key]
-      //[#http/header key: "Accept" value: "application/json"]]
-//end
-
-
+search
+  complete = [#find-setlist #finished json-object]
+  find-setlist = [#find-setlist]
+commit
+  find-setlist := none
+  complete := none
+end
 
 
 ## Misc Diagnostics
@@ -290,4 +455,61 @@ search
   not(request = [#finished])
 bind
   [#html/div text: "Processing request..."]
+end
+
+## Styles
+
+commit
+  [#html/style text: "
+    body { background-color: rgb(24,24,24); height: 40px; color: rgb(200,200,200); }
+    div { user-select: none; cursor: default;}
+    
+    .ui-button { background-color: rgb(40,40,40); color: rgb(200,200,200); padding: 10px; border: 1px solid rgb(60,60,60); margin-bottom: 10px; }
+    .ui-button:hover { background-color: rgb(50,50,50); color: rgb(200,200,200); border: 1px solid rgb(60,60,60);}
+    .header { background-color: rgb(18,18,18); padding: 10px; }    
+    .global-playback { background-color: rgb(40,40,40); height: 100px; color: rgb(200,200,200); }    
+    .ui-list-item { padding-top: 10px; padding-bottom: 10px; border-bottom: 1px solid rgb(80,80,80); }
+    .ui-list-item:hover { background-color: rgb(40,40,40); }
+    .show-list-shows { width: 250px; }
+    .show-list-show-detail {padding-left: 20px; padding-right: 20px; background-color: rgb(22,22,22); width: 400px; margin-right: 10px;}
+    .artist { font-size: 26px; margin-bottom: 10px; }
+    .tour { margin-bottom: 5px; color: rgb(150,150,150); }
+    .venue { margin-bottom: 5px; color: rgb(150,150,150);}
+    .date { margin-bottom: 5px; color: rgb(150,150,150);}
+    .setlists { overflow: auto; max-height: 650px; margin-top: 15px; padding-right: 10px;}
+    .setlist { margin-top: 10px; margin-bottom: 20px; }
+    .song { padding: 5px; line-height: 30px; }
+    .song-number { width: 15px; margin-right: 10px; color: rgb(120,120,120); text-align: right }
+    .song:hover { background-color: rgb(40,40,40);}
+    .show-list-search-pane {min-width: 400px; max-width: 500px; overflow: auto;}
+    .album-image {width: 100px; margin-right: 20px;}
+    .album-result {padding: 20px;}
+    div::-webkit-scrollbar {
+      width: 5px;
+    }
+    div::-webkit-scrollbar-track {
+      -webkit-box-shadow: inset 0 0 6px rgba(0,0,0,0);
+    }
+    div::-webkit-scrollbar-thumb {
+      background-color: rgba(255,255,255,.5);;
+      outline: 1px solid slategrey;
+      border-radius: 25px;
+    }
+    .ui-header {padding: 10px; margin-bottom: 10px; font-size: 20px;}
+    .track-search {padding: 10px; padding-top: 20px; padding-bottom: 20px; background-color: rgb(18,18,18);}
+    .navigation { background-color: rgb(18,18,18); }
+    .navigation-button { padding: 10px 20px 10px 20px; background-color: rgb(30,30,30); user-select: none; cursor: default; margin: 0px; border: 0px; width: 100%; min-height: 75px;}
+    .navigation-button:hover { color: rgb(255,255,255); border: 0px; }
+    .groove-stream-player-playback-control {padding: 0px; padding-left: 10px; border-radius: 40px; width: 30px; height: 30px; background-color: rgba(0,0,0,0); border: 1px solid white; margin: 10px;}
+    .groove-stream-player-playback-control:hover {background-colora: rgb(0,158,224,0); border-color:  rgb(0,158,224); color:  white;}
+    .groove-stream-player-playback-control .ion-pause {background-color: rgb(0,158,224,1); border-color:  white; color: white;}
+    .track-name {padding-bottom: 10px;}
+    .results-list .ui-list {padding-right: 10px;}
+    .results-list {overflow: auto; max-height: 700px;}
+    .track-info {width: 150px;}
+    table { border-collapse: collapse; margin: 20px;}
+    td { padding: 10px; }
+    table, th, td { border: 1px solid rgb(80,80,80); }
+    .scrollable {  overflow: auto; height: 800px; }
+    "]
 end

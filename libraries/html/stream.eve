@@ -18,3 +18,25 @@ watch client/websocket
   ("stream/play", stream, play) 
 end
 
+search
+  [#html/event/stream-ready stream]
+  stream = [#html/stream]
+commit
+  stream += #ready
+end
+
+search
+  [#html/event/stream-play stream]
+  stream = [#html/stream]
+commit
+  stream += #playing
+  stream -= #paused
+end
+
+search
+  [#html/event/stream-pause stream]
+  stream = [#html/stream]
+commit
+  stream += #paused
+  stream -= #playing
+end
