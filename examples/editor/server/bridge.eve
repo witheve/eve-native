@@ -13,7 +13,7 @@ Store client records.
 search
   lookup-remote[for: "all-records" attribute: "record" value: record type: "add"]
 commit
-  [#db-explorer/client-record value: record]
+  [#editor/explorer/client-record value: record]
 end
 ~~~
 
@@ -21,7 +21,7 @@ Nuke old client records.
 ~~~ eve
 search
   lookup-remote[for: "all-records" attribute: "record" value: record type: "remove"]
-  rec = [#db-explorer/client-record value: record]
+  rec = [#editor/explorer/client-record value: record]
 commit
   rec := none
 end
@@ -34,7 +34,7 @@ Store client tags.
 search
   lookup-remote[for: "all-tags" attribute: "tagname" value: tagname type: "add"]
 commit
-  [#db-explorer/client-tag value: tagname]
+  [#editor/explorer/client-tag value: tagname]
 end
 ~~~
 
@@ -42,7 +42,7 @@ Nuke old client tags.
 ~~~ eve
 search
   lookup-remote[for: "all-tags" attribute: "tagname" value: tagname type: "remove"]
-  rec = [#db-explorer/client-tag value: tagname]
+  rec = [#editor/explorer/client-tag value: tagname]
 commit
   rec := none
 end
@@ -56,7 +56,7 @@ Store client attributes.
 search
   lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute type: "add"]
 commit
-  [#db-explorer/client-attribute value: attribute]
+  [#editor/explorer/client-attribute value: attribute]
 end
 ~~~
 
@@ -64,7 +64,7 @@ Nuke old client attributes.
 ~~~ eve
 search
   lookup-remote[for: "all-attributes" attribute: "attribute" value: attribute type: "remove"]
-  rec = [#db-explorer/client-attribute value: attribute]
+  rec = [#editor/explorer/client-attribute value: attribute]
 commit
   rec := none
 end
@@ -77,7 +77,7 @@ Store client names.
 search
   lookup-remote[for: "all-names" entity attribute: "name" value: name type: "add"]
 commit
-  [#db-explorer/client-name entity name]
+  [#editor/explorer/client-name entity name]
 end
 ~~~
 
@@ -85,7 +85,7 @@ Nuke old client names.
 ~~~ eve
 search
   lookup-remote[for: "all-names" entity attribute: "name" value: name type: "remove"]
-  rec = [#db-explorer/client-name entity name]
+  rec = [#editor/explorer/client-name entity name]
 commit
   rec := none
 end
@@ -101,7 +101,7 @@ Find records that match the current completer pattern.
 When the completion pattern has at least one attribute, create a completer block.
 ~~~ eve
 search
-  [#db-explorer/query completion-pattern]
+  [#editor/explorer/query completion-pattern]
   completion-pattern.attribute
 bind
   record-var = [#eve/compiler/variable name: "record" completion-pattern]
@@ -110,7 +110,7 @@ bind
   tag-var = [#eve/compiler/variable name: "tag" completion-pattern]
   program-var = [#eve/compiler/variable name: "editor-program"]
   editor-var = [#eve/compiler/variable name: "editor-name"]
-  [#eve/compiler/block #db-explorer/completer type: "bind" | record-var constraint:
+  [#eve/compiler/block #editor/explorer/completer type: "bind" | record-var constraint:
     [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
     [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
     [#eve/compiler/scan entity: record-var attribute: attr-var value: val-var]
@@ -124,8 +124,8 @@ end
 Fully formed AVs translate into eAV scans.
 ~~~ eve
 search
-  [#db-explorer/query completion-pattern: [attribute: [attribute value]]]
-  block = [#db-explorer/completer record-var]
+  [#editor/explorer/query completion-pattern: [attribute: [attribute value]]]
+  block = [#editor/explorer/completer record-var]
 bind
   block.constraint += [#eve/compiler/scan entity: record-var attribute value]
 end
@@ -134,10 +134,10 @@ end
 AVs with only an A translate into eAv scans.
 ~~~ eve
 search
-  [#db-explorer/query completion-pattern]
+  [#editor/explorer/query completion-pattern]
   completion-pattern = [attribute]
   not(attribute.value)
-  block = [#db-explorer/completer record-var]
+  block = [#editor/explorer/completer record-var]
 bind
   value-var = [#eve/compiler/variable completion-pattern attribute]
   block.constraint += [#eve/compiler/scan entity: record-var attribute: attribute.attribute value: value-var]
@@ -151,7 +151,7 @@ Dump completion records into the editor.
 search
   lookup-remote[for: "completion-record" entity: pattern attribute: "record" value: record type: "add"]
 commit
-  [#db-explorer/completion-record pattern record]
+  [#editor/explorer/completion-record pattern record]
 end
 ~~~
 
@@ -159,7 +159,7 @@ Nuke old completion records.
 ~~~ eve
 search
   lookup-remote[for: "completion-record" entity: pattern attribute: "record" value: record type: "remove"]
-  completion = [#db-explorer/completion-record pattern record]
+  completion = [#editor/explorer/completion-record pattern record]
 commit
   completion := none
 end
@@ -172,7 +172,7 @@ Dump completion tags into the editor.
 search
   lookup-remote[for: "completion-tag" entity: record attribute: "value" value: tag type: "add"]
 commit
-  [#db-explorer/completion-tag record value: tag]
+  [#editor/explorer/completion-tag record value: tag]
 end
 ~~~
 
@@ -180,7 +180,7 @@ Nuke old completion tags.
 ~~~ eve
 search
   lookup-remote[for: "completion-tag" entity: record attribute: "value" value: tag type: "remove"]
-  completion = [#db-explorer/completion-tag record value: tag]
+  completion = [#editor/explorer/completion-tag record value: tag]
 commit
   completion := none
 end
@@ -193,7 +193,7 @@ Dump completion attributes into the editor.
 search
   lookup-remote[for: "completion-attribute" entity: record attribute: "value" value: attribute type: "add"]
 commit
-  [#db-explorer/completion-attribute record value: attribute]
+  [#editor/explorer/completion-attribute record value: attribute]
 end
 ~~~
 
@@ -201,7 +201,7 @@ Nuke old completion attributes.
 ~~~ eve
 search
   lookup-remote[for: "completion-attribute" entity: record attribute: "value" value: attribute type: "remove"]
-  completion = [#db-explorer/completion-attribute record value: attribute]
+  completion = [#editor/explorer/completion-attribute record value: attribute]
 commit
   completion := none
 end
@@ -217,13 +217,13 @@ Import information about "open" records in the editor, for the purpose of diplay
 Retrieve all the AVs for open records and send them to the editor.
 ~~~ eve
 search
-  root = [#db-explorer/root open: record]
+  root = [#editor/explorer/root open: record]
 bind
   attr-var = [#eve/compiler/variable name: "attribute"]
   val-var = [#eve/compiler/variable name: "value"]
   program-var = [#eve/compiler/variable name: "editor-program"]
   editor-var = [#eve/compiler/variable name: "editor-name"]
-  [#eve/compiler/block #db-explorer/open-record type: "bind" record | constraint:
+  [#eve/compiler/block #editor/explorer/open-record type: "bind" record | constraint:
     [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
     [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
     [#eve/compiler/scan entity: record attribute: attr-var value: val-var]
@@ -240,7 +240,7 @@ When a record is opened, create an exploded representation of it.
 search
   lookup-remote[for: "open-record" entity attribute: "tag" value: "db-explorer/open-record" type: "add"]
 commit
-  [#db-explorer/client-open-record record: entity]
+  [#editor/explorer/client-open-record record: entity]
 end
 ~~~
 
@@ -248,7 +248,7 @@ Nuke old open records.
 ~~~ eve
 search
   lookup-remote[for: "open-record" entity attribute: "tag" value: "db-explorer/open-record" type: "remove"]
-  open-rec = [#db-explorer/client-open-record record: entity]
+  open-rec = [#editor/explorer/client-open-record record: entity]
 commit
   open-rec := none
 end
@@ -260,7 +260,7 @@ Dump open record AVs into their exploded record.
 ~~~ eve
 search
   lookup-remote[for: "open-record-av" entity attribute value type: "add"]
-  open-record = [#db-explorer/client-open-record record: entity]
+  open-record = [#editor/explorer/client-open-record record: entity]
 commit
   open-record.av += [attribute value]
 end
@@ -270,7 +270,7 @@ Nuke old open record AVs.
 ~~~ eve
 search
   lookup-remote[for: "open-record-av" entity attribute value type: "remove"]
-  open-record = [#db-explorer/client-open-record record: entity av]
+  open-record = [#editor/explorer/client-open-record record: entity av]
   av = [attribute value]
 commit
   open-record.av -= av

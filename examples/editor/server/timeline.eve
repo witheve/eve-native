@@ -20,7 +20,7 @@ end
 search
   root = [#editor/timeline/root]
 bind
-  root <- [children:
+  root <- [#ui/column children:
     [#ui/column #editor/timeline-scroller | children:
       [#ui/toggle class: "square" #editor/pause-client initial: "true"]
       [#ui/column #editor/timeline]]]
@@ -144,7 +144,7 @@ search
   outputs = [#editor/transaction-viewer/outputs viewer]
 bind
   outputs.children += [#html/div output | children:
-    [#html/div #editor/transaction-viewer/output/name entity: output.entity]
+    [#ui/button #record-card/record #editor/transaction-viewer/output/name value: output.entity]
     [#editor/record-literal output | av: output.av]]
 end
 ~~~
@@ -152,13 +152,12 @@ end
 Decorate output with client-name, if available.
 ~~~ eve
 search
-  output = [#editor/transaction-viewer/output/name entity]
-  [#db-explorer/client-name entity name]
+  output = [#editor/transaction-viewer/output/name value: entity]
+  [#editor/explorer/client-name entity name]
 bind
   output.text += name
 end
 ~~~
-
 
 
 ## Record Literal
@@ -302,19 +301,7 @@ commit
 end
 ~~~
 
-
-# Editor
-
-Clear editor events
-~~~ eve
-search
-  event = [#editor/event]
-commit
-  event := none
-end
-~~~
-
-# Debug
+## Exports
 
 ~~~ eve
 search
