@@ -22,6 +22,7 @@ search
 bind
   root <- [children:
     [#ui/column #editor/timeline-scroller | children:
+      [#ui/toggle class: "square" #editor/pause-client initial: "true"]
       [#ui/column #editor/timeline]]]
 end
 ~~~
@@ -310,5 +311,16 @@ search
   event = [#editor/event]
 commit
   event := none
+end
+~~~
+
+# Debug
+
+~~~ eve
+search
+  pause = [#editor/pause-client]
+  not(pause.checked)
+watch editor/host
+  ("pause")
 end
 ~~~
