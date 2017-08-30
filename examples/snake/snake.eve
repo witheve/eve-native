@@ -139,9 +139,10 @@ end
 When the snake's head hits it's body, it gets truncated to the collision site.
 ~~~ eve
 search
-  snake = [#snake x y]
+  snake = [#snake x y length]
   body = [#body x y age]
   age != 0
+  age < length
 commit
   snake.length := age - 1
   [#sound-effect src: "examples/snake/beep.mp3" age: 0 body]
