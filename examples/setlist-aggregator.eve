@@ -1,7 +1,7 @@
 # Setlist Aggregator
 
 
-This app takes a set of concerts, and accesses the setlist.fm api to retrieve
+This app takes a set of concerts, and accesses the setlist.fm api to retreive
 the setlist that was played at that concert. This is cross-referenced with
 the MS Groove API to create playlists for those concerts.
 
@@ -11,14 +11,14 @@ commit
   playing = [#app/page name: "Now Playing" icon: "ios-musical-notes" sort: 0]
   showlist = [#app/page name: "Show List" icon: "ios-list-outline" sort: 1]
   collection = [#app/page name: "Collection" icon: "ios-albums-outline" sort: 2]
-  map = [#app/page name: "Map" icon: "map" sort: 3]  
+  stats = [#app/page name: "Show Stats" icon: "stats-bars" sort: 3]
+  map = [#app/page name: "Map" icon: "map" sort: 4]  
   settings = [#app/page name: "Settings" icon: "gear-a"] 
   [#app/configuration groove: [#groove client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba" client-secret: "UskJMTfCRNffOLbuBnGSBb2" endpoint: "https://music.xboxlive.com" redirect-uri: "http://localhost:8081"]
                       setlist-fm: [#setlist-fm api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275" endpoint: "https://api.setlist.fm/rest"]
-                      pages: (showlist, collection, map, playing)]
+                      pages: (showlist, collection, map, playing, stats)]
   [#app/interface page: showlist]
 end
-
 
 ## Layout
 
@@ -58,7 +58,6 @@ search
   page = [#app/page name icon sort]
   settings = [#app/page name: "Settings"]
 bind
-  nav <- [style: [width: "200px" height: "100%"]]
   nav <- [#ui/column | children: 
     [#ui/list #ui/selectable #ui/single-selectable #navigation/pages | item:
       [#navigation/button #ui/button icon page text: name sort]]
@@ -85,11 +84,31 @@ search
   playback = [#global-playback]
   
 bind
-  playback += #ui/row
-  playback <- [|children:
-    []
-  ]
+  playback <- [#ui/row]
 end
+
+search
+  playback = [#global-playback]
+  [#now-playing track]
+bind
+  playback <- [|children: 
+    [#ui/spacer sort: 1]
+    [#groove/stream-player/playback-control #global-play sort: 2 track]
+    [#ui/spacer sort: 3]]
+end
+
+Display control placeholders
+
+search
+  playback = [#global-playback]
+  not([#now-playing track])
+bind
+  playback <- [|children:
+    [#ui/spacer sort: 1]
+    [#groove/stream-player/playback-control #ui/button #global-play icon: "play"]
+    [#ui/spacer sort: 3]]
+end
+
 
 ### Page Container
 
@@ -144,22 +163,35 @@ end
 ### Now Playing
 
 search
-  page = [#app/page name: "Now Playing" stream]
+  page.name = "Now Playing"
   [#app/interface page]
-  //stream.track = [#groove/track image name image duration artist album]
-  [#html/test ]
+  [#now-playing track]
+  track = [#groove/track image name duration artist album]
 bind
-  page <- [#html/div text: stream]
+  page <-[#html/div | children:
+    [#ui/column track #album-result children: 
+      [#html/div #album-image children: 
+        [#html/img track src: image style: [width: "250px" height: "250px"]]]
+      [#html/div #track-name sort: 1 track text: name]
+      [#html/div sort: 2 track text: artist.Name]
+      [#html/div sort: 3 track text: album.Name]          
+      [#ui/spacer sort: 4]
+      [#html/div sort: 5 track text: duration]]]
 end
 
-Clicking on a playback control sets the stream attached to "Now Playing"
+Clicking on a playback control sets a new `#now-playing` stream and pauses any
+currently playing track.
 
 search
   [#html/event/click element: playback-control]
-  playback-control = [#groove/stream-player/playback-control stream]
-  now-playing = [#app/page name: "Now Playing"]
+  playback-control = [#groove/stream-player/playback-control track]
+  playback = [#groove/stream-player/playback track]
+  now-playing-tracks = if playing = [#groove/stream-player/playback #now-playing] then playing
+                       else "None"
 commit
-  now-playing.stream := stream
+  playback += #now-playing
+  now-playing-tracks -= #now-playing
+  now-playing-tracks.play := "false"
 end
 
 ### Collection
@@ -200,22 +232,18 @@ search
   show = [#show artist date]
   not(show = [#matched])
 bind
-  show-list += #ui/column
-  show-list <- [|children: 
+  show-list <- [#ui/column | children:
     [#html/div #ui/header text: "Unmatched Shows"]
     [#show-list/unmatched-shows #ui/list #ui/selectable #ui/single-selectable | item:
       [#html/div #show-list/unmatched-show sort: "{{date}}{{artist}}" show text: "{{date}} - {{artist}} "]
   ]]
 end
 
-
 search
   [#ui/list item]
 bind
   item += #ui/list/item
 end
-
-
 
 Clicking on an unmatched show searches setlist.fm
 
@@ -235,27 +263,25 @@ commit
   [#setlist-fm/search/setlists artist: show.artist date: show.date]
 end
 
-Commit the setlist to the show
-
-search
-  [#show-list/show-detail show]
-  [#setlist-fm/search/setlists artist: show.artist date: show.date setlist]
-commit
-  show.setlist += setlist
-end
-
 Display search results
 
 search
   show-detail = [#show-list/show-detail show]
-  setlist = show.setlist
+  [#setlist-fm/search/setlists artist: show.artist date: show.date setlist]
   not(show = [#matched])
 bind
   show-detail <- [#ui/column | children: 
-    [#html/div #tour sort: -2 text: setlist.tour]
-    [#html/div #artist sort: -1 text: setlist.artist.name]
-    [#html/div #date sort: 0 text: setlist.date]
-    [#html/div #venue sort: 0 text: setlist.venue.name]
+    [#ui/row #info-head | children:
+      [#ui/column #show-info sort: 1 | children: 
+        [#html/div #artist sort: -1 text: setlist.artist.name]
+        [#html/div #tour sort: -2 text: setlist.tour]
+        [#html/div #date sort: -3 text: setlist.date]
+        [#html/div #venue sort: 0 text: setlist.venue.name]
+      ]
+      [#ui/spacer sort: 2]
+      [#ui/button #circle-button #large-button #match-show show setlist sort: 3 icon: "checkmark"]
+      [#ui/spacer sort: 4]
+    ]
     [#html/div #setlists | children:
       [#ui/list #ui/selectable #ui/single-selectable #setlist 
        set: setlist.sets sort: setlist.sets.number | item:
@@ -266,18 +292,46 @@ bind
 end
 
 Display a loading screen while results are being fetched
-
+TODO This isn't working right
 search
   show-detail = [#show-list/show-detail show]
   find-setlist = [#setlist-fm/search/setlists artist: show.artist date: show.date]
   not(find-setlist = [#finished])
 bind
   show-detail <- [#html/div | children: 
-    [#html/div text: "Loading..."]
-  ]
+    [#html/div text: "Loading..."]]
 end
 
-#### Get search results for unmatched songs
+When the `#match-show` button is click, mark the show as matched and attach a setlist.
+
+
+search
+  [#html/event/click element: [#match-show show setlist]]
+commit
+  show += #matched
+  show.setlist := setlist
+end
+
+#### List all matched Shows
+
+search
+  show-list = [#show-list/shows]
+  show = [#show #matched artist date setlist]
+bind
+  show-list += #ui/column
+  show-list.children +=
+    [#ui/column | children:  
+      [#html/div #ui/header text: "Matched Shows"]
+      [#show-list/matched-shows #ui/list #ui/selectable #ui/single-selectable | item:
+        [#html/div #show-list/matched-show sort: "{{date}}{{artist}}" show text: "{{date}} - {{artist}} "]]]
+end
+
+
+
+
+
+
+#### Get search results for a song
 
 Clicking on an unmatched song kicks off a groove search for that track
 
@@ -306,8 +360,10 @@ search
   song.artist = artist.Name
 bind
   search-pane <- [#ui/column | children: 
-    [#html/div #track-search children:
-      [#ui/input value: query]]
+    [#ui/row #track-search children:
+      [#ui/spacer sort: 1]
+      [#ui/input sort: 2 icon: "play" value: query]
+      [#ui/spacer sort: 3]]
     [#html/div #results-list | children: 
       [#ui/list | item:
         [#ui/row track #album-result children: 
@@ -359,6 +415,8 @@ end
 commit
   [#show artist: "Incubus" date: "16-08-2017"]
   [#show artist: "Jimmy Eat World" date: "16-08-2017"]
+  [#show artist: "Third Eye Blind" date: "23-07-2017"]
+  [#show artist: "Silversun Pickups" date: "23-07-2017"]
 end
 
 
@@ -459,11 +517,22 @@ end
 
 ## Styles
 
+Style all playback controls as circle buttons
+
+search
+  control = [#groove/stream-player/playback-control]
+bind
+  control += #circle-button
+end
+
+
 commit
   [#html/style text: "
     body { background-color: rgb(24,24,24); height: 40px; color: rgb(200,200,200); }
     div { user-select: none; cursor: default;}
-    
+    div::-webkit-scrollbar { width: 5px; }
+    div::-webkit-scrollbar-track { -webkit-box-shadow: inset 0 0 6px rgba(0,0,0,0); }
+    div::-webkit-scrollbar-thumb { background-color: rgba(255,255,255,.5); outline: 1px solid slategrey; border-radius: 25px; }
     .ui-button { background-color: rgb(40,40,40); color: rgb(200,200,200); padding: 10px; border: 1px solid rgb(60,60,60); margin-bottom: 10px; }
     .ui-button:hover { background-color: rgb(50,50,50); color: rgb(200,200,200); border: 1px solid rgb(60,60,60);}
     .header { background-color: rgb(18,18,18); padding: 10px; }    
@@ -484,25 +553,13 @@ commit
     .show-list-search-pane {min-width: 400px; max-width: 500px; overflow: auto;}
     .album-image {width: 100px; margin-right: 20px;}
     .album-result {padding: 20px;}
-    div::-webkit-scrollbar {
-      width: 5px;
-    }
-    div::-webkit-scrollbar-track {
-      -webkit-box-shadow: inset 0 0 6px rgba(0,0,0,0);
-    }
-    div::-webkit-scrollbar-thumb {
-      background-color: rgba(255,255,255,.5);;
-      outline: 1px solid slategrey;
-      border-radius: 25px;
-    }
     .ui-header {padding: 10px; margin-bottom: 10px; font-size: 20px;}
     .track-search {padding: 10px; padding-top: 20px; padding-bottom: 20px; background-color: rgb(18,18,18);}
-    .navigation { background-color: rgb(18,18,18); }
+    .navigation { background-color: rgb(18,18,18); width: 150px; height: 100%; }
     .navigation-button { padding: 10px 20px 10px 20px; background-color: rgb(30,30,30); user-select: none; cursor: default; margin: 0px; border: 0px; width: 100%; min-height: 75px;}
     .navigation-button:hover { color: rgb(255,255,255); border: 0px; }
-    .groove-stream-player-playback-control {padding: 0px; padding-left: 10px; border-radius: 40px; width: 30px; height: 30px; background-color: rgba(0,0,0,0); border: 1px solid white; margin: 10px;}
-    .groove-stream-player-playback-control:hover {background-colora: rgb(0,158,224,0); border-color:  rgb(0,158,224); color:  white;}
-    .groove-stream-player-playback-control .ion-pause {background-color: rgb(0,158,224,1); border-color:  white; color: white;}
+    .circle-button {padding: 0px; padding-left: 10px; border-radius: 40px; width: 30px; height: 30px; background-color: rgba(0,0,0,0); border: 1px solid white; margin: 10px;}
+    .circle-button:hover {background-color: rgb(0,158,224,1); border-color:  white; color:  white;}
     .track-name {padding-bottom: 10px;}
     .results-list .ui-list {padding-right: 10px;}
     .results-list {overflow: auto; max-height: 700px;}
@@ -511,5 +568,9 @@ commit
     td { padding: 10px; }
     table, th, td { border: 1px solid rgb(80,80,80); }
     .scrollable {  overflow: auto; height: 800px; }
+    .global-playback {padding-top: 8px;}
+    .global-play {width: 50px; height: 50px; font-size: 25px; padding-left: 17px;}
+    .ui-input {padding: 5px 10px 5px 10px; border-radius: 20px; border: 1px solid rgb(80,80,80); outline: none;}
+    .large-button {width: 50px; height: 50px; font-size: 25px; padding-left: 15px;}
     "]
 end
