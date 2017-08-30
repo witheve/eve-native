@@ -1,0 +1,37 @@
+# JSON Testing
+
+## Test Encoding
+
+commit
+  ellen = [#person name: "Ellen" age: 28.8]
+  [#person name: "Hugh" age: 30.5 wife: ellen zip: 12345]
+end
+
+search
+  p = [#person name: "Hugh"]
+commit
+  [#json/encode record: p]
+end
+
+search
+  [#json/encode json-string]
+commit
+  [#console/log text: "Encoded JSON: {{json-string}}"]
+end
+
+## Test Decode
+
+Decode the record we just encoded
+
+search
+  [#json/encode json-string]
+commit
+  [#json/decode json: json-string]
+end
+
+search
+  [#json/decode json-object]
+commit
+  [#console/log text: "Decoded: {{json-object}}"]
+  //[#console/log text: "Decoded a JSON: {{json-object.name}} is {{json-object.age}} years old and lives at {{json-object.zip}}"]
+end

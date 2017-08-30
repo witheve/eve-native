@@ -7,8 +7,7 @@ A library for encoding and decoding Eve records into and from JSON
 Encoding starts with a `#json/encode` record.
 
 search
-  j = [#json/encode record]
-  lookup[entity: record attribute value]
+  [#json/encode record]
 commit
   [#json/encode/target record]
   [#json/encode/flatten record]
@@ -17,13 +16,13 @@ end
 Target records are specified for encoding
 
 search
-  j = [#json/encode/target record]
+  encode = [#json/encode/target record]
 watch json
-  ("encode/target", j, record)
+  ("encode/target", encode, record)
 end
 
 Flattening is done recursively. We start with the target record and look up all
-a/v pairs. Any v that is aslo a record (satisfies `lookup[entity]`) we will also
+a/v pairs. Any v that is also a record (satisfies `lookup[entity]`) we will also
 flatten.
 
 search
@@ -39,9 +38,9 @@ end
 Raw EAVs are encoded as JSON
 
 search
-  j = [#json/encode/eav record attribute value]
+  encode = [#json/encode/eav record attribute value]
 watch json
-  ("encode/eav", j, record, attribute, value)
+  ("encode/eav", encode, record, attribute, value)
 end
 
 We get back a `json-string` as a change. Apply it as an attribute to the
@@ -49,15 +48,15 @@ original `json/encode`
 
 search
   [#json/encode/change record json-string]
-  r = [#json/encode record]
+  encode = [#json/encode record]
 commit
-  r.json-string := json-string
+  encode.json-string := json-string
 end
 
 ## Decoding
 
 search
-  j = [#json/decode json]
+  decode = [#json/decode json]
 watch json
-  ("decode", j, json)
+  ("decode", decode, json)
 end

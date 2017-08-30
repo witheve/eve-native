@@ -628,6 +628,10 @@ impl Internable {
         Internable::Number(value)
     }
 
+    pub fn from_str(s: &str) -> Internable { 
+        Internable::String(s.to_string()) 
+    } 
+
     pub fn print(&self) -> String {
         match self {
             &Internable::String(ref s) => {

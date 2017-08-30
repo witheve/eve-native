@@ -24,6 +24,7 @@ use eve::watchers::compiler::{CompilerWatcher};
 use eve::watchers::compiler2::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
 use eve::watchers::remote::{Router, RemoteWatcher};
+use eve::watchers::json::JsonWatcher;
 
 extern crate iron;
 extern crate staticfile;
@@ -68,11 +69,12 @@ impl ClientHandler {
         if !clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone())));
-            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing)));
+            runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(WebsocketClientWatcher::new(out.clone())));
             runner.program.attach(Box::new(ConsoleWatcher::new()));
             runner.program.attach(Box::new(PanicWatcher::new()));
             runner.program.attach(Box::new(RemoteWatcher::new(client_name, &router.lock().unwrap().deref())));
+            runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
         }
 
         for file in files {

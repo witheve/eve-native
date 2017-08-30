@@ -32,20 +32,20 @@ impl Watcher for JsonWatcher {
         for add in diff.adds {
             let kind = Internable::to_string(interner.get_value(add[0]));
             let record_id = Internable::to_string(interner.get_value(add[1]));
-            let j_arg = Internable::to_string(interner.get_value(add[2]));
             
-            match (&kind[..], j_arg) {
-                ("encode/target", _) => {
+            match kind.as_ref() {
+                "encode/target" => {
                     id = Internable::to_string(interner.get_value(add[2]));
                 },
-                ("encode/eav", j_arg) => {
-                    let e = j_arg;
+                "encode/eav" => {
+                    let e = Internable::to_string(interner.get_value(add[2]));
                     let a = Internable::to_string(interner.get_value(add[3]));
                     let v: Value = match interner.get_value(add[4]) {
-                        &Internable::Number(ref n) => Value::Number(Number::from(n.clone())),
+                        internable@&Internable::Number(_) => Value::Number(Number::from_f64(Internable::to_number(internable) as f64).unwrap()),
                         &Internable::String(ref n) => Value::String(String::from(n.clone())),
-                        _ => Value::Null,
+                        _ => Value::Null
                     };
+                    println!("Encoding: {:?} {:?}",a,v);
                     if record_map.contains_key(&e) {
                         let record = record_map.get_mut(&e).unwrap();
                         let sub_record = record.as_object_mut().unwrap();
@@ -56,7 +56,9 @@ impl Watcher for JsonWatcher {
                         record_map.insert(e, Value::Object(new_record));
                     }
                 },
-                ("decode", value) => {
+                "decode" => {
+                    println!("DECODING");
+                    let value = Internable::to_string(interner.get_value(add[2]));
                     let v: Value = serde_json::from_str(&value).unwrap();
                     value_to_changes(&record_id.to_string(), "json-object", v, "json/decode", &mut changes);
                 },
@@ -67,6 +69,7 @@ impl Watcher for JsonWatcher {
         if let Some(target_record) = record_map.get(&id) {
             let inner_map = target_record.as_object().unwrap();
             let dereferenced_target = dereference(inner_map, &record_map);
+            println!("Dereferenced Target: {:?}", dereferenced_target);
             let json = serde_json::to_string(&dereferenced_target).unwrap();
             let change_id = format!("json/encode/change|{:?}",id);
             changes.push(new_change(&change_id, "tag", Internable::from_str("json/encode/change"), "json/encode"));
