@@ -1,7 +1,7 @@
 Domains
 ------------------------------------------------------
 
-Domains help us represent the valid values of some value within a block. Knowing
+Domains help us represent the valid values of some variable within a block. Knowing
 the domain for both the inputs and outputs of a block help us dramatically prune
 the otherwise very cyclic graph that most Eve programs end up forming. There are
 a few types of domains:
@@ -359,7 +359,8 @@ for a link that has the same to, but a lower level
     search
       link = [#chain-link to]
     bind
-      link.visited += to
+      link += #chain-link/visited
+      link.visited += [link to]
     end
 
     search
@@ -369,24 +370,19 @@ for a link that has the same to, but a lower level
     end
 
     search
-      link = [#chain-link chain to:from level]
+      link = [#chain-link/visited chain from:prev to:from level]
       [#link from to]
-      not(link = [#cycle])
-      not(
-        prev = [#chain-link chain to]
-        prev.level <= level
-      )
+      not(link.visited.to = to)
       next-level = level + 1
     bind
       [#chain-link chain from:link to level:next-level]
     end
 
     search
-      link = [#chain-link chain to:from visited level]
-      [#link from to:visited]
-      not(link = [#cycle])
+      link = [#chain-link/visited chain to:from visited level]
+      [#link from to:visited.to]
     bind
-      [#chain-link #cycle chain from:link to:visited level:level + 1]
+      [#cycle-link chain from:link to-link:visited.link level:level + 1]
     end
 
 Turn output constraints into their "real" equivalents
@@ -400,7 +396,7 @@ Turn output constraints into their "real" equivalents
     end
 
     search
-      [#function block op:"gen-id" output: e]
+      [#function block op:"gen_id" output: e]
       [#insert block e a v]
     bind
       create = [#real/create block e | attribute: [a v]]
@@ -607,7 +603,7 @@ optimization rule is part of the new, optimized chain.
       link = [#chain-link chain from:from-link to level]
       not([#link-removal link])
     bind
-      [#chain-link/optimized chain from to level]
+      [#chain-link/optimized chain from-link:link from to level]
     end
 
 On to the link removers. The first one we'll do is that if a block has a pulse
@@ -764,8 +760,19 @@ that represents the optimized program.
     search
       program = [#program]
     bind
+      [#ir/program program]
       [#ir/main program]
     end
+
+All the setup blocks contribute to our main function.
+
+    search
+      [#chain type:"setup" provider: [ir]]
+      main = [#ir/main]
+    bind
+      main.item += ir
+    end
+
 
 Define all the structs that we need.
 
@@ -781,6 +788,14 @@ Define all the structs that we need.
       attribute.a != "tag"
     bind
       ir.field += [#ir/field name:[#ir/symbol name:attribute.a]]
+    end
+
+Setups
+
+    search
+      chain = [#chain type:"setup"]
+    bind
+      chain.provider += [#provider level:0 ir:[#ir/do chain]]
     end
 
 Roots
@@ -888,7 +903,6 @@ a nice little mapping for it:
     bind
       block-tag.symbol += symbol
     end
-
 
 IR for constraints
 ------------------------------------------------------
@@ -1008,7 +1022,7 @@ Updates
 
     search
       [#block-tag e symbol]
-      set = [#real/set block e a v]
+      set = [#real/set e a v]
     bind
       set.ir +=
         [#ir/set set | symbol
@@ -1016,6 +1030,29 @@ Updates
           value:[#ir/from-value value:v]]
     end
 
+    search
+      chain = [#chain-link/optimized to:block]
+      [#block-tag block e tag-name]
+      create = [#real/create e level]
+    bind
+      symbol = [#ir/symbol name:tag-name]
+      chain.provider += [#provider #constraint-provided #create-provider
+                          create chain level block | tag-name symbol
+                          ir: [#ir/do create chain level]]
+      create.ir += [#ir/let create |
+                      name:symbol
+                      value: [#ir/create-struct create symbol]]
+    end
+
+    search
+      ir = [#ir/create-struct create]
+      attribute = create.attribute
+      attribute.a != "tag"
+    bind
+      ir.field += [#ir/field attribute |
+                    name: [#ir/symbol name:attribute.a]
+                    value: [#ir/from-value value:attribute.v]]
+    end
 
 Code Generation
 ------------------------------------------------------
@@ -1037,7 +1074,7 @@ looking at IR nodes and constructing code strings out of them.
         if ir = [#ir/and items_js] then (ir, "({{items_js}})")
         if ir = [#ir/or items_js] then (ir, "({{items_js}})")
         if ir = [#ir/call func_js args_js] then (ir, "{{func_js}}({{args_js}})")
-        if ir = [#ir/create-struct symbol args_js] then (ir, "{{symbol.js}}_struct({{args_js}})")
+        if ir = [#ir/create-struct symbol args_js] then (ir, "new {{symbol.js}}_struct({{args_js}})")
         if ir = [#ir/define-struct symbol args_js setters_js]
           then (ir, "var all_{{symbol.js}} = [];
                      function {{symbol.js}}_struct({{args_js}}) {
@@ -1058,13 +1095,31 @@ looking at IR nodes and constructing code strings out of them.
                         {{items_js}}
                      }")
         if ir = [#ir/on symbol tag-name items_js]
-          then (ir, "function on_{{tag-name.js}}({{symbol.js}})
+          then (ir, "function on_{{tag-name.js}}({{symbol.js}}) {
                         {{items_js}}
                      }")
         if ir = [#ir/main items_js]
-          then (ir, "(function main()
+          then (ir, "(function main() {
                         {{items_js}}
                      })()")
+        if ir = [#ir/program structs_js ons_js main]
+          then (ir, "//--------------------------------------------
+                     // Structs
+                     //--------------------------------------------
+
+                     {{structs_js}}
+
+                     //--------------------------------------------
+                     // Event handlers
+                     //--------------------------------------------
+
+                     {{ons_js}}
+
+                     //--------------------------------------------
+                     // Main
+                     //--------------------------------------------
+
+                     {{main.js}}")
     bind
       ir <- [js]
     end
@@ -1110,17 +1165,6 @@ have their items concatenated into a string with each item on its own line.
       ir <- [items_js]
     end
 
-@FIXME: turning this on causes bad things to happen - it looks like something's
-not getting correctly retracted?
-
-    disabled search
-      ir = [#ir/has-items]
-      not(ir.item)
-      items_js = "meep"
-    bind
-      ir <- [items_js]
-    end
-
 For functions we may need to map an eve function name to a particular javascript
 function and we also need to gather the arguments to the function and
 concatenate them together.
@@ -1133,7 +1177,7 @@ concatenate them together.
 
     search
       ir = [#ir/call func]
-      func_js = if [#function-mapping eve:func js] then js
+      func_js = if [#function-mapping eve:func.name js] then js
                 else func.js
     bind
       ir <- [func_js]
@@ -1151,7 +1195,7 @@ setters for define-struct
 
     search
       ir = [#ir/define-struct field:[#ir/field name]]
-      args_js = gather/string-join[for:name value:name.js separator:", " per:ir]
+      args_js = gather/string-join[for:name.js value:name.js separator:", " per:ir]
     bind
       ir <- [args_js]
     end
@@ -1159,16 +1203,42 @@ setters for define-struct
     search
       ir = [#ir/define-struct field:[#ir/field name]]
       setter = "  this.{{name.js}} = {{name.js}};"
-      setters_js = gather/string-join[for:name value:setter separator:"\n" per:ir]
+      setters_js = gather/string-join[for:name.js value:setter separator:"\n" per:ir]
     bind
       ir <- [setters_js]
     end
 
     search
-      ir = [#ir/create-struct args:[#ir/field name value]]
-      args_js = gather/string-join[for:name value:value.js separator:", " per:ir]
+      ir = [#ir/create-struct field:[#ir/field name value]]
+      args_js = gather/string-join[for:name.js value:value.js separator:", " per:ir]
     bind
       ir <- [args_js]
+    end
+
+For a whole program, we have to gather all the structs and all the ons, and
+the main.
+
+    search
+      program = [#ir/program]
+      ir = [#ir/define-struct js]
+      structs_js = gather/string-join[for:ir value:js separator:"\n\n" per:program]
+    bind
+      program <- [structs_js]
+    end
+
+    search
+      program = [#ir/program]
+      ir = [#ir/on js]
+      ons_js = gather/string-join[for:ir value:js separator:"\n\n" per:program]
+    bind
+      program <- [ons_js]
+    end
+
+    search
+      program = [#ir/program]
+      main = [#ir/main]
+    bind
+      program <- [main]
     end
 
 
@@ -1193,15 +1263,92 @@ Drawing
 ------------------------------------------------------
 
     search
-      [#ir/define-struct js]
+      ir = [#ir/program js]
+      output = [#compiler-output]
     bind
-      [#html/element tagname:"pre" text:js]
+      output <- [#html/element tagname:"textarea" text:js]
     end
 
     search
-      ir = [#ir/on js]
+      program = [#program]
     bind
-      [#html/element tagname:"pre" text:js]
+      [#ui/column children:
+        [#compiler-output style: [height:"50vh"]]
+        [#ui/row children:
+          [#graph/graph #link-graph program]
+          [#graph/graph #optimized-graph program]]]
+    end
+
+    search
+      link = [#chain]
+      label = if link.type = "setup" then "setup"
+              else link.tag-name
+      graph = [#link-graph]
+    bind
+      node = [#graph/node link | label]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link to]
+      graph = [#link-graph]
+    bind
+      node = [#graph/node link | label:to.name]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link from:from-link]
+      from = [#graph/node link:from-link]
+      to = [#graph/node link]
+      graph = [#link-graph]
+    bind
+      edge = [#graph/edge link | from to]
+      graph.edges += edge
+    end
+
+    search
+      link = [#cycle-link from:from-link to-link]
+      from = [#graph/node link:from-link]
+      to = [#graph/node link:to-link]
+      graph = [#link-graph]
+    bind
+      edge = [#graph/back-edge link | from to]
+      graph.edges += edge
+    end
+
+    search
+      link = [#chain]
+      label = if link.type = "setup" then "setup"
+              else link.tag-name
+      graph = [#optimized-graph]
+    bind
+      node = [#graph/node link | label]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link/optimized to]
+      graph = [#optimized-graph]
+    bind
+      node = [#graph/node link | label:to.name]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link/optimized from:from-link]
+      from = [#graph/node link:from-link]
+      to = [#graph/node link]
+      graph = [#optimized-graph]
+    bind
+      edge = [#graph/edge link | from to]
+      graph.edges += edge
+    end
+
+    search
+      graph = [#graph/graph]
+    bind
+      graph.style += [width: "900px" height:"50vh"]
     end
 
 Test
