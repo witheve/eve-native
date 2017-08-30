@@ -3,16 +3,19 @@
 //-------------------------------------------------------------------------
 
 // use std::collections::HashMap;
-use ops::{EstimateIter, OutputingIter, Change, RoundHolder, Interned, Round, Count, IntermediateChange, Internable, Interner, AggregateFunction};
+
+use ops::{AggregateFunction, Change, Count, EstimateIter,
+          IntermediateChange, Internable, Interned, Interner,
+          OutputingIter, Round, RoundHolder};
 use std::cmp;
 
 extern crate fnv;
+use compiler::FunctionKind;
 use indexes::fnv::FnvHasher;
-use std::hash::{BuildHasherDefault};
-use std::collections::hash_map::{Entry};
-use std::iter::{Iterator, self};
-use std::collections::{BTreeMap, HashMap, BTreeSet, btree_map};
-use compiler::{FunctionKind};
+use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map};
+use std::collections::hash_map::Entry;
+use std::hash::BuildHasherDefault;
+use std::iter::{self, Iterator};
 
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
@@ -20,18 +23,24 @@ pub type MyHasher = BuildHasherDefault<FnvHasher>;
 // Utils
 //-------------------------------------------------------------------------
 
-pub fn ensure_len(vec:&mut Vec<i32>, len:usize) {
+pub fn ensure_len(vec: &mut Vec<i32>, len: usize) {
     if vec.len() < len {
         vec.resize(len, 0);
     }
 }
 
-pub fn get_delta(last:i32, next:i32) -> i32 {
-    if last == 0 && next > 0 { 1 }
-    else if last > 0 && next == 0 { -1 }
-    else if last > 0 && next < 0 { -1 }
-    else if last < 0 && next > 0 { 1 }
-    else { 0 }
+pub fn get_delta(last: i32, next: i32) -> i32 {
+    if last == 0 && next > 0 {
+        1
+    } else if last > 0 && next == 0 {
+        -1
+    } else if last > 0 && next < 0 {
+        -1
+    } else if last < 0 && next > 0 {
+        1
+    } else {
+        0
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -45,7 +54,7 @@ pub enum HashIndexLeaf {
 }
 
 impl HashIndexLeaf {
-    pub fn insert(&mut self, neue_value:Interned) -> bool {
+    pub fn insert(&mut self, neue_value: Interned) -> bool {
         match self {
             &mut HashIndexLeaf::Single(prev) => {
                 if prev != neue_value {
@@ -57,36 +66,40 @@ impl HashIndexLeaf {
                 } else {
                     false
                 }
-            },
+            }
             &mut HashIndexLeaf::Many(ref mut prev) => {
                 prev.insert(neue_value, ()).is_none()
-            },
+            }
         }
     }
 
-    pub fn remove(&mut self, neue_value:Interned) -> bool {
+    pub fn remove(&mut self, neue_value: Interned) -> bool {
         match self {
-            &mut HashIndexLeaf::Single(prev) => {
-                prev == neue_value
-            },
+            &mut HashIndexLeaf::Single(prev) => prev == neue_value,
             &mut HashIndexLeaf::Many(ref mut prev) => {
                 prev.remove(&neue_value);
                 prev.len() == 0
-            },
+            }
         }
     }
 
-    pub fn check(&self, v:Interned) -> bool {
+    pub fn check(&self, v: Interned) -> bool {
         match self {
             &HashIndexLeaf::Single(cur) => cur == v,
             &HashIndexLeaf::Many(ref cur) => cur.contains_key(&v),
         }
     }
 
-    pub fn iter<'a>(&'a self) -> Box<ExactSizeIterator<Item=Interned> + 'a> {
+    pub fn iter<'a>(
+        &'a self)
+        -> Box<ExactSizeIterator<Item = Interned> + 'a> {
         match self {
-            &HashIndexLeaf::Single(value) => Box::new(iter::once(value)),
-            &HashIndexLeaf::Many(ref index) => Box::new(index.keys().cloned()),
+            &HashIndexLeaf::Single(value) => {
+                Box::new(iter::once(value))
+            }
+            &HashIndexLeaf::Many(ref index) => {
+                Box::new(index.keys().cloned())
+            }
         }
     }
 }
@@ -104,18 +117,20 @@ pub struct HashIndexLevel {
 
 impl HashIndexLevel {
     pub fn new() -> HashIndexLevel {
-        HashIndexLevel { e: HashMap::default(), v: HashMap::default(), size: 0 }
+        HashIndexLevel {
+            e: HashMap::default(),
+            v: HashMap::default(),
+            size: 0,
+        }
     }
 
-    pub fn insert(&mut self, e: Interned, v:Interned) -> bool {
+    pub fn insert(&mut self, e: Interned, v: Interned) -> bool {
         let added = match self.e.entry(e) {
-            Entry::Occupied(mut o) => {
-                o.get_mut().insert(v)
-            }
+            Entry::Occupied(mut o) => o.get_mut().insert(v),
             Entry::Vacant(o) => {
                 o.insert(HashIndexLeaf::Single(v));
                 true
-            },
+            }
         };
         if added {
             self.size += 1;
@@ -125,13 +140,13 @@ impl HashIndexLevel {
                 }
                 Entry::Vacant(o) => {
                     o.insert(HashIndexLeaf::Single(e));
-                },
+                }
             };
         }
         added
     }
 
-    pub fn remove(&mut self, e:Interned, v:Interned) -> bool {
+    pub fn remove(&mut self, e: Interned, v: Interned) -> bool {
         let added = match self.e.entry(e) {
             Entry::Occupied(mut o) => {
                 let is_empty = o.get_mut().remove(v);
@@ -140,9 +155,7 @@ impl HashIndexLevel {
                 }
                 true
             }
-            Entry::Vacant(_) => {
-                false
-            },
+            Entry::Vacant(_) => false,
         };
         if added {
             // self.size -= 1;
@@ -153,13 +166,13 @@ impl HashIndexLevel {
                         o.remove_entry();
                     }
                 }
-                Entry::Vacant(_) => { },
+                Entry::Vacant(_) => {}
             };
         }
         added
     }
 
-    pub fn check(&self, e: Interned, v:Interned) -> bool {
+    pub fn check(&self, e: Interned, v: Interned) -> bool {
         if e > 0 && v > 0 {
             match self.e.get(&e) {
                 Some(leaf) => leaf.check(v),
@@ -174,21 +187,31 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn find_values<'a>(&'a self, e:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
+    pub fn find_values<'a>(
+        &'a self,
+        e: Interned)
+        -> Option<Box<ExactSizeIterator<Item = Interned> + 'a>> {
         match self.e.get(&e) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn find_entities<'a>(&'a self, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
+    pub fn find_entities<'a>(
+        &'a self,
+        v: Interned)
+        -> Option<Box<ExactSizeIterator<Item = Interned> + 'a>> {
         match self.v.get(&v) {
             Some(leaf) => Some(leaf.iter()),
             None => None,
         }
     }
 
-    pub fn get<'a>(&'a self, e:Interned, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
+    pub fn get<'a>(
+        &'a self,
+        e: Interned,
+        v: Interned)
+        -> Option<Box<ExactSizeIterator<Item = Interned> + 'a>> {
         if e > 0 {
             // println!("here looking for v {:?}", e);
             self.find_values(e)
@@ -213,7 +236,11 @@ impl HashIndexLevel {
         }
     }
 
-    pub fn propose(&self, iter:&mut EstimateIter, e:Interned, v:Interned) -> bool {
+    pub fn propose(&self,
+                   iter: &mut EstimateIter,
+                   e: Interned,
+                   v: Interned)
+        -> bool {
         if e > 0 {
             if let Some(hash_iter) = self.find_values(e) {
                 let estimate = hash_iter.len();
@@ -274,8 +301,13 @@ impl HashIndexLevel {
 // Generic distinct
 //-------------------------------------------------------------------------
 
-pub fn generic_distinct<F>(counts:&mut Vec<Count>, mut input_count:Count, input_round:Round, mut insert:F, handle_commits: bool)
-    where F: FnMut(Round, Count)
+pub fn generic_distinct<F>(counts: &mut Vec<Count>,
+                           mut input_count: Count,
+                           input_round: Round,
+                           mut insert: F,
+                           handle_commits: bool)
+where
+    F: FnMut(Round, Count),
 {
     ensure_len(counts, (input_round + 1) as usize);
     let counts_len = counts.len() as u32;
@@ -283,7 +315,7 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, mut input_count:Count, input_
     let mut cur_count = 0;
     for ix in 0..min {
         cur_count += counts[ix as usize];
-    };
+    }
 
     // handle Infinity/-Infinity for commits at round 0
     if handle_commits && input_round == 0 {
@@ -308,7 +340,9 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, mut input_count:Count, input_
 
     for round_ix in (input_round + 1)..counts_len {
         let round_count = counts[round_ix as usize];
-        if round_count == 0 { continue; }
+        if round_count == 0 {
+            continue;
+        }
 
         let last_count = cur_count - input_count;
         let next_count = last_count + round_count;
@@ -316,7 +350,8 @@ pub fn generic_distinct<F>(counts:&mut Vec<Count>, mut input_count:Count, input_
 
         let last_count_changed = cur_count;
         let next_count_changed = cur_count + round_count;
-        let delta_changed = get_delta(last_count_changed, next_count_changed);
+        let delta_changed = get_delta(last_count_changed,
+                                      next_count_changed);
 
         let mut final_delta = 0;
         if delta != 0 && delta != delta_changed {
@@ -347,46 +382,56 @@ pub struct RoundEntry {
     active_rounds: Vec<i32>,
 }
 
-fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Count) {
-        let round_i32 = round as i32;
-        if count > 0 {
-            match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
-                Ok(pos) =>  {
-                    let cur = active_rounds[pos];
-                    if cur < 0 {
-                        let diff = round as i32 * count;
-                        if cur + diff == 0 {
-                            active_rounds.remove(pos);
-                        } else {
-                            active_rounds[pos] = round as i32;
-                        }
+fn update_active_rounds_vec(active_rounds: &mut Vec<i32>,
+                            round: Round,
+                            count: Count) {
+    let round_i32 = round as i32;
+    if count > 0 {
+        match active_rounds.binary_search_by(
+            |probe| probe.abs().cmp(&round_i32),
+        ) {
+            Ok(pos) => {
+                let cur = active_rounds[pos];
+                if cur < 0 {
+                    let diff = round as i32 * count;
+                    if cur + diff == 0 {
+                        active_rounds.remove(pos);
                     } else {
-                        panic!("Adding a round that already exists in the index at {:?}", round)
+                        active_rounds[pos] = round as i32;
                     }
+                } else {
+                    panic!("Adding a round that is already in the index: {:?}",
+                           round)
                 }
-                Err(pos) => active_rounds.insert(pos, round as i32),
-            };
-        } else {
-            let (pos, remove) = match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
+            }
+            Err(pos) => active_rounds.insert(pos, round as i32),
+        };
+    } else {
+        let (pos, remove) =
+            match active_rounds.binary_search_by(
+                |probe| probe.abs().cmp(&round_i32),
+            ) {
                 Ok(pos) => (pos, true),
                 Err(pos) => (pos, false),
             };
-            if remove {
-                active_rounds.remove(pos);
-                // we might be doing a swing from positive to negative, which we'd see by getting a
-                // count of -2 instead of -1. If so, we need to insert the negative.
-                if count < -1 {
-                    active_rounds.insert(pos, (round as i32) * -1);
-                }
-            } else {
+        if remove {
+            active_rounds.remove(pos);
+            // we might be doing a swing from positive to negative, which we'd see by getting a
+            // count of -2 instead of -1. If so, we need to insert the negative.
+            if count < -1 {
                 active_rounds.insert(pos, (round as i32) * -1);
             }
+        } else {
+            active_rounds.insert(pos, (round as i32) * -1);
         }
+    }
 }
 
 impl RoundEntry {
-    pub fn update_active(&mut self, round:Round, count:Count) {
-        update_active_rounds_vec(&mut self.active_rounds, round, count);
+    pub fn update_active(&mut self, round: Round, count: Count) {
+        update_active_rounds_vec(&mut self.active_rounds,
+                                 round,
+                                 count);
     }
 }
 
@@ -396,11 +441,18 @@ pub struct HashIndex {
 }
 
 impl HashIndex {
-    pub fn new() -> HashIndex{
-        HashIndex { a: HashMap::default(), size: 0 }
+    pub fn new() -> HashIndex {
+        HashIndex {
+            a: HashMap::default(),
+            size: 0,
+        }
     }
 
-    pub fn insert(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+    pub fn insert(&mut self,
+                  e: Interned,
+                  a: Interned,
+                  v: Interned)
+        -> bool {
         let added = match self.a.entry(a) {
             Entry::Occupied(mut o) => {
                 let mut level = o.get_mut();
@@ -408,29 +460,41 @@ impl HashIndex {
             }
             Entry::Vacant(o) => {
                 let mut level = HashIndexLevel::new();
-                level.insert(e,v);
+                level.insert(e, v);
                 o.insert(level);
                 true
-            },
+            }
         };
-        if added { self.size += 1 };
+        if added {
+            self.size += 1
+        };
         added
     }
 
-    pub fn remove(&mut self, e: Interned, a:Interned, v:Interned) -> bool {
+    pub fn remove(&mut self,
+                  e: Interned,
+                  a: Interned,
+                  v: Interned)
+        -> bool {
         let removed = match self.a.entry(a) {
             Entry::Occupied(mut o) => {
                 let mut level = o.get_mut();
                 level.remove(e, v)
             }
-            Entry::Vacant(_) => { false },
+            Entry::Vacant(_) => false,
         };
-        if removed { self.size -= 1; };
+        if removed {
+            self.size -= 1;
+        };
         removed
     }
 
     #[inline(never)]
-    pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
+    pub fn check(&self,
+                 e: Interned,
+                 a: Interned,
+                 v: Interned)
+        -> bool {
         if a > 0 {
             match self.a.get(&a) {
                 Some(level) => level.check(e, v),
@@ -446,15 +510,25 @@ impl HashIndex {
         }
     }
 
-    pub fn fast_check(&self, distinct: &DistinctIndex, e: Interned, a:Interned, v:Interned) -> bool {
+    pub fn fast_check(&self,
+                      distinct: &DistinctIndex,
+                      e: Interned,
+                      a: Interned,
+                      v: Interned)
+        -> bool {
         if e > 0 && a > 0 && v > 0 {
             distinct.check(e, a, v)
         } else {
-            self.check(e,a,v)
+            self.check(e, a, v)
         }
     }
 
-    pub fn get<'a>(&'a self, e:Interned, a:Interned, v:Interned) -> Option<Box<ExactSizeIterator<Item=Interned> + 'a>> {
+    pub fn get<'a>(
+        &'a self,
+        e: Interned,
+        a: Interned,
+        v: Interned)
+        -> Option<Box<ExactSizeIterator<Item = Interned> + 'a>> {
         if a == 0 {
             if self.a.len() > 0 {
                 Some(Box::new(self.a.keys().cloned()))
@@ -470,13 +544,18 @@ impl HashIndex {
         }
     }
 
-    pub fn propose(&self, iter: &mut EstimateIter, e:Interned, a:Interned, v:Interned) -> bool {
+    pub fn propose(&self,
+                   iter: &mut EstimateIter,
+                   e: Interned,
+                   a: Interned,
+                   v: Interned)
+        -> bool {
         if a == 0 {
             // @NOTE: In the case where we have an arbitrary lookup we may propose values that may not be correct, but
             // get_rounds should handle this for us.
             let attrs_iter = self.a.keys();
             let estimate = attrs_iter.len();
-            if iter.is_better(estimate)  {
+            if iter.is_better(estimate) {
                 iter.estimate = estimate;
                 iter.iter = OutputingIter::Single(1, OutputingIter::make_ptr(Box::new(attrs_iter.cloned())));
                 true
@@ -489,7 +568,7 @@ impl HashIndex {
                     iter.estimate = 0;
                     iter.iter = OutputingIter::Empty;
                     return true;
-                },
+                }
                 Some(level) => level,
             };
             level.propose(iter, e, v)
@@ -502,17 +581,26 @@ impl HashIndex {
 //-------------------------------------------------------------------------
 
 pub struct DistinctIndex {
-    pub eavs: HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
+    pub eavs:
+        HashMap<(Interned, Interned, Interned), RoundEntry, MyHasher>,
     empty: Vec<i32>,
 }
 
 impl DistinctIndex {
     pub fn new() -> DistinctIndex {
-        DistinctIndex { eavs: HashMap::default(), empty: vec![] }
+        DistinctIndex {
+            eavs: HashMap::default(),
+            empty: vec![],
+        }
     }
 
-    pub fn insert_active(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
-        match self.eavs.entry((e,a,v)) {
+    pub fn insert_active(&mut self,
+                         e: Interned,
+                         a: Interned,
+                         v: Interned,
+                         round: Round)
+        -> bool {
+        match self.eavs.entry((e, a, v)) {
             Entry::Occupied(mut entry) => {
                 let info = entry.get_mut();
                 let needs_insert = info.inserted;
@@ -521,14 +609,23 @@ impl DistinctIndex {
                 !needs_insert
             }
             Entry::Vacant(o) => {
-                o.insert(RoundEntry { inserted: true, rounds: vec![], active_rounds:vec![round as i32] });
+                o.insert(RoundEntry {
+                             inserted: true,
+                             rounds: vec![],
+                             active_rounds: vec![round as i32],
+                         });
                 true
             }
         }
     }
 
-    pub fn remove_active(&mut self, e: Interned, a:Interned, v:Interned, round:Round) -> bool {
-        match self.eavs.entry((e,a,v)) {
+    pub fn remove_active(&mut self,
+                         e: Interned,
+                         a: Interned,
+                         v: Interned,
+                         round: Round)
+        -> bool {
+        match self.eavs.entry((e, a, v)) {
             Entry::Occupied(mut entry) => {
                 // There are two possibilities we have to worry about here. One is that we have
                 // completely removed all traces of this eav, which we identify by having the
@@ -540,52 +637,91 @@ impl DistinctIndex {
                 let (should_remove_entry, remove_indexed) = {
                     let info = entry.get_mut();
                     info.update_active(round, -1);
-                    let active_cleared = info.active_rounds.len() == 0;
-                    if active_cleared { info.inserted = false; }
-                    (!info.rounds.iter().any(|x| *x != 0), active_cleared)
+                    let active_cleared = info.active_rounds.len() ==
+                        0;
+                    if active_cleared {
+                        info.inserted = false;
+                    }
+                    (!info.rounds.iter().any(|x| *x != 0),
+                     active_cleared)
                 };
                 if should_remove_entry && remove_indexed {
                     entry.remove_entry();
                 }
                 remove_indexed
             }
-            Entry::Vacant(_) => { false },
+            Entry::Vacant(_) => false,
         }
     }
 
-    pub fn check(&self, e: Interned, a:Interned, v:Interned) -> bool {
-        self.eavs.contains_key(&(e,a,v))
+    pub fn check(&self,
+                 e: Interned,
+                 a: Interned,
+                 v: Interned)
+        -> bool {
+        self.eavs.contains_key(&(e, a, v))
     }
 
-    pub fn is_commit(&self, e:Interned, a:Interned, v:Interned) -> bool {
-        assert!(e > 0 && a > 0 && v > 0, "Can't check availability of an unformed EAV ({}, {}, {})", e,a,v);
-        match self.eavs.get(&(e,a,v)) {
-            Some(rounds) => {
-                rounds.active_rounds.get(0) == Some(&0)
-            }
+    pub fn is_commit(&self,
+                     e: Interned,
+                     a: Interned,
+                     v: Interned)
+        -> bool {
+        assert!(e > 0 && a > 0 && v > 0,
+                "Can't check availability of an unformed EAV ({}, {}, {})",
+                e,
+                a,
+                v);
+        match self.eavs.get(&(e, a, v)) {
+            Some(rounds) => rounds.active_rounds.get(0) == Some(&0),
             None => false,
         }
     }
 
-    pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
+    pub fn is_available(&self,
+                        e: Interned,
+                        a: Interned,
+                        v: Interned)
+        -> bool {
         if e == 0 || a == 0 || v == 0 {
-            panic!("Can't check availability of an unformed EAV ({}, {}, {})", e, a, v);
+            panic!("Can't check availability of an unformed EAV ({}, {}, {})",
+                   e,
+                   a,
+                   v);
         }
-        match self.eavs.get(&(e,a,v)) {
+        match self.eavs.get(&(e, a, v)) {
             Some(rounds) => {
-                rounds.rounds.iter().fold(0, |prev, x| prev + x) > 0
+                rounds.rounds
+                      .iter()
+                      .fold(0, |prev, x| prev + x) > 0
             }
             None => false,
         }
     }
 
-    pub fn get(&self, e:Interned, a:Interned, v:Interned) -> Option<&RoundEntry> {
-        self.eavs.get(&(e,a,v))
+    pub fn get(&self,
+               e: Interned,
+               a: Interned,
+               v: Interned)
+        -> Option<&RoundEntry> {
+        self.eavs.get(&(e, a, v))
     }
 
-    pub fn raw_insert(&mut self, e:Interned, a:Interned, v:Interned, round:Round, count:Count) -> bool {
+    pub fn raw_insert(&mut self,
+                      e: Interned,
+                      a: Interned,
+                      v: Interned,
+                      round: Round,
+                      count: Count)
+        -> bool {
         let key = (e, a, v);
-        let info = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
+        let info = self.eavs.entry(key).or_insert_with(|| {
+            RoundEntry {
+                inserted: false,
+                rounds: vec![],
+                active_rounds: vec![],
+            }
+        });
         let ref mut counts = info.rounds;
         ensure_len(counts, (round + 1) as usize);
         if round == 0 {
@@ -602,26 +738,46 @@ impl DistinctIndex {
         !info.inserted || count < 0
     }
 
-    pub fn iter(&self, e:Interned, a:Interned, v:Interned) -> DistinctIter {
+    pub fn iter(&self,
+                e: Interned,
+                a: Interned,
+                v: Interned)
+        -> DistinctIter {
         let key = (e, a, v);
         match self.eavs.get(&key) {
-            Some(&RoundEntry { ref active_rounds, .. }) => DistinctIter::new(active_rounds),
+            Some(&RoundEntry { ref active_rounds, .. }) => {
+                DistinctIter::new(active_rounds)
+            }
             None => DistinctIter::new(&self.empty),
         }
     }
 
-    pub fn distinct(&mut self, input:&Change, rounds:&mut RoundHolder) {
+    pub fn distinct(&mut self,
+                    input: &Change,
+                    rounds: &mut RoundHolder) {
         let key = (input.e, input.a, input.v);
         let insert = |round, delta| {
             rounds.insert(input.with_round_count(round, delta));
         };
         let needs_remove = {
-            let entry = self.eavs.entry(key).or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] });
-            generic_distinct(&mut entry.rounds, input.count, input.round, insert, true);
-            entry.active_rounds.len() == 0 && !entry.rounds.iter().any(|x| *x != 0)
+            let entry = self.eavs.entry(key).or_insert_with(|| {
+                RoundEntry {
+                    inserted: false,
+                    rounds: vec![],
+                    active_rounds: vec![],
+                }
+            });
+            generic_distinct(&mut entry.rounds,
+                             input.count,
+                             input.round,
+                             insert,
+                             true);
+            entry.active_rounds.len() == 0 &&
+                !entry.rounds.iter().any(|x| *x != 0)
         };
         if needs_remove {
-            self.eavs.remove(&(input.e, input.a, input.v));
+            self.eavs
+                .remove(&(input.e, input.a, input.v));
         }
     }
 }
@@ -638,8 +794,12 @@ pub struct DistinctIter<'a> {
 }
 
 impl<'a> DistinctIter<'a> {
-    pub fn new(rounds:&'a Vec<i32>) -> DistinctIter<'a> {
-        DistinctIter { rounds, ix: 0, len: rounds.len() }
+    pub fn new(rounds: &'a Vec<i32>) -> DistinctIter<'a> {
+        DistinctIter {
+            rounds,
+            ix: 0,
+            len: rounds.len(),
+        }
     }
 }
 
@@ -647,7 +807,9 @@ impl<'a> Iterator for DistinctIter<'a> {
     type Item = (Round, Count);
 
     fn next(&mut self) -> Option<(Round, Count)> {
-        if self.ix >= self.len { return None; }
+        if self.ix >= self.len {
+            return None;
+        }
         let cur = self.rounds[self.ix];
         self.ix += 1;
         let count = if cur < 0 { -1 } else { 1 };
@@ -707,7 +869,9 @@ pub struct RemoteChange {
 }
 
 impl RemoteChange {
-    pub fn extract(&self, fields: &Vec<RemoteChangeField>) -> Vec<Interned> {
+    pub fn extract(&self,
+                   fields: &Vec<RemoteChangeField>)
+        -> Vec<Interned> {
         let mut result = vec![];
         for field in fields {
             match *field {
@@ -729,25 +893,17 @@ pub struct RemoteIndex {
 }
 
 impl RemoteIndex {
-    pub fn new() -> RemoteIndex {
-        RemoteIndex { index: vec![] }
-    }
+    pub fn new() -> RemoteIndex { RemoteIndex { index: vec![] } }
 
     pub fn insert(&mut self, change: RemoteChange) {
         self.index.push(change);
     }
 
-    pub fn len(&self) -> usize {
-        self.index.len()
-    }
+    pub fn len(&self) -> usize { self.index.len() }
 
-    pub fn prepare(&mut self) {
-        self.index.sort();
-    }
+    pub fn prepare(&mut self) { self.index.sort(); }
 
-    pub fn clear(&mut self) {
-        self.index.clear();
-    }
+    pub fn clear(&mut self) { self.index.clear(); }
 }
 
 //-------------------------------------------------------------------------
@@ -759,18 +915,37 @@ pub enum AggregateEntry {
     Empty,
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
-    SortedSum { items: BTreeMap<Vec<Internable>, Vec<Internable>>, result: Internable },
-    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
+    SortedSum {
+        items: BTreeMap<Vec<Internable>, Vec<Internable>>,
+        result: Internable,
+    },
+    Sorted {
+        items: BTreeMap<Vec<Internable>, Vec<Count>>,
+        current_round: Round,
+        current_params: Option<Vec<Internable>>,
+        changes: Vec<(Vec<Internable>, Round, Count)>,
+        limit: usize,
+    },
 }
 
 impl AggregateEntry {
-    pub fn get_result(&self, interner:&mut Interner) -> Vec<Interned> {
+    pub fn get_result(&self,
+                      interner: &mut Interner)
+        -> Vec<Interned> {
         match self {
-            &AggregateEntry::Result(res) => vec![interner.number_id(res)],
-            &AggregateEntry::Counted { result, .. } => vec![interner.number_id(result)],
-            &AggregateEntry::SortedSum { ref result, .. } => { vec![interner.internable_to_id(result.clone())] },
-            &AggregateEntry::Sorted {..} => { unimplemented!() },
-            &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
+            &AggregateEntry::Result(res) => {
+                vec![interner.number_id(res)]
+            }
+            &AggregateEntry::Counted { result, .. } => {
+                vec![interner.number_id(result)]
+            }
+            &AggregateEntry::SortedSum { ref result, .. } => {
+                vec![interner.internable_to_id(result.clone())]
+            }
+            &AggregateEntry::Sorted { .. } => unimplemented!(),
+            &AggregateEntry::Empty => {
+                panic!("Asked for result of AggregateEntry::Empty")
+            }
         }
     }
 }
@@ -784,7 +959,11 @@ enum IntermediateLevel {
 
 pub struct IntermediateIndex {
     index: HashMap<Vec<Interned>, IntermediateLevel, MyHasher>,
-    pub rounds: HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>,
+    pub rounds: HashMap<Round,
+                        HashMap<Vec<Interned>,
+                                IntermediateChange,
+                                MyHasher>,
+                        MyHasher>,
     max_round: Round,
     empty: Vec<i32>,
 }
@@ -793,27 +972,44 @@ pub struct IntermediateIndex {
 fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, MyHasher>,
                          rounds:&mut HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>,
                          full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>,
-                         round:Round, count:Count, negate:bool) {
+round:Round, count:Count, negate:bool){
     let cloned = full_key.clone();
     let value_pos = key.len();
-    let insert = |round, delta| {
-        match rounds.entry(round) {
-            Entry::Occupied(mut ent) => {
-                let cur = ent.get_mut();
-                let val = cur.entry(cloned.clone()).or_insert_with(|| {
-                    IntermediateChange { key:cloned.clone(), round, count:0, negate, value_pos }
-                });
-                val.count += delta;
-            }
-            Entry::Vacant(ent) => {
-                let mut neue = HashMap::default();
-                neue.insert(cloned.clone(), IntermediateChange { key:cloned.clone(), round, count:delta, negate, value_pos });
-                ent.insert(neue);
-            }
+    let insert = |round, delta| match rounds.entry(round) {
+        Entry::Occupied(mut ent) => {
+            let cur = ent.get_mut();
+            let val = cur.entry(cloned.clone())
+                         .or_insert_with(|| {
+                IntermediateChange {
+                    key: cloned.clone(),
+                    round,
+                    count: 0,
+                    negate,
+                    value_pos,
+                }
+            });
+            val.count += delta;
+        }
+        Entry::Vacant(ent) => {
+            let mut neue = HashMap::default();
+            neue.insert(cloned.clone(),
+                        IntermediateChange {
+                            key: cloned.clone(),
+                            round,
+                            count: delta,
+                            negate,
+                            value_pos,
+                        });
+            ent.insert(neue);
         }
     };
-    let entry = index.entry(key.clone()).or_insert_with(|| {
-        let entry = RoundEntry { inserted:false, rounds: vec![], active_rounds: vec![] };
+    let entry = index.entry(key.clone())
+                     .or_insert_with(|| {
+        let entry = RoundEntry {
+            inserted: false,
+            rounds: vec![],
+            active_rounds: vec![],
+        };
         if value.len() == 0 {
             IntermediateLevel::KeyOnly(entry)
         } else {
@@ -823,24 +1019,38 @@ fn intermediate_distinct(index:&mut HashMap<Vec<Interned>, IntermediateLevel, My
         }
     });
     let counts = match entry {
-        &mut IntermediateLevel::KeyOnly(ref mut entry) => &mut entry.rounds,
+        &mut IntermediateLevel::KeyOnly(ref mut entry) => {
+            &mut entry.rounds
+        }
         &mut IntermediateLevel::Value(ref mut lookup) => {
             &mut lookup.entry(value.clone())
-                .or_insert_with(|| RoundEntry { inserted:false, rounds: vec![], active_rounds:vec![] }).rounds
+                       .or_insert_with(|| {
+                RoundEntry {
+                    inserted: false,
+                    rounds: vec![],
+                    active_rounds: vec![],
+                }
+            })
+                       .rounds
         }
-        &mut IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
-        &mut IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
+        &mut IntermediateLevel::SumAggregate(..) => {
+            unimplemented!();
+        }
+        &mut IntermediateLevel::SortAggregate(..) => {
+            unimplemented!();
+        }
     };
     generic_distinct(counts, count, round, insert, false);
 }
 
-pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>, mut change: IntermediateChange) {
+pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>, mut change: IntermediateChange){
     match rounds.entry(change.round) {
         Entry::Occupied(mut ent) => {
             let cur = ent.get_mut();
             let delta = change.count;
             change.count = 0;
-            let val = cur.entry(change.key.clone()).or_insert(change);
+            let val = cur.entry(change.key.clone())
+                         .or_insert(change);
             val.count += delta;
         }
         Entry::Vacant(ent) => {
@@ -851,9 +1061,19 @@ pub fn insert_change(rounds: &mut HashMap<Round, HashMap<Vec<Interned>, Intermed
     }
 }
 
-type AggregateChange = (Vec<Interned>, Vec<Interned>, Vec<Interned>, Round, Count, bool);
+type AggregateChange = (Vec<Interned>,
+                        Vec<Interned>,
+                        Vec<Interned>,
+                        Round,
+                        Count,
+                        bool);
 
-pub fn make_aggregate_change(out:&Vec<Interned>, mut value:Vec<Interned>, extra_key:usize, round:Round, count:Count) -> AggregateChange {
+pub fn make_aggregate_change(out: &Vec<Interned>,
+                             mut value: Vec<Interned>,
+                             extra_key: usize,
+                             round: Round,
+                             count: Count)
+    -> AggregateChange {
     let mut to_change = out.clone();
     to_change.extend(value.iter());
     let (key, final_value) = if extra_key > 0 {
@@ -867,7 +1087,14 @@ pub fn make_aggregate_change(out:&Vec<Interned>, mut value:Vec<Interned>, extra_
     (to_change, key, final_value, round, count, false)
 }
 
-pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, projection:&Vec<Internable>, value:&Vec<Internable>, round:Round) {
+pub fn update_aggregate(interner: &mut Interner,
+                        changes: &mut Vec<AggregateChange>,
+                        out: &Vec<Interned>,
+                        action: AggregateFunction,
+                        cur_aggregate: &mut AggregateEntry,
+                        projection: &Vec<Internable>,
+                        value: &Vec<Internable>,
+                        round: Round) {
     let prev = cur_aggregate.get_result(interner);
     action(cur_aggregate, &value, &projection);
     let neue = cur_aggregate.get_result(interner);
@@ -880,50 +1107,83 @@ pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChan
 }
 
 impl IntermediateIndex {
-
     pub fn new() -> IntermediateIndex {
-        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![], max_round:0 }
+        IntermediateIndex {
+            index: HashMap::default(),
+            rounds: HashMap::default(),
+            empty: vec![],
+            max_round: 0,
+        }
     }
 
-    pub fn check(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> bool {
+    pub fn check(&self,
+                 key: &Vec<Interned>,
+                 value: &Vec<Interned>)
+        -> bool {
         match self.index.get(key) {
             Some(level) => {
                 match level {
-                    &IntermediateLevel::KeyOnly(ref entry) => entry.active_rounds.len() > 0,
+                    &IntermediateLevel::KeyOnly(ref entry) => {
+                        entry.active_rounds.len() > 0
+                    }
                     &IntermediateLevel::Value(ref lookup) => {
                         match lookup.get(value) {
-                            Some(entry) => entry.active_rounds.len() > 0,
-                            _ => false
+                            Some(entry) => {
+                                entry.active_rounds.len() > 0
+                            }
+                            _ => false,
                         }
-                    },
-                    &IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
-                    &IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
+                    }
+                    &IntermediateLevel::SumAggregate(..) => {
+                        unimplemented!();
+                    }
+                    &IntermediateLevel::SortAggregate(..) => {
+                        unimplemented!();
+                    }
                 }
             }
             None => false,
         }
     }
 
-    pub fn distinct_iter(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> DistinctIter {
+    pub fn distinct_iter(&self,
+                         key: &Vec<Interned>,
+                         value: &Vec<Interned>)
+        -> DistinctIter {
         match self.index.get(key) {
             Some(level) => {
                 match level {
-                    &IntermediateLevel::KeyOnly(ref entry) => DistinctIter::new(&entry.active_rounds),
+                    &IntermediateLevel::KeyOnly(ref entry) => {
+                        DistinctIter::new(&entry.active_rounds)
+                    }
                     &IntermediateLevel::Value(ref lookup) => {
                         match lookup.get(value) {
                             Some(ref entry) => DistinctIter::new(&entry.active_rounds),
                             None => DistinctIter::new(&self.empty),
                         }
                     }
-                    &IntermediateLevel::SumAggregate(..) => { unimplemented!(); }
-                    &IntermediateLevel::SortAggregate(..) => { unimplemented!(); }
+                    &IntermediateLevel::SumAggregate(..) => {
+                        unimplemented!();
+                    }
+                    &IntermediateLevel::SortAggregate(..) => {
+                        unimplemented!();
+                    }
                 }
             }
             None => DistinctIter::new(&self.empty),
         }
     }
 
-    pub fn aggregate(&mut self, interner:&mut Interner, group:Vec<Interned>, mut projection:Vec<Internable>, value:Vec<Internable>, round:Round, count:Count, action:AggregateFunction, out:Vec<Interned>, kind:FunctionKind) {
+    pub fn aggregate(&mut self,
+                     interner: &mut Interner,
+                     group: Vec<Interned>,
+                     mut projection: Vec<Internable>,
+                     value: Vec<Internable>,
+                     round: Round,
+                     count: Count,
+                     action: AggregateFunction,
+                     out: Vec<Interned>,
+                     kind: FunctionKind) {
         let projection_len = projection.len();
         let mut changes = vec![];
         {
@@ -1003,15 +1263,19 @@ impl IntermediateIndex {
                     }
 
                 }
-                _ => { unreachable!() }
+                _ => unreachable!(),
             }
         }
         for (full_key, key, value, round, count, negate) in changes {
-           self.distinct(full_key, key, value, round, count, negate);
+            self.distinct(full_key, key, value, round, count, negate);
         }
     }
 
-    pub fn propose(&self, iter: &mut EstimateIter, key:Vec<Interned>, outputs: Vec<usize>) -> bool {
+    pub fn propose(&self,
+                   iter: &mut EstimateIter,
+                   key: Vec<Interned>,
+                   outputs: Vec<usize>)
+        -> bool {
         match self.index.get(&key) {
             Some(&IntermediateLevel::Value(ref lookup)) => {
                 let estimate = lookup.len();
@@ -1025,14 +1289,18 @@ impl IntermediateIndex {
                 } else {
                     false
                 }
-            },
+            }
             Some(&IntermediateLevel::KeyOnly(_)) => {
                 iter.estimate = 0;
                 iter.iter = OutputingIter::Empty;
                 true
-            },
-            Some(&IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
-            Some(&IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
+            }
+            Some(&IntermediateLevel::SumAggregate(_)) => {
+                unimplemented!();
+            }
+            Some(&IntermediateLevel::SortAggregate(..)) => {
+                unimplemented!();
+            }
             None => {
                 iter.iter = OutputingIter::Empty;
                 iter.estimate = 0;
@@ -1041,15 +1309,17 @@ impl IntermediateIndex {
         }
     }
 
-    pub fn update_active_rounds(&mut self, change: &IntermediateChange) {
+    pub fn update_active_rounds(&mut self,
+                                change: &IntermediateChange) {
         let (key, value) = change.key.split_at(change.value_pos);
         let count = change.count;
-        let should_remove = match self.index.get_mut(key) {
-            Some(&mut IntermediateLevel::KeyOnly(ref mut info)) => {
+        let should_remove =
+            match self.index.get_mut(key) {
+                Some(&mut IntermediateLevel::KeyOnly(ref mut info)) => {
                 info.update_active(change.round, count);
                 !info.rounds.iter().any(|x| *x != 0) && info.active_rounds.len() == 0
             }
-            Some(&mut IntermediateLevel::Value(ref mut lookup)) => {
+                Some(&mut IntermediateLevel::Value(ref mut lookup)) => {
                 let remove = match lookup.get_mut(value) {
                     Some(ref mut info) => {
                         info.update_active(change.round, count);
@@ -1062,10 +1332,17 @@ impl IntermediateIndex {
                 }
                 lookup.len() == 0
             }
-            Some(&mut IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
-            Some(&mut IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
-            None => { panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change) }
-        };
+                Some(&mut IntermediateLevel::SumAggregate(_)) => {
+                    unimplemented!();
+                }
+                Some(&mut IntermediateLevel::SortAggregate(..)) => {
+                    unimplemented!();
+                }
+                None => {
+                    panic!("Updating active rounds for an intermediate that doesn't exist: {:?}",
+                           change)
+                }
+            };
         if should_remove {
             self.index.remove(key);
         }
@@ -1077,12 +1354,24 @@ impl IntermediateIndex {
         cur
     }
 
-    pub fn distinct(&mut self, full_key:Vec<Interned>, key:Vec<Interned>, value:Vec<Interned>, round:Round, count:Count, negate:bool) {
+    pub fn distinct(&mut self,
+                    full_key: Vec<Interned>,
+                    key: Vec<Interned>,
+                    value: Vec<Interned>,
+                    round: Round,
+                    count: Count,
+                    negate: bool) {
         // println!("    -> Intermediate! {:?} {:?} {:?}", full_key, round, count);
         self.max_round = cmp::max(self.max_round, round);
-        intermediate_distinct(&mut self.index, &mut self.rounds, full_key, key, value, round, count, negate);
+        intermediate_distinct(&mut self.index,
+                              &mut self.rounds,
+                              full_key,
+                              key,
+                              value,
+                              round,
+                              count,
+                              negate);
     }
-
 }
 
 //-------------------------------------------------------------------------
@@ -1090,7 +1379,9 @@ impl IntermediateIndex {
 //-------------------------------------------------------------------------
 
 pub struct CollapsedChanges {
-    changes: HashMap<(Interned, Interned, Interned, Round), Change, MyHasher>
+    changes: HashMap<(Interned, Interned, Interned, Round),
+                     Change,
+                     MyHasher>,
 }
 
 impl CollapsedChanges {
@@ -1098,7 +1389,7 @@ impl CollapsedChanges {
         CollapsedChanges { changes: HashMap::default() }
     }
 
-    pub fn insert(&mut self, change:Change) {
+    pub fn insert(&mut self, change: Change) {
         let key = (change.e, change.a, change.v, change.round);
         match self.changes.entry(key) {
             Entry::Occupied(mut o) => {
@@ -1110,17 +1401,22 @@ impl CollapsedChanges {
         };
     }
 
-    pub fn iter<'a>(&'a self) -> Box<Iterator<Item=&'a Change> + 'a> {
-        Box::new(self.changes.values().filter(|x| x.count != 0))
+    pub fn iter<'a>(&'a self)
+        -> Box<Iterator<Item = &'a Change> + 'a> {
+        Box::new(self.changes
+                     .values()
+                     .filter(|x| x.count != 0))
     }
 
-    pub fn drain<'a>(&'a mut self) -> Box<Iterator<Item=Change> + 'a> {
-        Box::new(self.changes.drain().map(|kv| kv.1).filter(|x| x.count != 0))
+    pub fn drain<'a>(&'a mut self)
+        -> Box<Iterator<Item = Change> + 'a> {
+        Box::new(self.changes
+                     .drain()
+                     .map(|kv| kv.1)
+                     .filter(|x| x.count != 0))
     }
 
-    pub fn clear(&mut self) {
-        self.changes.clear();
-    }
+    pub fn clear(&mut self) { self.changes.clear(); }
 }
 
 //-------------------------------------------------------------------------
@@ -1138,7 +1434,12 @@ pub struct WatchDiff {
     pub removes: Vec<Vec<Interned>>,
 }
 
-fn update_watch_count(index:&mut HashMap<Vec<Interned>, Count, MyHasher>, key:Vec<Interned>, count:Count) -> (Count, Count) {
+fn update_watch_count(index: &mut HashMap<Vec<Interned>,
+                                          Count,
+                                          MyHasher>,
+                      key: Vec<Interned>,
+                      count: Count)
+    -> (Count, Count) {
     match index.entry(key) {
         Entry::Occupied(mut o) => {
             let prev = *o.get();
@@ -1159,12 +1460,13 @@ fn update_watch_count(index:&mut HashMap<Vec<Interned>, Count, MyHasher>, key:Ve
 
 impl WatchIndex {
     pub fn new() -> WatchIndex {
-        WatchIndex { cur: HashMap::default(), next: HashMap::default() }
+        WatchIndex {
+            cur: HashMap::default(),
+            next: HashMap::default(),
+        }
     }
 
-    pub fn dirty(&self) -> bool {
-       self.next.len() > 0
-    }
+    pub fn dirty(&self) -> bool { self.next.len() > 0 }
 
     pub fn insert(&mut self, key: Vec<Interned>, count: Count) {
         update_watch_count(&mut self.next, key, count);
@@ -1175,7 +1477,8 @@ impl WatchIndex {
         let mut removes = vec![];
         for (k, v) in self.next.drain() {
             let cloned = k.clone();
-            let (prev, neue) = update_watch_count(&mut self.cur, k, v);
+            let (prev, neue) =
+                update_watch_count(&mut self.cur, k, v);
             if prev == 0 && neue > 0 {
                 adds.push(cloned);
             } else if prev > 0 && neue == 0 {

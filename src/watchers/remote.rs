@@ -1,10 +1,20 @@
+extern crate serde_json;
+
 use super::super::indexes::{WatchDiff, RawRemoteChange};
-use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange, s};
+use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange, s, JSONInternable};
 use super::Watcher;
-use std::sync::mpsc::{self, Sender};
+
+use std::sync::mpsc::{self, Sender, SendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::collections::HashMap;
+
+extern crate ws;
+use self::ws::Message;
+
+extern crate term_painter;
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
 
 //-------------------------------------------------------------------------
 // Router
@@ -32,7 +42,6 @@ impl Router {
                 match incoming.recv().unwrap() {
                     RouterMessage::Remote(remotes) => {
                         for remote in remotes {
-                            // @FIXME is there really no way to do this without always cloning the to? :(
                             let vs = grouping.entry(remote.to.clone()).or_insert_with(|| vec![]);
                             vs.push(remote);
                         }
@@ -48,7 +57,18 @@ impl Router {
                     }
                     RouterMessage::Local(name, changes) => {
                         if let Some(channel) = clients2.lock().unwrap().get(&name) {
-                            channel.send(RunLoopMessage::Transaction(changes)).unwrap();
+                            match channel.send(RunLoopMessage::Transaction(changes)) {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    match e {
+                                        SendError(se) => {
+                                            // Log the error
+                                            println!("{} Failed to send {}",
+                                                     BrightRed.paint("Error:"), se.format_error());
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             panic!("Failed to send local TX to nonexistent or unregistered client: '{}'", &name);
                         }

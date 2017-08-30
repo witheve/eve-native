@@ -22,7 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::iter::{Iterator, FromIterator};
 use std::fmt;
 use watchers::{Watcher};
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Sender, Receiver, SendError};
 use std::sync::mpsc;
 use serde::ser::{Serialize, Serializer};
 use serde::de::{Deserialize, Deserializer, Visitor};
@@ -2473,14 +2473,73 @@ pub enum RunLoopMessage {
     RemoteCodeTransaction(Vec<PortableBlock>, Vec<String>)
 }
 
+impl RunLoopMessage {
+    pub fn format_error(&self) -> String {
+        match self {
+            &RunLoopMessage::Stop => "`Stop message`".to_string(),
+            &RunLoopMessage::Pause => "`Pause message`".to_string(),
+            &RunLoopMessage::Resume => "`Resume message`".to_string(),
+            &RunLoopMessage::Reload(ref hs) => {
+                let paths = hs.iter()
+                    .map(|pb|
+                         pb.as_path().to_str().unwrap())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("`Reload` with paths: {}", paths)
+            },
+            &RunLoopMessage::Transaction(ref changes) => {
+                let stringified_changes = changes.iter().map(|raw_change|
+                    format!("{}:{} <{}>",
+                            Internable::to_string(&raw_change.a),
+                            Internable::to_string(&raw_change.v),
+                            raw_change.count))
+                    .collect::<Vec<_>>().join("\n- ");
+                format!("`Transaction` with changes: \n- {}", stringified_changes)
+            }
+            &RunLoopMessage::RemoteTransaction(ref changes) => {
+                let stringified_changes = changes.iter().map(|raw_change|
+                    format!("{}:{} ({} -> {}) for {} of type {}",
+                            Internable::to_string(&raw_change.a),
+                            Internable::to_string(&raw_change.v),
+                            Internable::to_string(&raw_change.from),
+                            Internable::to_string(&raw_change.to),
+                            Internable::to_string(&raw_change._for),
+                            Internable::to_string(&raw_change._type)))
+                    .collect::<Vec<_>>().join("\n- ");
+                format!("`Remote transaction` with changes: \n- {}", stringified_changes)
+            }
+            &RunLoopMessage::CodeTransaction(ref added_blocks, ref removed_blocks) => {
+                let added_block_names = added_blocks
+                    .iter()
+                    .map(|b| b.name.clone()).collect::<Vec<_>>().join(", ");
+                format!("`Code transaction` with {} blocks added: \n{}\n\tand {} blocks removed: {}",
+                        added_blocks.len(),
+                        added_block_names,
+                        removed_blocks.len(),
+                        removed_blocks.join(", "))
+            }
+            &RunLoopMessage::RemoteCodeTransaction(ref added_blocks, ref removed_blocks) => {
+                let added_block_names = added_blocks
+                    .iter()
+                    .map(|b| b.name.clone()).collect::<Vec<_>>().join(", ");
+                format!("`Remote code transaction` with {} blocks added: {}\n\tand {} blocks removed: {}",
+                        added_blocks.len(),
+                        added_block_names,
+                        removed_blocks.len(),
+                        removed_blocks.join(", "))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum MetaMessage {
     Transaction{inputs: Vec<RawChange>, outputs: Vec<RawChange>}
 }
 impl MetaMessage {
-    pub fn collapse(mut self) -> MetaMessage {
+    pub fn collapse(self) -> MetaMessage {
         match self {
-            MetaMessage::Transaction{mut inputs, mut outputs} => {
+            MetaMessage::Transaction{inputs, outputs} => {
                 MetaMessage::Transaction{
                     inputs: MetaMessage::collapse_changes(inputs),
                     outputs: MetaMessage::collapse_changes(outputs)
@@ -3339,7 +3398,10 @@ impl RunLoop {
     }
 
     pub fn close(&self) {
-        self.outgoing.send(RunLoopMessage::Stop).unwrap();
+        match self.outgoing.send(RunLoopMessage::Stop) {
+            Ok(..) => (),
+            Err(SendError(e)) => println!("Error occured closing client: {:?}", e.format_error()),
+        }
     }
 
     pub fn send(&self, msg: RunLoopMessage) {

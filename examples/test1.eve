@@ -1,0 +1,41 @@
+Setup
+-------------
+
+Some angles to display:
+
+~~~eve
+search
+  angle = math/range[from: 0 to: 360]
+  color = if angle < 90 then "green"
+          else if angle < 180 then "yellow"
+          else "red"
+commit
+  [#angle angle color sort: angle]
+end
+~~~
+
+The canvas to draw to:
+
+~~~eve
+commit
+  [#canvas/root #my-canvas width: 200 height: 50 children:
+    [#canvas/path children:
+      [type: "arc" x: 50 y: 50 radius: 20 startAngle: 0 endAngle: 1.5 * 3.14]]]
+end
+~~~
+
+Main Stuff
+-------------
+
+For each angle, make a row with its color and value, and a button to
+dray it to the canvas.
+
+~~~eve
+search
+  angle = [#angle degrees color]
+bind
+  [#ui/row angle sort: angle.sort style: [color width: "100px"] | children:
+    [#ui/button text: "draw" angle]
+    [#ui/text text: "Angle of " + degrees + " degrees"]]
+end
+~~~
