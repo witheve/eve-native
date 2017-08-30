@@ -58,10 +58,9 @@ Export paths of canvases.
 ~~~ eve
 search
   canvas = [#canvas/root children: path]
-  // ix = if s = path.sort then s
-  //      else if a = path.eve-auto-index then a
-  //      else 1
-  ix = path.sort
+  ix = if s = path.sort then s
+       else if a = path.eve-auto-index then a
+       else 1
 watch client/websocket
   ("canvas/export canvas paths" canvas path ix)
 end
@@ -71,10 +70,9 @@ Export operations of paths.
 ~~~ eve
 search
   path = [#canvas/path children: operation]
-  // ix = if s = operation.sort then s
-  //      else if a = operation.eve-auto-index then a
-  //      else 1
-  ix = operation.sort
+  ix = if s = operation.sort then s
+       else if a = operation.eve-auto-index then a
+       else 1
 watch client/websocket
   ("canvas/export path operations" path operation ix)
 end

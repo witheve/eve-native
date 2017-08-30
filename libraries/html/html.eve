@@ -13,6 +13,9 @@ commit
     "img"
     "a"
     "style"
+    "li"
+    "ul"
+    "ol"
     )]
 end
 ~~~
@@ -47,7 +50,8 @@ commit
     "html/trigger/blur")]
   [#html/listener-tag | listener: (
     "html/listener/hover"
-    "html/listener/context-menu")]
+    "html/listener/context-menu"
+    "html/listener/key")]
 end
 ~~~
 
@@ -149,7 +153,7 @@ Elements with an editable checked and an initial use it as the default checked
 search
   input = [#html/editable-checked initial]
   checked = if input.checked then input.checked else initial
-
+  not([#html/client-checked element: input])
 bind
   input.checked += checked
 end
@@ -346,6 +350,17 @@ watch client/websocket
   ("html/export listeners" instance listener)
 end
 ~~~
+
+~~~ eve
+search
+  element = [#html/element #html/listener/key captured-key]
+  instance = [#html/instance element]
+
+watch client/websocket
+  ("html/export captured keys" instance captured-key)
+end
+~~~
+
 
 Export triggers.
 ~~~ eve

@@ -6,6 +6,7 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 extern crate term_painter;
+extern crate natord;
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -13,12 +14,12 @@ use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIn
     CollapsedChanges, RemoteIndex, RemoteChange, RawRemoteChange};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
-use std::collections::{HashMap, HashSet, Bound};
+use std::collections::{HashMap, HashSet, Bound, BTreeMap};
 use std::mem::transmute;
 use std::cmp::{self, Eq, PartialOrd};
 use std::collections::hash_map::{DefaultHasher, Entry};
 use std::hash::{Hash, Hasher};
-use std::iter::{Iterator};
+use std::iter::{Iterator, FromIterator};
 use std::fmt;
 use watchers::{Watcher};
 use std::sync::mpsc::{Sender, Receiver};
@@ -28,7 +29,8 @@ use serde::de::{Deserialize, Deserializer, Visitor};
 use std::error::Error;
 use std::thread::{self, JoinHandle};
 use std::io::{Write, BufReader, BufWriter};
-use std::fs::{OpenOptions, File};
+use std::fs::{OpenOptions, File, canonicalize};
+use std::path::{Path, PathBuf};
 use std::f32::consts::{PI};
 use std::mem;
 use std::usize;
@@ -49,7 +51,7 @@ pub type Count = i32;
 // When the interner is created, we automatically add the string "tag" to it
 // as that is used specifically throughout the code to do filtering and the
 // like.
-const TAG_INTERNED_ID:Interned = 1;
+pub const TAG_INTERNED_ID:Interned = 1;
 
 //-------------------------------------------------------------------------
 // Utils
@@ -70,6 +72,14 @@ pub fn print_block_constraints(block:&Block) {
         println!("  {:?}", constraint);
     }
     println!("");
+}
+
+pub fn s(string: &str) -> Internable {
+   Internable::String(string.to_string())
+}
+
+pub fn n(num: f32) -> Internable {
+   Internable::from_number(num)
 }
 
 //-------------------------------------------------------------------------
@@ -115,7 +125,7 @@ impl Change {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct RawChange {
     pub e: Internable,
     pub a: Internable,
@@ -125,6 +135,10 @@ pub struct RawChange {
 }
 
 impl RawChange {
+    pub fn new(e:Internable, a:Internable, v:Internable, n:Internable, count:Count) -> RawChange {
+        RawChange {e,a,v,n,count}
+    }
+
     pub fn to_change(self, interner: &mut Interner) -> Change {
        Change {
            e: interner.internable_to_id(self.e),
@@ -135,6 +149,15 @@ impl RawChange {
            transaction: 0,
            count: self.count,
        }
+    }
+}
+
+impl Ord for RawChange {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.e != other.e { self.e.cmp(&other.e) }
+        else if self.a != other.a { self.a.cmp(&other.a) }
+        else if self.v != other.v { self.v.cmp(&other.v) }
+        else { cmp::Ordering::Equal }
     }
 }
 
@@ -151,17 +174,18 @@ pub struct IntermediateChange {
 // Block
 //-------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum PipeShape {
     Scan(Interned, Interned, Interned),
     Intermediate(Interned),
     Remote(Interned),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub name: String,
     pub block_id: Interned,
+    pub path: String,
     pub constraints: Vec<Constraint>,
     pub solver: Option<Solver>,
     pub shapes: Vec<Vec<PipeShape>>
@@ -170,7 +194,7 @@ pub struct Block {
 impl Block {
 
     pub fn new(interner:&mut Interner, name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
-       let mut me = Block { name:name.to_string(), block_id, constraints, solver:None, shapes: vec![] };
+       let mut me = Block { name:name.to_string(), block_id, path: "".to_owned(), constraints, solver:None, shapes: vec![] };
        let shapes = me.to_shapes();
        me.shapes.extend(shapes);
        me.solver = Some(Solver::new(interner, block_id, 0, None, &me.constraints));
@@ -278,6 +302,24 @@ impl Block {
         shapes
     }
 
+}
+
+impl PartialEq for Block {
+    fn eq(&self, other:&Self) -> bool {
+        if self.constraints.len() != other.constraints.len() { return false; }
+        let my_constraints:HashSet<Constraint> = HashSet::from_iter(self.constraints.iter().cloned());
+        let other_constraints:HashSet<Constraint> = HashSet::from_iter(other.constraints.iter().cloned());
+        my_constraints == other_constraints
+    }
+}
+impl Eq for Block {}
+
+impl Hash for Block {
+    fn hash<H: Hasher>(&self, state:&mut H) {
+        for constraint in self.constraints.iter() {
+            constraint.hash(state);
+        }
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -563,6 +605,24 @@ pub enum Field {
     Value(Interned),
 }
 
+impl Field {
+    pub fn is_register(&self) -> bool {
+        if let &Field::Register(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn to_value(&self) -> Interned {
+        if let &Field::Value(v) = self {
+            v
+        } else {
+            0
+        }
+    }
+}
+
 pub fn register(ix: usize) -> Field {
     Field::Register(ix)
 }
@@ -575,11 +635,18 @@ pub fn is_register(field:&Field) -> bool {
     }
 }
 
+pub fn format_field(interner:&Interner, field:&Field) -> String{
+    match field {
+        &Field::Register(reg) => format!("Register({})", reg),
+        &Field::Value(interned) => format!("Value({})", format_interned(interner, interned))
+    }
+}
+
 //-------------------------------------------------------------------------
 // Interner
 //-------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum Internable {
     Null,
     String(String),
@@ -589,14 +656,14 @@ pub enum Internable {
 impl PartialOrd for Internable {
     fn partial_cmp(&self, rhs:&Self) -> Option<cmp::Ordering> {
         let priority = self.to_sort_priority();
-        let right_priority = self.to_sort_priority();
+        let right_priority = rhs.to_sort_priority();
         if priority != right_priority {
             return Some(priority.cmp(&right_priority));
         }
 
         match (self, rhs) {
             (&Internable::Null, &Internable::Null) => { Some(cmp::Ordering::Equal) },
-            (&Internable::String(ref s), &Internable::String(ref s2)) => { Some(s.cmp(s2)) },
+            (&Internable::String(ref s), &Internable::String(ref s2)) => { Some(natord::compare(s, s2)) },
             (&Internable::Number(n), &Internable::Number(n2)) => {
                 let value = unsafe {transmute::<u32, f32>(n) };
                 let value2 = unsafe {transmute::<u32, f32>(n2) };
@@ -604,6 +671,12 @@ impl PartialOrd for Internable {
             },
             _ => { unreachable!() }
         }
+    }
+}
+
+impl Ord for Internable {
+    fn cmp(&self, rhs:&Self) -> cmp::Ordering {
+        self.partial_cmp(rhs).unwrap()
     }
 }
 
@@ -845,6 +918,14 @@ impl Interner {
     pub fn get_value(&self, id:u32) -> &Internable {
         &self.value_to_id[id as usize]
     }
+
+    #[allow(dead_code)]
+    pub fn get_string(&self, id:u32) -> Option<String> {
+        match self.get_value(id) {
+            &Internable::String(ref str) => Some(str.to_owned()),
+            _ => None
+        }
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -854,7 +935,7 @@ impl Interner {
 type FilterFunction = fn(&Internable, &Internable) -> bool;
 type Function = fn(Vec<&Internable>) -> Option<Internable>;
 type MultiFunction = fn(Vec<&Internable>) -> Option<Vec<Vec<Internable>>>;
-pub type AggregateFunction = fn(&mut AggregateEntry, &Vec<Internable>);
+pub type AggregateFunction = fn(&mut AggregateEntry, &Vec<Internable>, &Vec<Internable>);
 
 pub enum Constraint {
     Scan {e: Field, a: Field, v: Field, register_mask: u64},
@@ -1229,6 +1310,7 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "string/uppercase" => string_uppercase,
         "string/substring" => string_substring,
         "string/length" => string_length,
+        "eve/type-of" => eve_type_of,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -1256,6 +1338,7 @@ pub fn make_aggregate(op: &str, group: Vec<Field>, projection:Vec<Field>, params
         "gather/sum" => (aggregate_sum_add, aggregate_sum_remove),
         "gather/count" => (aggregate_count_add, aggregate_count_remove),
         "gather/average" => (aggregate_avg_add, aggregate_avg_remove),
+        "gather/string-join" => (aggregate_string_join_add, aggregate_string_join_remove),
         "gather/top" => (aggregate_top_add, aggregate_top_remove),
         "gather/bottom" => (aggregate_bottom_add, aggregate_bottom_remove),
         "gather/next" => (aggregate_next_add, aggregate_next_remove),
@@ -1466,7 +1549,7 @@ pub fn random_number(params: Vec<&Internable>) -> Option<Internable> {
             let seed = hash.finish();
             let top = (seed << 32) as u32;
             let bottom = (seed >> 32) as u32;
-            let mut rng = XorShiftRng::from_seed([0x123, top, top - bottom, bottom]);
+            let mut rng = XorShiftRng::from_seed([0x123, top, top | bottom, bottom]);
             Some(Internable::from_number(rng.next_f32()))
         },
         _ => { None }
@@ -1614,11 +1697,19 @@ pub fn gen_id(params: Vec<&Internable>) -> Option<Internable> {
     Some(Internable::String(result))
 }
 
+pub fn eve_type_of(params: Vec<&Internable>) -> Option<Internable> {
+    match params.get(0) {
+        Some(&&Internable::String(_)) => Some(Internable::String("string".to_owned())),
+        Some(&&Internable::Number(_)) => Some(Internable::String("number".to_owned())),
+        _ => { panic!("Type of called without a valid parameter") }
+    }
+}
+
 //-------------------------------------------------------------------------
 // Aggregates
 //-------------------------------------------------------------------------
 
-pub fn aggregate_sum_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_sum_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1631,7 +1722,7 @@ pub fn aggregate_sum_add(current: &mut AggregateEntry, params: &Vec<Internable>)
     };
 }
 
-pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1644,21 +1735,21 @@ pub fn aggregate_sum_remove(current: &mut AggregateEntry, params: &Vec<Internabl
     };
 }
 
-pub fn aggregate_count_add(current: &mut AggregateEntry, _: &Vec<Internable>) {
+pub fn aggregate_count_add(current: &mut AggregateEntry, _: &Vec<Internable>, _: &Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res + 1.0; }
         _ => { *current = AggregateEntry::Result(1.0); }
     }
 }
 
-pub fn aggregate_count_remove(current: &mut AggregateEntry, _: &Vec<Internable>) {
+pub fn aggregate_count_remove(current: &mut AggregateEntry, _: &Vec<Internable>, _: &Vec<Internable>) {
     match current {
         &mut AggregateEntry::Result(ref mut res) => { *res = *res - 1.0; }
         _ => { *current = AggregateEntry::Result(-1.0); }
     }
 }
 
-pub fn aggregate_avg_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_avg_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1675,7 +1766,7 @@ pub fn aggregate_avg_add(current: &mut AggregateEntry, params: &Vec<Internable>)
     };
 }
 
-pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     match params.as_slice() {
         &[ref param @ Internable::Number(_)] => {
             let value = Internable::to_number(param);
@@ -1696,6 +1787,86 @@ pub fn aggregate_avg_remove(current: &mut AggregateEntry, params: &Vec<Internabl
     };
 }
 
+
+pub fn aggregate_string_join_add(current: &mut AggregateEntry, params: &Vec<Internable>, projection: &Vec<Internable>) {
+    let value = params.iter().map(|x| {
+        match x {
+            &Internable::Number(_) => { Internable::String(Internable::to_string(x)) },
+            &Internable::String(_) => { x.clone() },
+            _ => unreachable!(),
+        }
+    }).collect::<Vec<_>>();
+    let mut key = projection.clone();
+    key.extend(value.iter().cloned());
+    match current {
+        &mut AggregateEntry::SortedSum { ref mut items, ref mut result } => {
+            items.insert(key, value);
+            let mut neue = String::new();
+            let mut separator_len = 0;
+            for info in items.values() {
+                for item in info.iter() {
+                    match item {
+                        &Internable::String(ref s) => {
+                            neue.push_str(s.as_str());
+                            separator_len = s.len();
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }
+            // remove the last, extraneous separator
+            let len = neue.len();
+            neue.truncate(len - separator_len);
+            *result = Internable::String(neue);
+        }
+        _ => {
+            let result = value[0].clone();
+            let mut items = BTreeMap::new();
+            items.insert(key, value);
+            *current = AggregateEntry::SortedSum { items, result };
+        }
+    }
+}
+
+pub fn aggregate_string_join_remove(current: &mut AggregateEntry, params: &Vec<Internable>, projection: &Vec<Internable>) {
+    let value = params.iter().map(|x| {
+        match x {
+            &Internable::Number(_) => { Internable::String(Internable::to_string(x)) },
+            &Internable::String(_) => { x.clone() },
+            _ => unreachable!(),
+        }
+    }).collect::<Vec<_>>();
+    match current {
+        &mut AggregateEntry::SortedSum { ref mut items, ref mut result } => {
+            let mut key = projection.clone();
+            key.extend(value.iter().cloned());
+            items.remove(&key);
+            let mut neue = String::new();
+            let mut separator_len = 0;
+            for info in items.values() {
+                for item in info.iter() {
+                    match item {
+                        &Internable::String(ref s) => {
+                            neue.push_str(s.as_str());
+                            separator_len = s.len();
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }
+            // remove the last, extraneous separator
+            let len = neue.len();
+            neue.truncate(len - separator_len);
+            *result = Internable::String(neue);
+        }
+        _ => {
+            let items = BTreeMap::new();
+            let result = Internable::String("".to_owned());
+            *current = AggregateEntry::SortedSum { items, result };
+        }
+    }
+}
+
 //-------------------------------------------------------------------------
 // Sort Aggregates
 //-------------------------------------------------------------------------
@@ -1705,7 +1876,7 @@ fn is_aggregate_in_round(&(_, v): &(&Vec<Internable>, &Vec<Count>), round:Round)
     sum > 0
 }
 
-pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1736,7 +1907,7 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>)
     }
 }
 
-pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1770,7 +1941,7 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
     }
 }
 
-pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1801,7 +1972,7 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
     }
 }
 
-pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
             let limit_param = limit_params.get(0);
@@ -1835,7 +2006,7 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
     }
 }
 
-pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1867,7 +2038,7 @@ pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>
     }
 }
 
-pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1899,7 +2070,7 @@ pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internab
     }
 }
 
-pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1931,7 +2102,7 @@ pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>
     }
 }
 
-pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internable>) {
+pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
@@ -1962,6 +2133,8 @@ pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internab
         }
     }
 }
+
+
 
 //-------------------------------------------------------------------------
 // Bit helpers
@@ -2295,12 +2468,55 @@ impl BlockInfo {
 
 pub enum RunLoopMessage {
     Stop,
+    Pause,
+    Resume,
+    Reload(HashSet<PathBuf>),
     Transaction(Vec<RawChange>),
     RemoteTransaction(Vec<RawRemoteChange>),
-    CodeTransaction(Vec<Block>, Vec<String>)
+    CodeTransaction(Vec<Block>, Vec<String>),
+    RemoteCodeTransaction(Vec<PortableBlock>, Vec<String>)
 }
 
+#[derive(Debug, Clone)]
+pub enum MetaMessage {
+    Transaction{inputs: Vec<RawChange>, outputs: Vec<RawChange>}
+}
+impl MetaMessage {
+    pub fn collapse(mut self) -> MetaMessage {
+        match self {
+            MetaMessage::Transaction{mut inputs, mut outputs} => {
+                MetaMessage::Transaction{
+                    inputs: MetaMessage::collapse_changes(inputs),
+                    outputs: MetaMessage::collapse_changes(outputs)
+                }
+            }
+            _ => self
+        }
+    }
+
+    fn collapse_changes(mut vec: Vec<RawChange>) -> Vec<RawChange> {
+        let mut neue = vec![];
+        if vec.len() == 0 { return neue; }
+        vec.sort();
+
+        let mut prev = vec.remove(0);
+        for cur in vec.drain(..) {
+            if cur.e != prev.e || cur.a != prev.a || cur.v != prev.v {
+                if prev.count != 0 { neue.push(prev); }
+                prev = cur;
+                continue;
+            } else {
+                prev.count += cur.count;
+            }
+        }
+        if prev.count != 0 { neue.push(prev); }
+        neue
+    }
+}
+
+
 pub struct Program {
+    pub name: String,
     pub state: RuntimeState,
     pub block_info: BlockInfo,
     watchers: HashMap<String, Box<Watcher + Send>>,
@@ -2309,7 +2525,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new() -> Program {
+    pub fn new(name:&str) -> Program {
         let index = HashIndex::new();
         let distinct_index = DistinctIndex::new();
         let remote_index = RemoteIndex::new();
@@ -2327,7 +2543,7 @@ impl Program {
         let (outgoing, incoming) = mpsc::channel();
         let state = RuntimeState { debug:false, rounds, remote_index, output_rounds, index, distinct_index, interner, watch_indexes, intermediates };
         let block_info = BlockInfo { pipe_lookup, remote_pipe_lookup, intermediate_pipe_lookup, block_names, blocks };
-        Program { state, block_info, watchers, incoming, outgoing }
+        Program { name: name.to_owned(), state, block_info, watchers, incoming, outgoing }
     }
 
     pub fn clear(&mut self) {
@@ -2384,7 +2600,10 @@ impl Program {
 
     pub fn unregister_block(&mut self, name:String) {
         if let Some(block_ix) = self.block_info.block_names.remove(&name) {
-            let block = self.block_info.blocks.remove(block_ix);
+            let block = self.block_info.blocks.swap_remove(block_ix);
+            if let Some(neue) = self.block_info.blocks.get(block_ix) {
+                self.block_info.block_names.insert(neue.name.to_owned(), block_ix);
+            }
             for shape_set in block.shapes.iter() {
                 for shape in shape_set.iter() {
                     match shape {
@@ -2421,9 +2640,13 @@ impl Program {
         self.register_block(block);
     }
 
+    pub fn blocks_by_path(&self, path:&str) -> Vec<&Block> {
+        self.block_info.blocks.iter().filter(|block| block.path == path).collect()
+    }
+
     pub fn attach(&mut self, watcher:Box<Watcher + Send>) {
         let name = watcher.get_name();
-        println!("{} {}", BrightCyan.paint("Loaded Watcher:"), name);
+        println!("[{}] {} {}", &self.name, BrightCyan.paint("Loaded Watcher:"), name);
         self.watchers.insert(name, watcher);
     }
 
@@ -2541,6 +2764,10 @@ fn intermediate_flow(frame: &mut Frame, state: &mut RuntimeState, block_info: &B
 }
 
 fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program) {
+    transaction_flow_meta(commits, frame, iter_pool, program, None)
+}
+
+fn transaction_flow_meta(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut EstimateIterPool, program: &mut Program, maybe_meta: Option<&mut MetaMessage>) {
     {
         let mut pipes = HashSet::new();
         let mut next_frame = true;
@@ -2563,7 +2790,10 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // separation of insert and remove.
                     if change.count > 0 {
                         if program.state.distinct_index.insert_active(change.e, change.a, change.v, change.round) {
-                            program.state.index.insert(change.e, change.a, change.v);
+                            let added = program.state.index.insert(change.e, change.a, change.v);
+                            if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                                if added { outputs.push(change.to_raw(&program.state.interner)); }
+                            }
                         }
                     }
                     pipes.clear();
@@ -2579,10 +2809,17 @@ fn transaction_flow(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool:&mut
                     // for AB and BA, they find the same values as when they were added.
                     if change.count < 0 {
                         if program.state.distinct_index.remove_active(change.e, change.a, change.v, change.round) {
-                            program.state.index.remove(change.e, change.a, change.v);
+                            let removed = program.state.index.remove(change.e, change.a, change.v);
+                            if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                                if removed { outputs.push(change.to_raw(&program.state.interner)); }
+                            }
+
                         }
                     }
                     if current_round == 0 { commits.push(change.clone()); }
+                    if let Some(&mut MetaMessage::Transaction{ref mut outputs, ..}) = maybe_meta {
+                        outputs.push(change.to_raw(&program.state.interner));
+                    }
                 }
                 intermediate_flow(frame, &mut program.state, &program.block_info, iter_pool, current_round, &mut max_round);
                 max_round = cmp::max(max_round, program.state.rounds.max_round as Round);
@@ -2626,10 +2863,16 @@ impl<'a> Transaction<'a> {
     }
 
     pub fn exec(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>) {
+        self.exec_meta(program, persistence_channel, None);
+    }
+    pub fn exec_meta(&mut self, program: &mut Program, persistence_channel: &mut Option<Sender<PersisterMessage>>, maybe_meta: Option<&mut MetaMessage>) {
+        if let Some(&mut MetaMessage::Transaction{ref mut inputs, ..}) = maybe_meta {
+            inputs.extend(self.changes.iter().map(|c| c.to_raw(&program.state.interner)));
+        }
         for change in self.changes.iter() {
             program.state.distinct_index.distinct(&change, &mut program.state.rounds);
         }
-        transaction_flow(&mut self.commits, &mut self.frame, self.iter_pool, program);
+        transaction_flow_meta(&mut self.commits, &mut self.frame, self.iter_pool, program, maybe_meta);
         if let &mut Some(ref channel) = persistence_channel {
             self.collapsed_commits.clear();
             let mut to_persist = vec![];
@@ -2781,6 +3024,224 @@ impl CodeTransaction {
 }
 
 //-------------------------------------------------------------------------
+// Portable Code Transaction
+//-------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub enum PortableField {
+    Register(usize),
+    Value(Internable)
+}
+impl PortableField {
+    pub fn intern(&self, interner:&mut Interner) -> Field {
+        match self {
+            &PortableField::Register(ix) => Field::Register(ix),
+            &PortableField::Value(ref internable) => Field::Value(interner.internable_to_id(internable.clone()))
+        }
+    }
+    pub fn to_eve_value(&self, block:&Internable, changes:&mut Vec<RawChange>) -> Internable {
+        match self {
+            &PortableField::Register(ix) => {
+                let id = gen_id(vec![&Internable::String("register".to_owned()), block, &Internable::from_number(ix as f32)]).unwrap();
+                changes.push(RawChange::new(id.clone(), s("tag"), s("register"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("block"), block.clone(), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("offset"), n(ix as f32), s("compiler"), 1));
+                id
+            }
+            &PortableField::Value(ref v) => {
+                v.clone()
+            }
+        }
+    }
+}
+impl Field {
+    pub fn to_portable(&self, interner:&Interner) -> PortableField {
+        match self {
+            &Field::Register(ix) => PortableField::Register(ix),
+            &Field::Value(interned) => PortableField::Value(interner.get_value(interned).clone())
+        }
+    }
+}
+
+pub enum PortableConstraint {
+    Scan(PortableField, PortableField, PortableField),
+    Filter(String, PortableField, PortableField),
+    Function(String, PortableField, Vec<PortableField>),
+    MultiFunction(String, Vec<PortableField>, Vec<PortableField>),
+    Output(PortableField, PortableField, PortableField, bool),
+    Remove(PortableField, PortableField, PortableField),
+    RemoveAttribute(PortableField, PortableField),
+    RemoveEntity(PortableField),
+    Watch(String, Vec<PortableField>),
+}
+
+impl PortableConstraint {
+    pub fn intern(&self, interner:&mut Interner) -> Constraint {
+        match self {
+            &PortableConstraint::Scan(ref e, ref a, ref v) => make_scan(e.intern(interner), a.intern(interner), v.intern(interner)),
+            &PortableConstraint::Output(ref e, ref a, ref v, commit) => Constraint::Insert{e: e.intern(interner), a: a.intern(interner), v: v.intern(interner), commit},
+            &PortableConstraint::Watch(ref name, ref registers) => {
+                Constraint::Watch {name: name.to_owned(), registers: registers.iter().map(|v| v.intern(interner)).collect()}
+            },
+            &PortableConstraint::Function(ref name, ref output, ref args) => {
+                let params = args.iter().map(|v| v.intern(interner)).collect();
+                make_function(name, params, output.intern(interner))
+            },
+
+            _ => unimplemented!()
+        }
+    }
+
+    pub fn to_raw_changes(&self, block:&Internable, ix:usize, changes:&mut Vec<RawChange>) -> Internable {
+        let id_str = Internable::to_string(block) + &ix.to_string();
+        let id = s(&id_str);
+        match self {
+            &PortableConstraint::Scan(ref e, ref a, ref v) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                let eve_v = v.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("scan"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("v"), eve_v, s("compiler"), 1));
+            }
+            &PortableConstraint::Filter(ref op, ref left, ref right) => {
+                let eve_left = left.to_eve_value(block, changes);
+                let eve_right = right.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("filter"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("op"), s(op.as_str()), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("left"), eve_left, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("right"), eve_right, s("compiler"), 1));
+            }
+            &PortableConstraint::Output(ref e, ref a, ref v, commit) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                let eve_v = v.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("insert"), s("compiler"), 1));
+                if commit {
+                    changes.push(RawChange::new(id.clone(), s("tag"), s("commit"), s("compiler"), 1));
+                }
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("v"), eve_v, s("compiler"), 1));
+            }
+            &PortableConstraint::Remove(ref e, ref a, ref v) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                let eve_v = v.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("remove"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("v"), eve_v, s("compiler"), 1));
+            }
+            &PortableConstraint::RemoveAttribute(ref e, ref a) => {
+                let eve_e = e.to_eve_value(block, changes);
+                let eve_a = a.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("remove-attribute"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("a"), eve_a, s("compiler"), 1));
+            }
+            &PortableConstraint::RemoveEntity(ref e) => {
+                let eve_e = e.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("remove-entity"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
+            }
+            &PortableConstraint::Function(ref name, ref output, ref args) => {
+                let eve_output = output.to_eve_value(block, changes);
+                changes.push(RawChange::new(id.clone(), s("tag"), s("function"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("op"), s(name.as_str()), s("compiler"), 1));
+                for (ix, raw_arg) in args.iter().enumerate() {
+                    let arg = raw_arg.to_eve_value(block, changes);
+                    let eve_ix = n((ix + 1) as f32);
+                    let arg_id = gen_id(vec![&eve_ix, &arg]).unwrap();
+                    changes.push(RawChange::new(arg_id.clone(), s("value"), arg, s("compiler"), 1));
+                    changes.push(RawChange::new(arg_id.clone(), s("index"), eve_ix, s("compiler"), 1));
+                    changes.push(RawChange::new(id.clone(), s("params"), arg_id, s("compiler"), 1));
+                }
+                changes.push(RawChange::new(id.clone(), s("output"), eve_output, s("compiler"), 1));
+            },
+            &PortableConstraint::MultiFunction(ref name, ref outputs, ref args) => {
+                changes.push(RawChange::new(id.clone(), s("tag"), s("multi-function"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("op"), s(name.as_str()), s("compiler"), 1));
+                for (ix, raw_arg) in args.iter().enumerate() {
+                    let arg = raw_arg.to_eve_value(block, changes);
+                    let eve_ix = n((ix + 1) as f32);
+                    let arg_id = gen_id(vec![&eve_ix, &arg]).unwrap();
+                    changes.push(RawChange::new(arg_id.clone(), s("value"), arg, s("compiler"), 1));
+                    changes.push(RawChange::new(arg_id.clone(), s("index"), eve_ix, s("compiler"), 1));
+                    changes.push(RawChange::new(id.clone(), s("params"), arg_id, s("compiler"), 1));
+                }
+                for (ix, raw_output) in outputs.iter().enumerate() {
+                    let output = raw_output.to_eve_value(block, changes);
+                    let eve_ix = n((ix + 1) as f32);
+                    let output_id = gen_id(vec![&eve_ix, &output]).unwrap();
+                    changes.push(RawChange::new(output_id.clone(), s("value"), output, s("compiler"), 1));
+                    changes.push(RawChange::new(output_id.clone(), s("index"), eve_ix, s("compiler"), 1));
+                    changes.push(RawChange::new(id.clone(), s("outputs"), output_id, s("compiler"), 1));
+                }
+            },
+            _ => unimplemented!()
+        }
+        id
+    }
+}
+
+impl Constraint {
+    pub fn to_portable(&self, i:&Interner) -> PortableConstraint {
+        match self {
+            &Constraint::Scan{ref e, ref a, ref v, ..} => PortableConstraint::Scan(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
+            &Constraint::Filter{ref op, ref left, ref right, ..} => PortableConstraint::Filter(op.to_owned(), left.to_portable(i), right.to_portable(i)),
+            &Constraint::Insert{ref e, ref a, ref v, commit} => PortableConstraint::Output(e.to_portable(i), a.to_portable(i), v.to_portable(i), commit),
+            &Constraint::Remove{ref e, ref a, ref v} => PortableConstraint::Remove(e.to_portable(i), a.to_portable(i), v.to_portable(i)),
+            &Constraint::RemoveAttribute{ref e, ref a} => PortableConstraint::RemoveAttribute(e.to_portable(i), a.to_portable(i)),
+            &Constraint::RemoveEntity{ref e} => PortableConstraint::RemoveEntity(e.to_portable(i)),
+            &Constraint::Watch{ref name, ref registers} => {
+                PortableConstraint::Watch(name.to_owned(), registers.iter().map(|v| v.to_portable(i)).collect())
+            },
+            &Constraint::Function{ref op, ref output, ref params, ..} => {
+                PortableConstraint::Function(op.to_owned(), output.to_portable(i), params.iter().map(|v| v.to_portable(i)).collect())
+            },
+            &Constraint::MultiFunction{ref op, ref outputs, ref params, ..} => {
+                PortableConstraint::MultiFunction(op.to_owned(), outputs.iter().map(|v| v.to_portable(i)).collect(), params.iter().map(|v| v.to_portable(i)).collect())
+            },
+            _ => unimplemented!()
+        }
+    }
+}
+
+pub struct PortableBlock {
+    pub name: String,
+    pub block_id: Internable,
+    pub constraints: Vec<PortableConstraint>
+}
+
+impl PortableBlock {
+    pub fn intern(&self, interner:&mut Interner) -> Block {
+        let constraints = self.constraints.iter().map(|c| c.intern(interner)).collect();
+        let block_id = interner.internable_to_id(self.block_id.clone());
+        Block::new(interner, &self.name, block_id, constraints)
+    }
+
+    pub fn to_raw_changes(&self, changes:&mut Vec<RawChange>) {
+        let id_str = format!("block|{}", Internable::to_string(&self.block_id));
+        let id = s(&id_str);
+        changes.push(RawChange::new(id.clone(), s("tag"), s("block"), s("compiler"), 1));
+        changes.push(RawChange::new(id.clone(), s("name"), id.clone(), s("compiler"), 1));
+        for (ix, constraint) in self.constraints.iter().enumerate() {
+            let constraint_id = constraint.to_raw_changes(&id, ix, changes);
+            changes.push(RawChange::new(id.clone(), s("constraint"), constraint_id, s("compiler"), 1));
+        }
+    }
+}
+
+impl Block {
+    pub fn to_portable(&self, interner:&Interner) -> PortableBlock {
+        let constraints = self.constraints.iter().map(|c| c.to_portable(interner)).collect();
+        PortableBlock{name: self.name.clone(), block_id: interner.get_value(self.block_id).clone(), constraints}
+    }
+}
+
+//-------------------------------------------------------------------------
 // Persister
 //-------------------------------------------------------------------------
 
@@ -2894,16 +3355,24 @@ impl RunLoop {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DebugMode {
+    Compile
+}
+
 pub struct ProgramRunner {
     pub program: Program,
+    pub name: String,
     paths: Vec<String>,
     initial_commits: Vec<RawChange>,
     persistence_channel: Option<Sender<PersisterMessage>>,
+    debug_modes: HashSet<DebugMode>,
+    pub meta_channel: Option<Sender<MetaMessage>>
 }
 
 impl ProgramRunner {
-    pub fn new() -> ProgramRunner {
-        ProgramRunner {paths: vec![], program: Program::new(), persistence_channel:None, initial_commits: vec![] }
+    pub fn new(name:&str) -> ProgramRunner {
+        ProgramRunner {name: name.to_owned(), paths: vec![], program: Program::new(name), persistence_channel:None, initial_commits: vec![], debug_modes: HashSet::new(), meta_channel: None }
     }
 
     pub fn load(&mut self, path:&str) {
@@ -2915,20 +3384,28 @@ impl ProgramRunner {
         self.initial_commits = persister.get_commits();
     }
 
+    pub fn debug(&mut self, mode:DebugMode) {
+        self.debug_modes.insert(mode);
+    }
+
     pub fn run(self) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
+        let echo_channel = outgoing.clone();
         let mut program = self.program;
         let paths = self.paths;
         let mut persistence_channel = self.persistence_channel;
         let initial_commits = self.initial_commits;
-        let thread = thread::spawn(move || {
+        let debug_compile = self.debug_modes.contains(&DebugMode::Compile);
+        let meta_channel = self.meta_channel.map(|c| c.clone());
+
+        let thread = thread::Builder::new().name(program.name.to_owned()).spawn(move || {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                blocks.extend(parse_file(&mut program.state.interner, &path, true));
+                blocks.extend(parse_file(&mut program.state.interner, &path, true, debug_compile));
             }
             let mut end_ns = time::precise_time_ns();
-            println!("Compile took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+            println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
 
             start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
@@ -2937,26 +3414,82 @@ impl ProgramRunner {
             }
             txn.exec(&mut program, blocks, vec![]);
             end_ns = time::precise_time_ns();
-            println!("Load took {:?}", (end_ns - start_ns) as f64 / 1_000_000.0);
+            println!("[{}] Load took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
 
             let mut iter_pool = EstimateIterPool::new();
-            println!("Starting run loop.");
+            println!("[{}] Starting run loop.", &program.name);
+
+            let mut paused = false;
 
             'outer: loop {
-                match program.incoming.recv() {
-                    Ok(RunLoopMessage::Transaction(v)) => {
+                match (program.incoming.recv(), paused) {
+                    (Ok(RunLoopMessage::Stop), _) => {
+                        break 'outer;
+                    },
+                    (Ok(RunLoopMessage::Pause), _) => {
+                        paused = true;
+                    },
+                    (Ok(RunLoopMessage::Resume), _) => {
+                        paused = false;
+                    },
+                    (Ok(RunLoopMessage::Reload(paths)), _) => {
+                        let mut added_blocks:Vec<Block> = vec![];
+                        let mut removed_blocks:Vec<String> = vec![];
+                        for path in paths {
+                            let canonical = path.canonicalize();
+                            let resolved = match canonical {
+                                Ok(resolved) => resolved,
+                                Err(_) => path,
+                            };
+                            let resolved_path = resolved.to_str().unwrap();
+                            println!("Hot-reloading {} ...", resolved_path);
+
+                            let mut parsed_blocks:Vec<Block> = if resolved.exists() {
+                                parse_file(&mut program.state.interner, resolved_path, true, debug_compile)
+                            } else {
+                                vec![]
+                            };
+                            let new_blocks:HashSet<&Block> = parsed_blocks.iter().collect();
+
+                            let mut old_blocks:HashSet<&Block> = HashSet::new();
+                            old_blocks.extend(program.blocks_by_path(resolved_path).iter());
+
+                            let mut added = &new_blocks - &old_blocks;
+                            let mut removed = &old_blocks - &new_blocks;
+
+                            added_blocks.extend(added.drain().map(|block| block.clone()));
+                            removed_blocks.extend(removed.drain().map(|block| block.name.to_owned()));
+                        }
+
+                        echo_channel.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks));
+                    }
+                    (Ok(RunLoopMessage::Transaction(v)), true) => {},
+                    (Ok(RunLoopMessage::Transaction(v)), false) => {
+                        println!("[{}] Txn started", &program.name);
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new(&mut iter_pool);
                         for cur in v {
+                            // println!("  -> {:?}", cur);
                             txn.input_change(cur.to_change(&mut program.state.interner));
                         };
-                        txn.exec(&mut program, &mut persistence_channel);
+
+                        if let Some(ref meta_chan) = meta_channel {
+                            let mut meta_message = MetaMessage::Transaction{inputs: vec![], outputs: vec![]};
+                            txn.exec_meta(&mut program, &mut persistence_channel, Some(&mut meta_message));
+                            meta_chan.send(meta_message.collapse());
+                        } else {
+                            txn.exec(&mut program, &mut persistence_channel);
+                        }
+
+
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
-                    Ok(RunLoopMessage::RemoteTransaction(v)) => {
+                    (Ok(RunLoopMessage::RemoteTransaction(v)), true) => {},
+                    (Ok(RunLoopMessage::RemoteTransaction(v)), false) => {
                         let start_ns = time::precise_time_ns();
+                        println!("[{}] Remote txn started", &program.name);
                         let mut txn = RemoteTransaction::new(&mut iter_pool);
                         for cur in v {
                             txn.input_change(cur.to_change(&mut program.state.interner));
@@ -2964,36 +3497,62 @@ impl ProgramRunner {
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
                     }
-                    Ok(RunLoopMessage::Stop) => {
-                        break 'outer;
-                    }
-                    Ok(RunLoopMessage::CodeTransaction(adds, removes)) => {
+                    (Ok(RunLoopMessage::CodeTransaction(adds, removes)), _) => {
+                        let start_ns = time::precise_time_ns();
                         let mut tx = CodeTransaction::new();
-                        println!("------ Got Code Transaction! ------");
+                        println!("[{}] Code Txn started", &program.name);
                         if adds.len() > 0 {
-                            println!("### ADDS: ###");
+                            println!("  ADDS:");
                             for block in adds.iter() {
                                 print_block_constraints(&block);
                             }
                         }
                         if removes.len() > 0 {
-                            println!("### REMOVES: ###");
+                            println!("  REMOVES:");
                             for block in removes.iter() {
-                                println!("  - {:?}", block);
+                                println!("    - {:?}", block);
                             }
                         }
                         tx.exec(&mut program, adds, removes);
+                        let end_ns = time::precise_time_ns();
+                        let time = (end_ns - start_ns) as f64;
+                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
                     }
-                    Err(_) => { break; }
+                    (Ok(RunLoopMessage::RemoteCodeTransaction(adds, removes)), _) => {
+                        let start_ns = time::precise_time_ns();
+                        let mut tx = CodeTransaction::new();
+                        println!("[{}] Remote Code Txn started", &program.name);
+                        let added_blocks:Vec<Block> = adds.iter().map(|b| b.intern(&mut program.state.interner)).collect();
+
+                        if adds.len() > 0 {
+                            println!("  ADDS:");
+                            for block in added_blocks.iter() {
+                                print_block_constraints(&block);
+                            }
+                        }
+                        if removes.len() > 0 {
+                            println!("  REMOVES:");
+                            for block in removes.iter() {
+                                println!("    - {:?}", block);
+                            }
+                        }
+
+                        tx.exec(&mut program, added_blocks, removes);
+                        let end_ns = time::precise_time_ns();
+                        let time = (end_ns - start_ns) as f64;
+                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
+
+                    }
+                    (Err(_), _) => { break; }
                 }
             }
             if let Some(channel) = persistence_channel {
                 channel.send(PersisterMessage::Stop).unwrap();
             }
             println!("Closing run loop.");
-        });
+        }).unwrap();
 
         RunLoop { thread, outgoing }
     }

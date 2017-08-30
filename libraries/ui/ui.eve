@@ -271,14 +271,13 @@ bind
 end
 ~~~
 
-Clicking an item in a selectable selects the item and activates the selectable.
+Clicking an item in a selectable selects the item.
 ~~~ eve
 search
   selectable = [#ui/selectable item]
-  [#html/event/click element: item]
+  [#html/event/mouse-down element: item]
 bind
   [#ui/event #ui/event/select element: selectable item]
-  [#ui/event #ui/event/activate element: selectable]
 end
 ~~~
 
@@ -349,26 +348,6 @@ bind
 end
 ~~~
 
-Activating a selectable marks it active.
-~~~ eve
-search
-  event = [#ui/event/activate element: selectable]
-commit
-  selectable += #ui/active
-  event := none
-end
-~~~
-
-Deactivating a selectable removes its active status.
-~~~ eve
-search
-  event = [#ui/event/deactivate element: selectable]
-commit
-  selectable -= #ui/active
-  event := none
-end
-~~~
-
 Selecting an element updates the selected and cursor.
 ~~~ eve
 search
@@ -376,7 +355,6 @@ search
 commit
   selectable.selected += item
   selectable.cursor := item
-  event := none
 end
 ~~~
 
@@ -396,7 +374,6 @@ search
   event = [#ui/event/clear element: selectable]
 commit
   selectable.selected := none
-  event := none
 end
 ~~~
 
@@ -523,8 +500,8 @@ end
 A completer's value is its input's.
 ~~~ eve
 search
-  input = [#ui/completer/input completer]
-  value = if v = input.value then v else ""
+  completer = [#ui/completer]
+  value = if [#ui/completer/input completer value: v] then v else ""
 bind
   completer.value += value
 end
@@ -550,6 +527,19 @@ search
   [#html/event/blur element: input]
 bind
   [#ui/event #ui/event/deactivate element: completer]
+end
+~~~
+
+Changing the completer moves the cursor to the top of the list.
+~~~ eve
+search
+  completer = [#ui/completer #ui/active item]
+  list = [#ui/dropdown/list dropdown: completer]
+
+  [#html/event/change element: [#ui/completer/input completer]]
+  gather/bottom[for: item.sort per: list limit: 1]
+commit
+  list.cursor := item
 end
 ~~~
 
@@ -618,6 +608,7 @@ If the value matches perfectly on blur, select that match.
 ~~~ eve
 search
   input = [#ui/completer/input completer]
+  completer = [#ui/autocomplete]
   [#html/event/blur element: input value]
   match = completer.item
   lower = string/lowercase[text: match.text]
@@ -699,7 +690,7 @@ Token completers are completers.
 search
   completer = [#ui/token-completer]
 bind
-  completer <- [#ui/completer]
+  completer <- [#ui/completer #html/listener/key | captured-key: ("space" "up" "down")]
 end
 ~~~
 
@@ -737,34 +728,64 @@ bind
 end
 ~~~
 
+Space-separated words are tokens of the completer.
+~~~ eve
+search
+  completer = [#ui/token-completer value]
+  (token, ix) = string/split[text: value by: " "]
+bind
+  completer.token += [#ui/token-completer/token token ix]
+end
+~~~
+
+Track the index of the last token.
+~~~ eve
+search
+  completer = [#ui/token-completer token: [ix]]
+  gather/top[for: ix per: completer limit: 1]
+bind
+  completer.last-ix += ix
+end
+~~~
 
 ### Handlers
 
-If the value matches perfectly on blur, select that match.
+Token completers append the new completed token in place of the in progress token on select.
 ~~~ eve
 search
+  event = [#ui/event/select element: completer item]
   input = [#ui/completer/input completer]
-  [#html/event/blur element: input]
-  match = completer.item
-  lower = string/lowercase[text: match.text]
-  lower = string/lowercase[text: completer.needle]
-bind
-  [#ui/event #ui/event/select element: completer item: match]
+  completer = [#ui/token-completer needle]
+  needle != ""
+  needle-start = 0 - string/length[text: needle]
+  value = string/substring[text: input.value from: 1 to: needle-start]
+commit
+  input.value := "{{value}}{{item.text}} "
 end
 ~~~
 
-Token completers update their values on select.
+Token completers without an in-progress token just append the new one.
 ~~~ eve
 search
-  event = [#ui/event/select completer item]
+  event = [#ui/event/select element: completer item]
   input = [#ui/completer/input completer]
-  completer = [#ui/token-completer]
-  needle-start = 0 - string/length[text: completer.needle]
-  value = string/substring[text: input.value from: 1 to: needle-start]
+  completer = [#ui/token-completer needle: ""]
 commit
-  input.value := "{{value}}{{item.text}}"
+  input.value := "{{completer.value}}{{item.text}} "
 end
 ~~~
+
+Space in a active selectable selects its cursor.
+~~~ eve
+search
+  completer = [#ui/token-completer #ui/active]
+  list = [#ui/dropdown/list dropdown: completer cursor:item]
+  [#html/event/key-up key: "space"]
+bind
+  [#ui/event #ui/event/select element: list item]
+end
+~~~
+
 
 
 

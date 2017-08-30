@@ -1,0 +1,282 @@
+# Timeline
+
+~~~ eve
+commit
+  [#editor/transaction-label tagname: "html/event/mouse-down" label: "🖰🡓"]
+  [#editor/transaction-label tagname: "html/event/mouse-up" label: "🖰🡑"]
+  [#editor/transaction-label tagname: "html/event/click" label: "🖰🡙"]
+  [#editor/transaction-label tagname: "html/event/double-click" label: "🖰⇕"]
+  [#editor/transaction-label tagname: "html/event/key-down" label: "⌨🡓"]
+  [#editor/transaction-label tagname: "html/event/key-up" label: "⌨🡑"]
+  [#editor/transaction-label tagname: "html/event/change" label: "..⌶"]
+  [#editor/transaction-label tagname: "html/event/focus" label: "○"]
+  [#editor/transaction-label tagname: "html/event/blur" label: "◌"]
+  [#editor/transaction-label tagname: "system/timer/change" label: "⏱"]
+end
+~~~
+
+
+~~~ eve
+search
+  root = [#editor/timeline/root]
+bind
+  root <- [#ui/column children:
+    [#ui/column #editor/timeline-scroller | children:
+      [#ui/toggle class: "square" #editor/pause-client initial: "true"]
+      [#ui/column #editor/timeline]]]
+end
+~~~
+
+Show transactions in the timeline.
+~~~ eve
+search
+  timeline = [#editor/timeline]
+  transaction = [#editor/transaction]
+bind
+  timeline <- [children: transaction]
+end
+~~~
+
+A transactions size is it's output count.
+~~~ eve
+search
+  transaction = [#editor/transaction]
+  size = if c = gather/count[for: transaction.output per: transaction] then c else 0
+bind
+  transaction.size += size
+end
+~~~
+
+Decorate transactions.
+~~~ eve
+search
+  transaction = [#editor/transaction size]
+  height = 20 + math/pow[value: size exponent: 0.5] * 12
+bind
+  transaction <- [#html/div style: [margin-top: "-{{height}}px" height: "{{height}}px"]]
+end
+~~~
+
+Look for a recognizable tag in the transaction input to label it.
+~~~ eve
+search
+  transaction = [#editor/transaction input: [av: [attribute: "tag" value]]]
+  [#editor/transaction-label tagname: value label]
+bind
+  transaction.text += label
+end
+~~~
+
+
+Mark open transactions.
+~~~ eve
+search
+  root = [#editor/timeline/root open: transaction]
+  transaction = [#editor/transaction]
+bind
+  transaction += #editor/open
+end
+~~~
+
+
+Clicking a transaction opens it.
+~~~ eve
+search
+  root = [#editor/timeline/root]
+  transaction = [#editor/transaction]
+  [#html/event/click element: transaction]
+commit
+  root.open := transaction
+end
+~~~
+
+## Transaction Viewer
+
+~~~ eve
+search
+  root = [#editor/timeline/root open]
+bind
+  root.children += [#editor/transaction-viewer transaction: open]
+end
+~~~
+
+Clicking outside a transaction viewer closes it.
+~~~ eve
+search
+  [#html/event/click]
+  root = [#editor/timeline/root]
+  viewer = [#editor/transaction-viewer transaction]
+  not([#html/event/click element: viewer])
+commit
+  root.open -= transaction
+end
+~~~
+
+
+Decorate transaction viewer.
+~~~ eve
+search
+  viewer = [#editor/transaction-viewer transaction]
+bind
+  viewer <- [#html/div children:
+    [#html/element tagname: "h2" text: "Transaction {{transaction.sort}}"]
+    [#html/element tagname: "h3" text: "Inputs"]
+    [#html/div #editor/transaction-viewer/inputs class: "editor-transaction-viewer-records" viewer]
+    [#html/element tagname: "h3" text: "Outputs"]
+    [#html/div #editor/transaction-viewer/outputs class: "editor-transaction-viewer-records" viewer]]
+end
+~~~
+
+Show transaction inputs as literals.
+~~~ eve
+search
+  viewer = [#editor/transaction-viewer transaction: [input]]
+  inputs = [#editor/transaction-viewer/inputs viewer]
+bind
+  inputs.children += [#record-card/record-literal input | av: input.av]
+end
+~~~
+
+Show transaction outputs as literals.
+~~~ eve
+search
+  viewer = [#editor/transaction-viewer transaction: [output]]
+  outputs = [#editor/transaction-viewer/outputs viewer]
+bind
+  outputs.children += [#html/div output | children:
+    [#ui/button #record-card/record #editor/transaction-viewer/output/name value: output.entity]
+    [#record-card/record-literal output | av: output.av]]
+end
+~~~
+
+Decorate output with client-name, if available.
+~~~ eve
+search
+  output = [#editor/transaction-viewer/output/name value: entity]
+  [#editor/explorer/client-name entity name]
+bind
+  output.text += name
+end
+~~~
+
+Decorate literal values as records, if relevant.
+~~~ eve
+search
+  [#record-card/record-literal av]
+  [#editor/explorer/client-name entity: av.value name]
+bind
+  av.type += "record"
+  av.text += name
+end
+~~~
+
+
+
+## Transaction Saving
+
+The next transaction is the current transaction's sort + 1
+~~~ eve
+search
+  root = [#editor/timeline/root]
+  next = if [#editor/transaction sort] gather/top[for: sort limit: 1] then sort + 1 else 1
+bind
+  root.next-transaction += next
+end
+~~~
+
+
+Save client transactions permanently.
+~~~ eve
+search
+  [#editor/timeline/root next-transaction: sort]
+  [#editor/event/meta-transaction]
+commit
+  [#editor/transaction sort]
+end
+~~~
+
+Save transaction inputs.
+~~~ eve
+search
+  [#editor/timeline/root next-transaction: sort]
+  [#editor/event/meta-transaction input]
+commit
+  [#editor/transaction sort | input]
+end
+~~~
+
+
+Save transaction outputs.
+~~~ eve
+search
+  [#editor/timeline/root next-transaction: sort]
+  [#editor/event/meta-transaction output]
+commit
+  [#editor/transaction sort | output]
+end
+~~~
+
+Throw away old transactions.
+~~~ eve
+search
+  transaction = [#editor/transaction]
+  gather/top[for: transaction.sort limit: 25]
+bind
+  transaction += #editor/keep-alive
+end
+~~~
+
+Open transactions are also kept alive.
+~~~ eve
+search
+  [#editor/timeline/root open: transaction]
+  transaction = [#editor/transaction]
+bind
+  transaction += #editor/keep-alive
+end
+~~~
+
+Nuke dead transactions.
+~~~ eve
+search
+  transaction = [#editor/transaction]
+  not(transaction = [#editor/keep-alive])
+commit
+  transaction := none
+end
+~~~
+
+Nuke their inputs.
+~~~ eve
+search
+  transaction = [#editor/transaction input]
+  not(transaction = [#editor/keep-alive])
+  av = input.av
+commit
+  input := none
+  av := none
+end
+~~~
+
+Nuke their outputs.
+~~~ eve
+search
+  transaction = [#editor/transaction output]
+  not(transaction = [#editor/keep-alive])
+  av = output.av
+commit
+  output := none
+  av := none
+end
+~~~
+
+## Exports
+
+~~~ eve
+search
+  pause = [#editor/pause-client]
+  not(pause.checked)
+watch editor/host
+  ("pause")
+end
+~~~

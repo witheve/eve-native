@@ -1,0 +1,9 @@
+## Text Compiler
+
+Compiles raw text into Eve code
+
+search
+  block = [#eve/text-compiler code]
+watch eve/text-compiler
+  ("code", block, code)
+end

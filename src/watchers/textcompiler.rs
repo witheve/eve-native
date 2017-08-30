@@ -55,10 +55,23 @@ impl Watcher for RawTextCompilerWatcher {
         for add in diff.adds {
             if let Internable::String(ref kind) = interner.get_value(add[0]).clone() {
                 match (kind.as_ref(), &add[1..]) {
+                    ("to-blocks", &[id, path, code]) => {
+                        match interner.get_value(code).clone() {
+                            Internable::String(ref s) => {
+                                let blocks = parse_string(interner, s, &path.to_string(), false);
+                                let mut changes = vec![];
+                                for block in blocks {
+                                    block.to_portable(interner).to_raw_changes(&mut changes);
+                                }
+                                self.outgoing.send(RunLoopMessage::Transaction(changes));
+                            }
+                            _ => {}
+                        }
+                    },
                     ("code", &[id, code]) => {
                         match interner.get_value(code).clone() {
                             Internable::String(ref s) => {
-                                let blocks = parse_string(interner, s, &format!("eve/raw-text/{:?}", id));
+                                let blocks = parse_string(interner, s, &format!("eve/raw-text/{:?}", id), false);
                                 let names = self.id_to_blocks.entry(id).or_insert_with(|| vec![]);
                                 names.extend(blocks.iter().map(|x| x.name.to_owned()));
                                 added_blocks.extend(blocks);
@@ -71,6 +84,8 @@ impl Watcher for RawTextCompilerWatcher {
             }
         }
 
-        self.outgoing.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks)).unwrap();
+        if added_blocks.len() > 0 || removed_blocks.len() > 0 {
+            self.outgoing.send(RunLoopMessage::CodeTransaction(added_blocks, removed_blocks)).unwrap();
+        }
     }
 }

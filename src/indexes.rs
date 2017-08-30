@@ -754,12 +754,12 @@ impl RemoteIndex {
 // Intermediate Index
 //-------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AggregateEntry {
     Empty,
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
-    SortedSum { items: BTreeSet<Vec<Interned>>, bound: Interned, count: usize, limit: usize },
+    SortedSum { items: BTreeMap<Vec<Internable>, Vec<Internable>>, result: Internable },
     Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
 }
 
@@ -768,7 +768,7 @@ impl AggregateEntry {
         match self {
             &AggregateEntry::Result(res) => vec![interner.number_id(res)],
             &AggregateEntry::Counted { result, .. } => vec![interner.number_id(result)],
-            &AggregateEntry::SortedSum {..} => { unimplemented!() },
+            &AggregateEntry::SortedSum { ref result, .. } => { vec![interner.internable_to_id(result.clone())] },
             &AggregateEntry::Sorted {..} => { unimplemented!() },
             &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
         }
@@ -867,9 +867,9 @@ pub fn make_aggregate_change(out:&Vec<Interned>, mut value:Vec<Interned>, extra_
     (to_change, key, final_value, round, count, false)
 }
 
-pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, value:&Vec<Internable>, round:Round) {
+pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChange>, out: &Vec<Interned>, action:AggregateFunction, cur_aggregate:&mut AggregateEntry, projection:&Vec<Internable>, value:&Vec<Internable>, round:Round) {
     let prev = cur_aggregate.get_result(interner);
-    action(cur_aggregate, &value);
+    action(cur_aggregate, &value, &projection);
     let neue = cur_aggregate.get_result(interner);
     if neue != prev {
         // add a remove for the previous value
@@ -928,7 +928,7 @@ impl IntermediateIndex {
         let mut changes = vec![];
         {
             let cur = self.index.entry(group).or_insert_with(|| {
-                if kind == FunctionKind::Sum {
+                if kind == FunctionKind::Sum || kind == FunctionKind::SortedSum {
                     IntermediateLevel::SumAggregate(BTreeMap::new())
                 } else {
                     IntermediateLevel::SortAggregate(vec![], AggregateEntry::Sorted { items: BTreeMap::new(), current_round: 0, current_params:None, changes: vec![], limit: 0 })
@@ -936,21 +936,32 @@ impl IntermediateIndex {
             });
             match cur {
                 &mut IntermediateLevel::SumAggregate(ref mut rounds) => {
+                    let mut cur_aggregate = AggregateEntry::Empty;
+                    if !rounds.contains_key(&round) {
+                        if let Some(cur) = rounds.range(..round).rev().next() {
+                            cur_aggregate = cur.1.clone();
+                        }
+                    }
                     match rounds.entry(round) {
                         btree_map::Entry::Occupied(mut ent) => {
                             let cur_aggregate = ent.get_mut();
-                            update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &value, round);
+                            update_aggregate(interner, &mut changes, &out, action, cur_aggregate, &projection, &value, round);
                         }
                         btree_map::Entry::Vacant(ent) => {
-                            let mut cur_aggregate = AggregateEntry::Empty;
-                            action(&mut cur_aggregate, &value);
-                            // add an add for the new value
-                            changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), projection_len, round, 1));
+                            match cur_aggregate {
+                                AggregateEntry::Empty => {
+                                    action(&mut cur_aggregate, &value, &projection);
+                                    changes.push(make_aggregate_change(&out, cur_aggregate.get_result(interner), 0, round, 1));
+                                }
+                                _ => {
+                                    update_aggregate(interner, &mut changes, &out, action, &mut cur_aggregate, &projection, &value, round);
+                                }
+                            }
                             ent.insert(cur_aggregate);
                         }
                     }
                     for (k, v) in rounds.range_mut(round+1..) {
-                        update_aggregate(interner, &mut changes, &out, action, v, &value, *k);
+                        update_aggregate(interner, &mut changes, &out, action, v, &projection, &value, *k);
                     }
                 }
                 &mut IntermediateLevel::SortAggregate(ref mut rounds, ref mut entry) => {
@@ -965,7 +976,7 @@ impl IntermediateIndex {
                         if let &mut AggregateEntry::Sorted { ref mut current_round, .. } = entry {
                             *current_round = round;
                         }
-                        action(entry, &projection);
+                        action(entry, &projection, &projection);
                     }
                     if let &mut AggregateEntry::Sorted { current_params: Some(ref value), ref mut items, changes:ref mut entry_changes, .. } = entry {
                         // we have to extend the projection with the params in order to account for

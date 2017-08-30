@@ -18,6 +18,7 @@ export type RecordDiffHandler<T extends RawRecord> = (diff:Diff<RawMap<T>>) => v
 ////////////////////////////////////////////////////////////////////////////////
 
 export interface Program {
+  name:string;
   libraries:{[id:string]: Library};
 
   inputEAVs(eavs:RawEAV[]):this;

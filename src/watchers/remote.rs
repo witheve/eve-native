@@ -1,5 +1,5 @@
 use super::super::indexes::{WatchDiff, RawRemoteChange};
-use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange};
+use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange, s};
 use super::Watcher;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -7,24 +7,17 @@ use std::thread;
 use std::collections::HashMap;
 
 //-------------------------------------------------------------------------
-// Util
-//-------------------------------------------------------------------------
-
-fn s(string: &str) -> Internable {
-   Internable::String(string.to_string())
-}
-
-fn n(num: f32) -> Internable {
-   Internable::from_number(num)
-}
-
-//-------------------------------------------------------------------------
 // Router
 //-------------------------------------------------------------------------
 
+pub enum RouterMessage {
+    Remote(Vec<RawRemoteChange>),
+    Local(String, Vec<RawChange>)
+}
+
 pub struct Router {
     manager: Sender<RunLoopMessage>,
-    outgoing: Sender<Vec<RawRemoteChange>>,
+    outgoing: Sender<RouterMessage>,
     clients: Arc<Mutex<HashMap<String, Sender<RunLoopMessage>>>>
 }
 
@@ -36,16 +29,28 @@ impl Router {
         thread::spawn(move || {
             let mut grouping:HashMap<Internable, Vec<RawRemoteChange>> = HashMap::new();
             loop {
-                let remotes:Vec<RawRemoteChange> = incoming.recv().unwrap();
-                for remote in remotes {
-                    // @FIXME is there really no way to do this without always cloning the to? :(
-                    let vs = grouping.entry(remote.to.clone()).or_insert_with(|| vec![]);
-                    vs.push(remote);
-                }
-                for (key, changes) in grouping.drain() {
-                    if let Internable::String(ref name) = key {
-                        if let Some(channel) = clients2.lock().unwrap().get(name) {
-                            channel.send(RunLoopMessage::RemoteTransaction(changes)).unwrap();
+                match incoming.recv().unwrap() {
+                    RouterMessage::Remote(remotes) => {
+                        for remote in remotes {
+                            // @FIXME is there really no way to do this without always cloning the to? :(
+                            let vs = grouping.entry(remote.to.clone()).or_insert_with(|| vec![]);
+                            vs.push(remote);
+                        }
+                        for (key, changes) in grouping.drain() {
+                            if let Internable::String(ref name) = key {
+                                if let Some(channel) = clients2.lock().unwrap().get(name) {
+                                    channel.send(RunLoopMessage::RemoteTransaction(changes)).unwrap();
+                                } else {
+                                    panic!("Failed to send remote TX to nonexistent or unregistered client: '{}'", &name);
+                                }
+                            }
+                        }
+                    }
+                    RouterMessage::Local(name, changes) => {
+                        if let Some(channel) = clients2.lock().unwrap().get(&name) {
+                            channel.send(RunLoopMessage::Transaction(changes)).unwrap();
+                        } else {
+                            panic!("Failed to send local TX to nonexistent or unregistered client: '{}'", &name);
                         }
                     }
                 }
@@ -70,7 +75,7 @@ impl Router {
         self.clients.lock().unwrap().remove(name);
     }
 
-    pub fn get_channel(&self) -> Sender<Vec<RawRemoteChange>> {
+    pub fn get_channel(&self) -> Sender<RouterMessage> {
         self.outgoing.clone()
     }
 }
@@ -83,7 +88,7 @@ impl Router {
 pub struct RemoteWatcher {
     name: String,
     me: Internable,
-    router_channel: Sender<Vec<RawRemoteChange>>
+    router_channel: Sender<RouterMessage>
 }
 
 impl RemoteWatcher {
@@ -137,7 +142,6 @@ impl Watcher for RemoteWatcher {
                 _ => panic!("Invalid remote watch")
             }
         }
-        self.router_channel.send(changes).unwrap();
+        self.router_channel.send(RouterMessage::Remote(changes)).unwrap();
     }
 }
-

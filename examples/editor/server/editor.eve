@@ -1,0 +1,22 @@
+# Editor
+
+## Root
+
+~~~ eve
+commit
+  [#ui/row #editor/root | children:
+    [#editor/timeline/root]
+    [#editor/explorer/root]]
+end
+~~~
+
+## Events
+
+Clear editor events
+~~~ eve
+search
+  event = [#editor/event]
+commit
+  event := none
+end
+~~~

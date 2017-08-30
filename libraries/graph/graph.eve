@@ -1,0 +1,18 @@
+
+search
+  graph = [#graph/graph nodes]
+watch client/websocket
+  ("graph/node", graph, nodes, nodes.label)
+end
+
+search
+  graph = [#graph/graph edges]
+watch client/websocket
+  ("graph/edge", graph, edges, edges.from, edges.to)
+end
+
+search
+  graph = [#graph/graph]
+bind
+  graph <- [#html/element tagname: "div"]
+end

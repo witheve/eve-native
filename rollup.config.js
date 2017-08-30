@@ -10,28 +10,36 @@ import autoprefixer from "autoprefixer";
 import customProperties from "postcss-custom-properties";
 import colorFunction from "postcss-color-function";
 
-export default {
-  entry: ["./ts/main.ts", "./libraries/**/*.css"],
-  format: "iife",
-  plugins: [
-    multiEntry(),
-    resolve({main: true, browser: true}),
-    commonjs({
-      namedExports: {
-        "uuid": ["v4"]
-      }
-    }),
-    typescript({}), // rollupCommonJSResolveHack: true
-    json(),
-    postcss({
-      extract: "./dist/libraries.css",
-      plugins: [
-        autoprefixer(),
-        customProperties(),
-        colorFunction()
-      ]
-    }),
-  ],
-  moduleName: "eveNative",
-  dest: "./dist/eve-native-bundle.js"
-};
+function createBundle(name, entry, moduleName = name) {
+  return {
+    moduleName,
+    entry,
+    dest: `./dist/${name}.js`,
+
+    format: "iife",
+    plugins: [
+      multiEntry(),
+      resolve({main: true, browser: true}),
+      commonjs({
+        namedExports: {
+          "uuid": ["v4"]
+        }
+      }),
+      typescript({}),
+      json(),
+      postcss({
+        extract: `./dist/${name}.css`,
+        plugins: [
+          autoprefixer(),
+          customProperties(),
+          colorFunction()
+        ]
+      }),
+    ],
+  }
+}
+
+export default [
+  createBundle("eve-libraries", ["./ts/main.ts", "./libraries/**/*.css"], "eve_libraries"),
+  createBundle("programs/editor", ["./examples/editor/**/*.css"], "eve_programs_editor")
+];

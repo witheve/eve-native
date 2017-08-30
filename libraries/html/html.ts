@@ -6,10 +6,12 @@ const EMPTY:never[] = [];
 
 export interface Instance extends HTMLElement {
   __element: RawValue,
+  __source: HTML,
   __styles?: RawValue[],
   __sort?:RawValue,
   __autoSort?:RawValue,
-  listeners?: {[event:string]: boolean}
+  __listeners?: {[event:string]: boolean},
+  __capturedKeys?: {[code:number]: boolean}
 }
 
 export interface Style extends RawMap<RawValue> {__count: number}
@@ -45,6 +47,10 @@ export class HTML extends Library {
     return instanceIds.map((id) => this._instances[id]);
   }
 
+  getContainer() {
+    return this._container;
+  }
+
   // @DEPRECATED
   getInstance(instanceId:RawValue) {
     return this._instances[instanceId];
@@ -53,7 +59,7 @@ export class HTML extends Library {
   isInstance(elem?:any): elem is Instance {
     if(!elem || !(elem instanceof Element)) return false;
     let instance = elem as Instance;
-    return instance && !!instance["__element"];
+    return instance && !!instance["__element"] && instance.__source == this;
   }
 
   //////////////////////////////////////////////////////////////////////
@@ -83,13 +89,16 @@ export class HTML extends Library {
       return;
     }
 
-    this._container = document.body;
+    this._container = document.createElement("div");
+    this._container.setAttribute("program", this.program.name);
+    document.body.appendChild(this._container);
     this._syntheticStyleContainer = document.createElement("div");
     this._syntheticStyleContainer.style.display = "none"
     this._syntheticStyleContainer.style.visibility = "hidden";
     this._container.appendChild(this._syntheticStyleContainer);
     this._dummy = document.createElement("div");
 
+    window.addEventListener("resize", this._resizeEventHandler("resize-window"));
     window.addEventListener("click", this._mouseEventHandler("click"));
     window.addEventListener("dblclick", this._mouseEventHandler("double-click"));
     window.addEventListener("mousedown", this._mouseEventHandler("mouse-down"));
@@ -112,6 +121,7 @@ export class HTML extends Library {
   protected decorate(elem:Element, elemId:RawValue): Instance {
     let e = elem as Instance;
     e.__element = elemId;
+    e.__source = this;
     return e;
   }
   protected decorateStyle(styleElem:HTMLStyleElement, styleId:RawValue): StyleElement {
@@ -358,15 +368,34 @@ export class HTML extends Library {
       for(let [instanceId, listener] of removes || EMPTY) {
         let instance = this._instances[instanceId];
         if(!instance) continue;
-        if(!instance.listeners) throw new Error(`Cannot remove never-added listener '${listener}' on instance '${instanceId}'.`);
-        else instance.listeners[listener] = false;
+        if(!instance.__listeners) throw new Error(`Cannot remove never-added listener '${listener}' on instance '${instanceId}'.`);
+        else instance.__listeners[listener] = false;
       }
 
       for(let [instanceId, listener] of adds || EMPTY) {
         let instance = this._instances[instanceId];
         if(!instance) throw new Error(`Unable to add listener '${listener}' on nonexistent instance '${instanceId}'.`);
-        if(!instance.listeners) instance.listeners = {[listener]: true};
-        else instance.listeners[listener] = true;
+        if(!instance.__listeners) instance.__listeners = {[listener]: true};
+        else instance.__listeners[listener] = true;
+      }
+    }),
+    "export captured keys": handleTuples(({adds, removes}) => {
+      for(let [instanceId, key] of removes || EMPTY) {
+        let instance = this._instances[instanceId];
+        if(!instance) continue;
+        if(!instance.__capturedKeys) throw new Error(`Cannot remove never-added captured key '${key}' on instance '${instanceId}'.`);
+        else {
+          let code = this._reverseKeyMap[key] || +key;
+          instance.__capturedKeys[code] = false;
+        }
+      }
+
+      for(let [instanceId, key] of adds || EMPTY) {
+        let instance = this._instances[instanceId];
+        if(!instance) throw new Error(`Unable to add captured key '${key}' on nonexistent instance '${instanceId}'.`);
+        let code = this._reverseKeyMap[key] || +key;
+        if(!instance.__capturedKeys) instance.__capturedKeys = {[code]: true};
+        else instance.__capturedKeys[code] = true;
       }
     })
   };
@@ -375,10 +404,30 @@ export class HTML extends Library {
   // Event Handlers
   //////////////////////////////////////////////////////////////////////
 
-    _mouseEventHandler(tagname:string) {
+  _resizeTimeout: any; // @FIXME: what's up with this.
+  _resizeEventHandler(tagname:string) {
+    return (event:Event) => {
+      if(!this._resizeTimeout) {
+        this._resizeTimeout = setTimeout(() => {
+          this._resizeTimeout = null;
+          let width = window.innerWidth || document.documentElement.clientWidth;
+          let height = window.innerHeight || document.documentElement.clientHeight;
+          let eventId = createId();
+          let eavs:RawEAV[] = [
+            [eventId, "tag", "html/event"],
+            [eventId, "tag", `html/event/${tagname}`],
+            [eventId, "width", width],
+            [eventId, "height", height]
+          ];
+          this._sendEvent(eavs);
+        }, 1000 / 5);
+      }
+    };
+  }
+
+  _mouseEventHandler(tagname:string) {
     return (event:MouseEvent) => {
       let {target} = event;
-      // if(!this.isInstance(target)) return;
 
       let eventId = createId();
       let eavs:RawEAV[] = [
@@ -396,35 +445,38 @@ export class HTML extends Library {
       else if(button === 1) eavs.push([eventId, "button", "middle"]);
       else if(button) eavs.push([eventId, "button", button]);
 
-      let capturesContextMenu = false;
       if(this.isInstance(target)) {
         eavs.push([eventId, "target", target.__element]);
-
-        let current:Element|null = target;
-        while(current && current != this._container) {
-          if(this.isInstance(current)) {
-            eavs.push([eventId, "element", current.__element]);
-            if(button === 2 && current.listeners && current.listeners["context-menu"] === true) {
-              capturesContextMenu = true;
-            }
-          }
-          current = current.parentElement;
-        }
       }
+
+      let capturesContextMenu = false;
+      let anyInstances = false;
+      let current:Element|null = target as Element;
+      while(current && current != this._container) {
+        if(this.isInstance(current)) {
+          eavs.push([eventId, "element", current.__element]);
+          anyInstances = true;
+          if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
+            capturesContextMenu = true;
+          }
+        }
+        current = current.parentElement;
+      }
+
 
       // @NOTE: You'll get a mousedown but no mouseup for a right click if you don't capture the context menu,
       //   so we throw out the mousedown entirely in that case. :(
       if(button === 2 && !capturesContextMenu) return;
-      if(eavs.length) this._sendEvent(eavs);
+      if(anyInstances || current === this._container) this._sendEvent(eavs);
     };
   }
 
-    _captureContextMenuHandler() {
+  _captureContextMenuHandler() {
     return (event:MouseEvent) => {
       let captureContextMenu = false;
       let current:Element|null = event.target as Element;
       while(current && this.isInstance(current)) {
-        if(current.listeners && current.listeners["context-menu"] === true) {
+        if(current.__listeners && current.__listeners["context-menu"] === true) {
           captureContextMenu = true;
         }
         current = current.parentElement;
@@ -438,8 +490,7 @@ export class HTML extends Library {
   _inputEventHandler(tagname:string) {
     return (event:Event) => {
       let target = event.target as (Instance & HTMLInputElement);
-      let elementId = target.__element;
-      if(elementId) {
+      if(this.isInstance(target)) {
         if(target.classList.contains("html-autosize-input")) {
           target.size = target.value.length || 1;
         }
@@ -447,7 +498,7 @@ export class HTML extends Library {
         let eavs:RawEAV[] = [
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "element", elementId],
+          [eventId, "element", target.__element],
           [eventId, "value", target.value]
         ];
         if(eavs.length) this._sendEvent(eavs);
@@ -460,13 +511,12 @@ export class HTML extends Library {
       let target = event.target as (Instance & HTMLInputElement);
       if(!(target instanceof HTMLInputElement)) return;
       if(target.type == "checkbox" || target.type == "radio") {
-        let elementId = target.__element;
-        if(elementId) {
+        if(this.isInstance(target)) {
           let eventId = createId();
           let eavs:RawEAV[] = [
             [eventId, "tag", "html/event"],
             [eventId, "tag", `html/event/${tagname}`],
-            [eventId, "element", elementId],
+            [eventId, "element", target.__element],
             [eventId, "checked", ""+target.checked]
           ];
           let name = target.name;
@@ -482,7 +532,7 @@ export class HTML extends Library {
                 [event2Id, "checked", "false"]
               );
             }
-            this._checkedRadios[name] = elementId;
+            this._checkedRadios[name] = target.__element;
           }
           if(eavs.length) this._sendEvent(eavs);
         }
@@ -497,12 +547,18 @@ export class HTML extends Library {
     17: "control",
     18: "alt",
     27: "escape",
+    32: "space",
     37: "left",
     38: "up",
     39: "right",
     40: "down",
     91: "meta"
   }
+
+  _reverseKeyMap:{[name: string]: number|undefined} = Object.keys(this._keyMap).reduce((memo:any, code:string) => {
+    memo[this._keyMap[+code]!] = +code;
+    return memo;
+  }, {});
 
   _keyEventHandler(tagname:string) {
     return (event:KeyboardEvent) => {
@@ -526,9 +582,15 @@ export class HTML extends Library {
         while(current && current != this._container) {
           if(this.isInstance(current)) {
             eavs.push([eventId, "element", current.__element]);
+            if(current.__listeners && current.__listeners["html/listener/key"] && current.__capturedKeys && current.__capturedKeys[code]) {
+              event.preventDefault();
+            }
           }
           current = current.parentElement;
         };
+      } else if ((target as any).__element) {
+        // If the target belongs to another program, bail.
+        return;
       }
 
       if(eavs.length) this._sendEvent(eavs);
@@ -538,13 +600,12 @@ export class HTML extends Library {
   _focusEventHandler(tagname:string) {
     return (event:FocusEvent) => {
       let target = event.target as (Instance & HTMLInputElement);
-      let elementId = target.__element;
-      if(elementId) {
+      if(this.isInstance(target)) {
         let eventId = createId();
         let eavs:RawEAV[] = [
           [eventId, "tag", "html/event"],
           [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "element", elementId]
+          [eventId, "element", target.__element]
         ];
         if(target.value !== undefined) eavs.push([eventId, "value", target.value]);
         if(eavs.length) this._sendEvent(eavs);
@@ -559,7 +620,7 @@ export class HTML extends Library {
 
       let eavs:RawEAV[] = [];
       let elemId = target.__element!;
-      if(target.listeners && target.listeners["hover"]) {
+      if(target.__listeners && target.__listeners["hover"]) {
         let eventId = createId();
         eavs.push(
           [eventId, "tag", "html/event"],

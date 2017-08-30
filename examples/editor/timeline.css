@@ -1,0 +1,31 @@
+@keyframes slide-in {
+    from { }
+    to { margin-top: 0;  }
+}
+
+.editor-timeline-root { position: relative; overflow-x: visible; }
+.editor-timeline-scroller { height: 100vh; width: 50px; overflow-y: hidden; }
+.editor-timeline { flex-direction: column-reverse; justify-content: flex-end; }
+.editor-transaction { flex: 0 0 auto; position: relative; padding: 5px 10px; border: 1px solid #f9f9f9; border-left-width: 2px; border-right-width: 2px; background: #ddd; text-align: center; cursor: pointer; user-select: none; animation-name: slide-in; animation-duration: 0.2s; animation-fill-mode: forwards; animation-timing-function: ease-in; }
+.editor-transaction:hover { background: color(rgb(95, 211, 247) lightness(+ 20%)); }
+.editor-transaction.editor-open { background: rgb(95, 211, 247); }
+.editor-pause-client { flex: 0 0 auto; position: relative; z-index: 10; margin-bottom: 1px; }
+.editor-pause-client > label:before { content: "►"; position: absolute; top: 0; bottom: 0; left: 50%; right: 0; padding: 2px; text-align: center; vertical-align: middle; }
+.editor-pause-client[checked="true"] > label:before { content: "⏸"; left: 0; right: 50%; }
+
+
+.editor-transaction-viewer { position: absolute; bottom: 0; left: 100%; width: 500px; max-height: 500px; padding: 20px 10px; margin: 10px; overflow-y: auto; }
+.editor-transaction-viewer { background: white; border-radius: 4px; box-shadow: 0 2px 4px 2px rgba(0, 0, 0, 0.1); }
+.editor-transaction-viewer > h2 { margin-bottom: 10px; font-size: 1.25rem; text-align: center; }
+.editor-transaction-viewer > h3 { margin-bottom: 10px; font-size: 1.25rem; }
+
+.editor-transaction-viewer-records { border-radius: 4px; border: 1px solid #e9e9e9; overflow: hidden;  }
+.editor-transaction-viewer-records:not(:empty) { margin-bottom: 10px; }
+.editor-transaction-viewer-records > * { padding: 5px 10px;  }
+.editor-transaction-viewer-records > *:nth-child(2n) { background: #f9f9f9; }
+.editor-transaction-viewer-records > *:nth-child(2n + 1) { background: #e9e9e9; }
+
+.editor-transaction-viewer-output-name { line-height: 1.5; }
+.editor-transaction-viewer-output-name:before { content: "⬢"; color: #888; }
+.editor-transaction-viewer-output-name:not(:empty):before { margin-right: 8px; }
+.editor-transaction-viewer-output-name:after { content: "<-"; margin: 0 8px; color: #888; }

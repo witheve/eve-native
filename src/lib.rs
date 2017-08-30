@@ -2,7 +2,7 @@
 #![feature(box_patterns)]
 #![feature(vec_remove_item)]
 #![feature(conservative_impl_trait)]
-
+#![feature(slice_concat_ext)]
 
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
 extern {}
@@ -11,6 +11,9 @@ extern {}
 extern crate lazy_static;
 
 extern crate serde;
+
+#[macro_use]
+extern crate serde_json;
 
 #[macro_use]
 extern crate serde_derive;
@@ -23,6 +26,8 @@ pub mod ops;
 
 #[macro_use]
 pub mod combinators;
+
+pub mod paths;
 
 pub mod indexes;
 pub mod compiler;
