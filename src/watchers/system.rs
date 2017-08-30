@@ -1,13 +1,14 @@
 extern crate time;
 
-use super::super::indexes::{WatchDiff};
-use super::super::ops::{Interned, Internable, Interner, RawChange, RunLoopMessage};
-use std::sync::mpsc::{self, Sender};
-use std::thread::{self};
-use std::time::*;
-use std::collections::{HashMap};
-use std::collections::hash_map::{Entry};
 use super::Watcher;
+use super::super::indexes::WatchDiff;
+use super::super::ops::{Internable, Interned, Interner, RawChange,
+                        RunLoopMessage};
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::sync::mpsc::{self, Sender};
+use std::thread;
+use std::time::*;
 
 //-------------------------------------------------------------------------
 // System Watcher
@@ -16,25 +17,30 @@ use super::Watcher;
 pub struct SystemTimerWatcher {
     name: String,
     outgoing: Sender<RunLoopMessage>,
-    timers: HashMap<Interned, (usize, Sender<()>)>
+    timers: HashMap<Interned, (usize, Sender<()>)>,
 }
 
 impl SystemTimerWatcher {
-    pub fn new(outgoing: Sender<RunLoopMessage>) -> SystemTimerWatcher {
-        SystemTimerWatcher { name: "system/timer".to_string(), outgoing, timers: HashMap::new() }
+    pub fn new(outgoing: Sender<RunLoopMessage>)
+        -> SystemTimerWatcher {
+        SystemTimerWatcher {
+            name: "system/timer".to_string(),
+            outgoing,
+            timers: HashMap::new(),
+        }
     }
 }
 
 impl Watcher for SystemTimerWatcher {
-    fn get_name(& self) -> String {
-        self.name.clone()
-    }
+    fn get_name(&self) -> String { self.name.clone() }
     fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
     }
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner: &mut Interner, diff: WatchDiff) {
         for remove in diff.removes {
-            if let Entry::Occupied(mut entry) = self.timers.entry(remove[1]) {
+            if let Entry::Occupied(mut entry) =
+                self.timers.entry(remove[1])
+            {
                 let should_remove = {
                     let pair = entry.get_mut();
                     let ref mut count = pair.0;
@@ -53,16 +59,24 @@ impl Watcher for SystemTimerWatcher {
         }
 
         for add in diff.adds {
-            if let Entry::Occupied(mut entry) = self.timers.entry(add[1]) {
+            if let Entry::Occupied(mut entry) =
+                self.timers.entry(add[1])
+            {
                 let ref mut count = entry.get_mut().0;
                 *count += 1;
                 continue;
             }
 
-            println!("timer: {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
-            let internable_resolution = interner.get_value(add[1]).clone();
-            let resolution = Internable::to_number(&internable_resolution) as u64;
-            let id = Internable::String(format!("system/timer/change/{}", add[0]));
+            println!("timer: {:?}",
+                     add.iter()
+                        .map(|v| interner.get_value(*v).print())
+                        .collect::<Vec<String>>());
+            let internable_resolution =
+                interner.get_value(add[1]).clone();
+            let resolution =
+                Internable::to_number(&internable_resolution) as u64;
+            let id = Internable::String(format!("system/timer/change/{}",
+                                                add[0]));
 
             let duration = Duration::from_millis(resolution);
             let (sender, receiver) = mpsc::channel();
@@ -107,20 +121,21 @@ pub struct PanicWatcher {
 
 impl PanicWatcher {
     pub fn new() -> PanicWatcher {
-        PanicWatcher{name: "eve/panic!".to_string()}
+        PanicWatcher { name: "eve/panic!".to_string() }
     }
 }
 
 impl Watcher for PanicWatcher {
-    fn get_name(& self) -> String {
-        self.name.clone()
-    }
+    fn get_name(&self) -> String { self.name.clone() }
     fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
     }
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner: &mut Interner, diff: WatchDiff) {
         for add in diff.adds {
-            println!("PANIC! {:?}", add.iter().map(|v| interner.get_value(*v).print()).collect::<Vec<String>>());
+            println!("PANIC! {:?}",
+                     add.iter()
+                        .map(|v| interner.get_value(*v).print())
+                        .collect::<Vec<String>>());
             panic!("Everything is probably bad.");
         }
     }

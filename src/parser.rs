@@ -1,14 +1,15 @@
-use compiler::{Node, OutputType};
-use std::str::FromStr;
+
 use combinators::*;
-use error::{ParseError};
+use compiler::{Node, OutputType};
+use error::ParseError;
+use std::str::FromStr;
 
 //--------------------------------------------------------------------
 // Constants
 //--------------------------------------------------------------------
 
-const BREAK_CHARS:&'static str = "#\\.,()[]{}:=\"|; \r\n\t";
-const BREAK_CHARS_AND_NUMBERS:&'static str = "012345679#\\.,()[]{}:=\"|; \r\n\t";
+const BREAK_CHARS: &'static str = "#\\.,()[]{}:=\"|; \r\n\t";
+const BREAK_CHARS_AND_NUMBERS: &'static str = "012345679#\\.,()[]{}:=\"|; \r\n\t";
 
 //--------------------------------------------------------------------
 // Identifiers and variables

@@ -6,17 +6,19 @@
 extern crate test;
 extern crate eve;
 
-use eve::indexes::*;
 use self::test::Bencher;
+use eve::indexes::*;
 use std::num::Wrapping;
 
-fn rand(rseed:u32) -> u32 {
-    return ((Wrapping(rseed) * Wrapping(1103515245) + Wrapping(12345)) & Wrapping(0x7fffffff)).0;
+fn rand(rseed: u32) -> u32 {
+    return ((Wrapping(rseed) * Wrapping(1103515245) +
+                 Wrapping(12345)) & Wrapping(0x7fffffff))
+           .0;
 }
 
 
 #[bench]
-fn hash_write(b:&mut Bencher) {
+fn hash_write(b: &mut Bencher) {
     let mut index = HashIndex::new();
     let mut seed = 0;
     // for ix in 0..10_000_000 {
@@ -45,7 +47,7 @@ fn hash_write(b:&mut Bencher) {
 }
 
 #[bench]
-fn hash_write_200_000(b:&mut Bencher) {
+fn hash_write_200_000(b: &mut Bencher) {
     let mut seed = 0;
     b.iter(|| {
         let mut index = HashIndex::new();
@@ -63,7 +65,7 @@ fn hash_write_200_000(b:&mut Bencher) {
 }
 
 #[bench]
-fn hash_read(b:&mut Bencher) {
+fn hash_read(b: &mut Bencher) {
     let mut index = HashIndex::new();
     let mut seed = 0;
     for _ in 0..100_000 {

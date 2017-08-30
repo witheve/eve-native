@@ -1,8 +1,8 @@
 #[macro_use]
 extern crate eve;
 
-use eve::ops::{Program, CodeTransaction};
-use eve::compiler::{parse_string};
+use eve::compiler::parse_string;
+use eve::ops::{CodeTransaction, Program};
 
 //--------------------------------------------------------------------
 // math
