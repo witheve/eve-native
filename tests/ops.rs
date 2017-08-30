@@ -1,7 +1,7 @@
 extern crate eve;
 
-use eve::ops::*;
 use eve::indexes::{DistinctIter, get_delta};
+use eve::ops::*;
 
 #[test]
 fn test_check_bits() {
@@ -18,7 +18,9 @@ fn test_set_bit() {
     assert_eq!(45, solved);
 }
 
-fn check_output_rounds(existing: Vec<(u32, i32)>, neue_rounds: Vec<i32>, expected: Vec<(u32, i32)>) {
+fn check_output_rounds(existing: Vec<(u32, i32)>,
+                       neue_rounds: Vec<i32>,
+                       expected: Vec<(u32, i32)>) {
     let mut holder = OutputRounds::new();
     let mut active_rounds = vec![];
     let mut total = 0;
@@ -38,10 +40,20 @@ fn check_output_rounds(existing: Vec<(u32, i32)>, neue_rounds: Vec<i32>, expecte
 
 #[test]
 fn round_holder_compute_output_rounds() {
-    check_output_rounds(vec![(3,1), (5,1)], vec![1,-1,0,0,1,0,-1], vec![(4,1), (5,1), (6,-2)]);
-    check_output_rounds(vec![(3,1), (5,1)], vec![1,-1,0,1,0,0,-1], vec![(3,1), (5,1), (6,-2)]);
-    check_output_rounds(vec![(3,1), (5,1)], vec![1,-1,0,0], vec![]);
-    check_output_rounds(vec![(3,1), (5,1)], vec![1,0,0,0,0,0,-1], vec![(3,1), (5,1), (6,-2)]);
-    check_output_rounds(vec![(0,1), (6,-1)], vec![1,0,0,0,0,0,-1], vec![(0,1), (6,-1)]);
-    check_output_rounds(vec![(4,-1)], vec![0,0,0,1,-1], vec![]);
+    check_output_rounds(vec![(3, 1), (5, 1)],
+                        vec![1, -1, 0, 0, 1, 0, -1],
+                        vec![(4, 1), (5, 1), (6, -2)]);
+    check_output_rounds(vec![(3, 1), (5, 1)],
+                        vec![1, -1, 0, 1, 0, 0, -1],
+                        vec![(3, 1), (5, 1), (6, -2)]);
+    check_output_rounds(vec![(3, 1), (5, 1)],
+                        vec![1, -1, 0, 0],
+                        vec![]);
+    check_output_rounds(vec![(3, 1), (5, 1)],
+                        vec![1, 0, 0, 0, 0, 0, -1],
+                        vec![(3, 1), (5, 1), (6, -2)]);
+    check_output_rounds(vec![(0, 1), (6, -1)],
+                        vec![1, 0, 0, 0, 0, 0, -1],
+                        vec![(0, 1), (6, -1)]);
+    check_output_rounds(vec![(4, -1)], vec![0, 0, 0, 1, -1], vec![]);
 }

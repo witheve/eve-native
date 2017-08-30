@@ -3,18 +3,22 @@
 extern crate eve;
 extern crate test;
 
-use eve::ops::{Program, EstimateIterPool, Internable, CodeTransaction, Transaction, RawChange};
-use eve::compiler::{parse_file};
+use eve::compiler::parse_file;
+use eve::ops::{CodeTransaction, EstimateIterPool, Internable,
+               Program, RawChange, Transaction};
 use test::Bencher;
 
 
-fn make_program(paths:Vec<&str>) -> Program {
+fn make_program(paths: Vec<&str>) -> Program {
     let mut program = Program::new();
     let mut iter_pool = EstimateIterPool::new();
 
     let mut blocks = vec![];
     for path in paths {
-        blocks.extend(parse_file(&mut program.state.interner, &path, false, false));
+        blocks.extend(parse_file(&mut program.state.interner,
+                                 &path,
+                                 false,
+                                 false));
     }
 
     let mut txn = CodeTransaction::new();
@@ -24,7 +28,8 @@ fn make_program(paths:Vec<&str>) -> Program {
 }
 
 fn file_bench(b: &mut Bencher, path: &str) {
-    let mut program = make_program(vec!["libraries/", "benches/lib.eve", path]);
+    let mut program =
+        make_program(vec!["libraries/", "benches/lib.eve", path]);
     let mut iter_pool = EstimateIterPool::new();
     let mut persistence_channel = None;
     let mut ix = 1;
@@ -43,7 +48,11 @@ fn file_bench(b: &mut Bencher, path: &str) {
 }
 
 #[bench]
-pub fn base_balls(b: &mut Bencher) { file_bench(b, "benches/balls.eve"); }
+pub fn base_balls(b: &mut Bencher) {
+    file_bench(b, "benches/balls.eve");
+}
 
 #[bench]
-pub fn base_infini_flappy(b: &mut Bencher) { file_bench(b, "benches/infini-flappy.eve"); }
+pub fn base_infini_flappy(b: &mut Bencher) {
+    file_bench(b, "benches/infini-flappy.eve");
+}

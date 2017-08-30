@@ -1,4 +1,4 @@
-use super::compiler::{OutputType, Node};
+use super::compiler::{Node, OutputType};
 use super::error::*;
 
 //--------------------------------------------------------------------
@@ -181,8 +181,10 @@ macro_rules! many_n (
             items
         });
 );
-#[macro_export] macro_rules! many (($state:ident, $func:ident) => ( many_n!($state, $func); ); );
-#[macro_export] macro_rules! many_1 (
+#[macro_export]
+macro_rules! many (($state:ident, $func:ident) => ( many_n!($state, $func); ); );
+#[macro_export]
+macro_rules! many_1 (
     ($state:ident, $func:ident => $err:ident) => ( many_n!($state, 1, $err, $func); );
     ($state:ident, $func:ident) => ( many_n!($state, 1, $func); );
 );
@@ -343,7 +345,7 @@ pub struct Span {
 
 impl Span {
     pub fn get<'a>(&self, source: &'a str) -> &'a str {
-        &source[self.start.pos+1..self.stop.pos+1]
+        &source[self.start.pos + 1..self.stop.pos + 1]
     }
 
     pub fn single_line(&self) -> bool {
@@ -351,7 +353,18 @@ impl Span {
     }
 }
 
-pub const EMPTY_SPAN:Span = Span { start: Pos {line:0, ch:0, pos:0}, stop: Pos {line:0, ch:0, pos:0} };
+pub const EMPTY_SPAN: Span = Span {
+    start: Pos {
+        line: 0,
+        ch: 0,
+        pos: 0,
+    },
+    stop: Pos {
+        line: 0,
+        ch: 0,
+        pos: 0,
+    },
+};
 
 //--------------------------------------------------------------------
 // Parse State
@@ -378,21 +391,40 @@ pub struct ParseState<'a> {
 }
 
 impl<'a> ParseState<'a> {
-    pub fn new(input:&str) -> ParseState {
-        ParseState { input, stack:vec![], line:0, ch:0, pos:0, output_type: OutputType::Lookup, ignore_space: false }
+    pub fn new(input: &str) -> ParseState {
+        ParseState {
+            input,
+            stack: vec![],
+            line: 0,
+            ch: 0,
+            pos: 0,
+            output_type: OutputType::Lookup,
+            ignore_space: false,
+        }
     }
 
-    pub fn capture(&self, start:usize) -> &'a str {
+    pub fn capture(&self, start: usize) -> &'a str {
         &self.input[start..self.pos]
     }
 
-    pub fn mark(&mut self, frame:&'a str) {
-        self.stack.push((frame, self.line, self.ch, self.pos, self.ignore_space));
+    pub fn mark(&mut self, frame: &'a str) {
+        self.stack.push((frame,
+                         self.line,
+                         self.ch,
+                         self.pos,
+                         self.ignore_space));
     }
 
     pub fn wrap_pos(&self, node: Node<'a>) -> Node<'a> {
         let &(_, line, ch, pos, _) = self.stack.last().unwrap();
-        let span = Span { start: Pos {line, ch, pos}, stop: Pos {line:self.line, ch:self.ch, pos:self.pos}};
+        let span = Span {
+            start: Pos { line, ch, pos },
+            stop: Pos {
+                line: self.line,
+                ch: self.ch,
+                pos: self.pos,
+            },
+        };
         Node::Pos(span, Box::new(node))
     }
 
@@ -402,14 +434,15 @@ impl<'a> ParseState<'a> {
     }
 
     pub fn backtrack(&mut self) {
-        let (_, line, ch, pos, ignore_space) = self.stack.pop().unwrap();
+        let (_, line, ch, pos, ignore_space) =
+            self.stack.pop().unwrap();
         self.ignore_space = ignore_space;
         self.line = line;
         self.ch = ch;
         self.pos = pos;
     }
 
-    pub fn ignore_space(&mut self, ignore:bool) {
+    pub fn ignore_space(&mut self, ignore: bool) {
         self.ignore_space = ignore;
     }
 
@@ -423,17 +456,35 @@ impl<'a> ParseState<'a> {
                         self.consume_line();
                         self.eat_space();
                         return;
-                    },
-                    _ => { self.ch -= 1; self.pos -= 1; break; }
+                    }
+                    _ => {
+                        self.ch -= 1;
+                        self.pos -= 1;
+                        break;
+                    }
                 }
             } else {
                 match c {
                     // eat comments
-                    '/' => { self.ch += 1; self.pos += 1; maybe_comment = true; }
-                    ' ' | '\t' | ',' => { self.ch += 1; self.pos += 1; }
-                    '\n' => { self.line += 1; self.ch = 0; self.pos += 1; }
-                    '\r' => { self.ch += 1; self.pos += 1; }
-                    _ => { break }
+                    '/' => {
+                        self.ch += 1;
+                        self.pos += 1;
+                        maybe_comment = true;
+                    }
+                    ' ' | '\t' | ',' => {
+                        self.ch += 1;
+                        self.pos += 1;
+                    }
+                    '\n' => {
+                        self.line += 1;
+                        self.ch = 0;
+                        self.pos += 1;
+                    }
+                    '\r' => {
+                        self.ch += 1;
+                        self.pos += 1;
+                    }
+                    _ => break,
                 }
             }
         }
@@ -443,19 +494,35 @@ impl<'a> ParseState<'a> {
         let remaining = &self.input[self.pos..];
         for c in remaining.chars() {
             match c {
-                '\n' => { self.line += 1; self.ch = 0; self.pos += 1; break }
-                _ => { self.ch += 1; self.pos += c.len_utf8(); }
+                '\n' => {
+                    self.line += 1;
+                    self.ch = 0;
+                    self.pos += 1;
+                    break;
+                }
+                _ => {
+                    self.ch += 1;
+                    self.pos += c.len_utf8();
+                }
             }
         }
     }
 
-    pub fn consume_except(&mut self, chars:&str) -> Result<&'a str, ()> {
-        if self.ignore_space { self.eat_space(); }
+    pub fn consume_except(&mut self,
+                          chars: &str)
+        -> Result<&'a str, ()> {
+        if self.ignore_space {
+            self.eat_space();
+        }
         let remaining = &self.input[self.pos..];
-        if remaining.len() == 0 { return Err(()); }
+        if remaining.len() == 0 {
+            return Err(());
+        }
         let start = self.pos;
         for c in remaining.chars() {
-            if chars.find(c).is_some() { break; }
+            if chars.find(c).is_some() {
+                break;
+            }
             self.ch += 1;
             self.pos += c.len_utf8();
         }
@@ -466,10 +533,14 @@ impl<'a> ParseState<'a> {
         }
     }
 
-    pub fn one_except(&mut self, chars:&str) -> Result<&'a str, ()> {
-        if self.ignore_space { self.eat_space(); }
+    pub fn one_except(&mut self, chars: &str) -> Result<&'a str, ()> {
+        if self.ignore_space {
+            self.eat_space();
+        }
         let remaining = &self.input[self.pos..];
-        if remaining.len() == 0 { return Err(()); }
+        if remaining.len() == 0 {
+            return Err(());
+        }
         let start = self.pos;
         let c = remaining.chars().next().unwrap();
         if chars.find(c).is_some() {
@@ -481,13 +552,21 @@ impl<'a> ParseState<'a> {
         }
     }
 
-    pub fn consume_chars(&mut self, chars:&str) -> Result<&'a str, ()> {
-        if self.ignore_space { self.eat_space(); }
+    pub fn consume_chars(&mut self,
+                         chars: &str)
+        -> Result<&'a str, ()> {
+        if self.ignore_space {
+            self.eat_space();
+        }
         let remaining = &self.input[self.pos..];
-        if remaining.len() == 0 { return Err(()); }
+        if remaining.len() == 0 {
+            return Err(());
+        }
         let start = self.pos;
         for c in remaining.chars() {
-            if chars.find(c) == None { break; }
+            if chars.find(c) == None {
+                break;
+            }
             self.ch += 1;
             self.pos += c.len_utf8();
         }
@@ -498,13 +577,21 @@ impl<'a> ParseState<'a> {
         }
     }
 
-    pub fn consume_while(&mut self, pred:fn(char) -> bool) -> Result<&'a str, ()> {
-        if self.ignore_space { self.eat_space(); }
+    pub fn consume_while(&mut self,
+                         pred: fn(char) -> bool)
+        -> Result<&'a str, ()> {
+        if self.ignore_space {
+            self.eat_space();
+        }
         let remaining = &self.input[self.pos..];
-        if remaining.len() == 0 { return Err(()); }
+        if remaining.len() == 0 {
+            return Err(());
+        }
         let start = self.pos;
         for c in remaining.chars() {
-            if !pred(c) { break; }
+            if !pred(c) {
+                break;
+            }
             if c == '\n' {
                 self.ch = 0;
                 self.line += 1;
@@ -520,10 +607,16 @@ impl<'a> ParseState<'a> {
         }
     }
 
-    pub fn consume<'b>(&mut self, token:&'b str) -> Result<&'b str, ()> {
-        if self.ignore_space { self.eat_space(); }
+    pub fn consume<'b>(&mut self,
+                       token: &'b str)
+        -> Result<&'b str, ()> {
+        if self.ignore_space {
+            self.eat_space();
+        }
         let remaining = &self.input[self.pos..];
-        if remaining.len() == 0 { return Err(()); }
+        if remaining.len() == 0 {
+            return Err(());
+        }
         let token_len = token.len();
         if remaining.len() < token_len {
             return Err(());
@@ -538,8 +631,13 @@ impl<'a> ParseState<'a> {
         Ok(token)
     }
 
-    pub fn consume_until<T>(&mut self, pred:fn(&mut ParseState<'a>) -> ParseResult<'a, T>) -> (Result<&'a str, ()>, ParseResult<'a, T>) {
-        if self.ignore_space { self.eat_space(); }
+    pub fn consume_until<T>(
+        &mut self,
+        pred: fn(&mut ParseState<'a>) -> ParseResult<'a, T>)
+        -> (Result<&'a str, ()>, ParseResult<'a, T>) {
+        if self.ignore_space {
+            self.eat_space();
+        }
         let len = self.input.len();
         let start = self.pos;
         while self.pos < len {
@@ -547,8 +645,14 @@ impl<'a> ParseState<'a> {
                 let pre_check_pos = self.pos;
                 let result = pred(self);
                 match result {
-                    ParseResult::Ok(..) => return (Ok(&self.input[start..pre_check_pos]), result),
-                    ParseResult::Error(..) => return (Ok(&self.input[start..pre_check_pos]), result),
+                    ParseResult::Ok(..) => {
+                        return (Ok(&self.input[start..pre_check_pos]),
+                                result)
+                    }
+                    ParseResult::Error(..) => {
+                        return (Ok(&self.input[start..pre_check_pos]),
+                                result)
+                    }
                     _ => {}
                 }
                 if pre_check_pos == self.pos {
@@ -564,27 +668,44 @@ impl<'a> ParseState<'a> {
                 break;
             }
         }
-        (Ok(&self.input[start..self.pos]), ParseResult::Fail(MatchType::ConsumeUntil))
+        (Ok(&self.input[start..self.pos]),
+         ParseResult::Fail(MatchType::ConsumeUntil))
     }
 
-    pub fn fail<'b, T>(&mut self, with:MatchType<'b>) -> ParseResult<'b, T> {
+    pub fn fail<'b, T>(&mut self,
+                       with: MatchType<'b>)
+        -> ParseResult<'b, T> {
         self.backtrack();
         ParseResult::Fail(with)
     }
 
-    pub fn error<'b, T>(&mut self, with:ParseError) -> ParseResult<'b, T> {
+    pub fn error<'b, T>(&mut self,
+                        with: ParseError)
+        -> ParseResult<'b, T> {
         let err = self.make_error(with);
         self.pop();
         err
     }
 
-    pub fn make_error<'b, T>(&self, with:ParseError) -> ParseResult<'b, T> {
+    pub fn make_error<'b, T>(&self,
+                             with: ParseError)
+        -> ParseResult<'b, T> {
         ParseResult::Error(self.freeze(), with)
     }
 
     pub fn freeze(&self) -> FrozenParseState {
-        let frozen_stack = self.stack.iter().map(|&(a,b,c,d,e)| (a.to_string(), b, c, d, e)).collect();
-        FrozenParseState { pos:self.pos, ignore_space:self.ignore_space, stack: frozen_stack, line:self.line, ch:self.ch }
+        let frozen_stack =
+            self.stack
+                .iter()
+                .map(|&(a, b, c, d, e)| (a.to_string(), b, c, d, e))
+                .collect();
+        FrozenParseState {
+            pos: self.pos,
+            ignore_space: self.ignore_space,
+            stack: frozen_stack,
+            line: self.line,
+            ch: self.ch,
+        }
     }
 }
 
@@ -593,16 +714,10 @@ impl<'a> ParseState<'a> {
 //--------------------------------------------------------------------
 
 #[inline]
-pub fn is_alphabetic(chr:char) -> bool {
-    chr.is_alphabetic()
-}
+pub fn is_alphabetic(chr: char) -> bool { chr.is_alphabetic() }
 
 #[inline]
-pub fn is_digit(chr:char) -> bool {
-    chr.is_numeric()
-}
+pub fn is_digit(chr: char) -> bool { chr.is_numeric() }
 
 #[inline]
-pub fn is_alphanumeric(chr:char) -> bool {
-    chr.is_alphanumeric()
-}
+pub fn is_alphanumeric(chr: char) -> bool { chr.is_alphanumeric() }

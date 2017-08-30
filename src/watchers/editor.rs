@@ -1,40 +1,60 @@
 extern crate ws;
-use self::ws::{Sender as WSSender, Message};
+use self::ws::{Message, Sender as WSSender};
 
 extern crate serde_json;
 
+use super::super::indexes::WatchDiff;
+use super::super::ops::{Internable, Interner, MetaMessage,
+                        ProgramRunner, RawChange, RunLoop,
+                        RunLoopMessage};
 use rand::{self, Rng};
+use std::collections::HashSet;
 use std::ops::Deref;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
-use std::collections::HashSet;
-use super::super::indexes::{WatchDiff};
-use super::super::ops::{Internable, Interner, RawChange, RunLoop, RunLoopMessage, MetaMessage, ProgramRunner};
 
 use super::Watcher;
-use super::system::{SystemTimerWatcher, PanicWatcher};
-use super::compiler::{CompilerWatcher};
-use super::textcompiler::{RawTextCompilerWatcher};
-use super::console::{ConsoleWatcher};
-use super::remote::{Router, RemoteWatcher};
-use super::websocket::{WebsocketClientWatcher};
+use super::compiler::CompilerWatcher;
+use super::console::ConsoleWatcher;
+use super::remote::{RemoteWatcher, Router};
+use super::system::{PanicWatcher, SystemTimerWatcher};
+use super::textcompiler::RawTextCompilerWatcher;
+use super::websocket::WebsocketClientWatcher;
 
-fn to_s(string:&str) -> Internable {
+fn to_s(string: &str) -> Internable {
     return Internable::String(string.to_owned());
 }
 
 fn make_change(e: Internable, a: &str, v: Internable) -> RawChange {
-    RawChange{e, a: Internable::String(a.to_owned()), v, n: Internable::String("editor".to_owned()), count: 1}
+    RawChange {
+        e,
+        a: Internable::String(a.to_owned()),
+        v,
+        n: Internable::String("editor".to_owned()),
+        count: 1,
+    }
 }
 
 fn make_change_str(e: Internable, a: &str, v: &str) -> RawChange {
-    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::String(v.to_owned()), n: Internable::String("editor".to_owned()), count: 1}
+    RawChange {
+        e,
+        a: Internable::String(a.to_owned()),
+        v: Internable::String(v.to_owned()),
+        n: Internable::String("editor".to_owned()),
+        count: 1,
+    }
 }
 
 fn make_change_num(e: Internable, a: &str, v: f32) -> RawChange {
-    RawChange{e, a: Internable::String(a.to_owned()), v: Internable::from_number(v), n: Internable::String("editor".to_owned()), count: 1}
+    RawChange {
+        e,
+        a: Internable::String(a.to_owned()),
+        v: Internable::from_number(v),
+        n: Internable::String("editor".to_owned()),
+        count: 1,
+    }
 }
 
 
@@ -54,14 +74,21 @@ pub struct EditorWatcher {
 }
 
 impl EditorWatcher {
-    pub fn new(client_runner:&mut ProgramRunner, router:Arc<Mutex<Router>>, ws_out:WSSender, libraries_path:Option<&str>, programs_path:Option<&str>) -> EditorWatcher {
+    pub fn new(client_runner: &mut ProgramRunner,
+               router: Arc<Mutex<Router>>,
+               ws_out: WSSender,
+               libraries_path: Option<&str>,
+               programs_path: Option<&str>)
+        -> EditorWatcher {
         let client_name = client_runner.program.name.to_owned();
         let client_out = client_runner.program.outgoing.clone();
 
         let editor_name = format!("{}-editor", &client_name);
         let mut editor_runner = ProgramRunner::new(&editor_name);
         let editor_out = editor_runner.program.outgoing.clone();
-        router.lock().unwrap().register(&editor_name, editor_out.clone());
+        router.lock()
+              .unwrap()
+              .register(&editor_name, editor_out.clone());
 
         // @NOTE: Compiler watcher dumps into client!
         editor_runner.program.attach(Box::new(CompilerWatcher::new(client_out.clone(), true)));
@@ -69,24 +96,35 @@ impl EditorWatcher {
         editor_runner.program.attach(Box::new(SystemTimerWatcher::new(editor_out.clone())));
         editor_runner.program.attach(Box::new(RawTextCompilerWatcher::new(editor_out.clone())));
         editor_runner.program.attach(Box::new(WebsocketClientWatcher::new(ws_out.clone(), &editor_name)));
-        editor_runner.program.attach(Box::new(ConsoleWatcher::new()));
-        editor_runner.program.attach(Box::new(PanicWatcher::new()));
+        editor_runner.program
+                     .attach(Box::new(ConsoleWatcher::new()));
+        editor_runner.program
+                     .attach(Box::new(PanicWatcher::new()));
         editor_runner.program.attach(Box::new(RemoteWatcher::new(&editor_name, &router.lock().unwrap().deref())));
         editor_runner.program.attach(Box::new(EditorHostWatcher::new(client_out.clone())));
 
         let text = serde_json::to_string(&json!({"type": "load-bundle", "bundle": "programs/editor", "client": &editor_name})).unwrap();
-        ws_out.send(Message::Text(text)).unwrap();
+        ws_out.send(Message::Text(text))
+              .unwrap();
 
 
         if let Some(path) = libraries_path {
             editor_runner.load(path);
         }
 
-        if let Some(path) = PathBuf::from(programs_path.unwrap()).join("editor").join("server").to_str() {
+        if let Some(path) = PathBuf::from(programs_path.unwrap())
+            .join("editor")
+            .join("server")
+            .to_str()
+        {
             editor_runner.load(path);
         }
 
-        if let Some(path) = PathBuf::from(programs_path.unwrap()).join("editor").join("client").to_str() {
+        if let Some(path) = PathBuf::from(programs_path.unwrap())
+            .join("editor")
+            .join("client")
+            .to_str()
+        {
             client_runner.load(path);
         }
 
@@ -97,21 +135,35 @@ impl EditorWatcher {
             RawChange{e: editor_record, a: to_s("name"), v: to_s(&editor_name), n: to_s("editor/init"), count: 1},
         ]);
         match client_out.send(transaction) {
-            Err(_) => panic!("Something has gone horribly awry in editor initialization."),
+            Err(_) => {
+                panic!("Something has gone horribly awry in editor initialization.")
+            }
             _ => {}
         }
 
         let (outgoing_meta, incoming_meta) = mpsc::channel();
         client_runner.meta_channel = Some(outgoing_meta);
-        let meta_thread = EditorWatcher::make_meta_thread(&format!("{}-meta-receiver", editor_name), incoming_meta, editor_out.clone());
+        let meta_thread =
+            EditorWatcher::make_meta_thread(&format!("{}-meta-receiver", editor_name),
+                                            incoming_meta,
+                                            editor_out.clone());
 
-        EditorWatcher{name: "editor".to_string(),
-                      running, meta_thread, ws_out,
-                      client_name, client_out,
-                      editor_name, editor_out}
+        EditorWatcher {
+            name: "editor".to_string(),
+            running,
+            meta_thread,
+            ws_out,
+            client_name,
+            client_out,
+            editor_name,
+            editor_out,
+        }
     }
 
-    pub fn make_meta_thread(name:&str, incoming: mpsc::Receiver<MetaMessage>, outgoing: Sender<RunLoopMessage>) -> thread::JoinHandle<()> {
+    pub fn make_meta_thread(name: &str,
+                            incoming: mpsc::Receiver<MetaMessage>,
+                            outgoing: Sender<RunLoopMessage>)
+        -> thread::JoinHandle<()> {
         thread::Builder::new().name(name.to_owned()).spawn(move || {
 
             let TAG = Internable::String("tag".to_owned());
@@ -183,21 +235,20 @@ impl EditorWatcher {
 }
 
 impl Watcher for EditorWatcher {
-    fn get_name(& self) -> String {
-        self.name.clone()
-    }
+    fn get_name(&self) -> String { self.name.clone() }
     fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
     }
-    fn on_diff(&mut self, _:&mut Interner, _:WatchDiff) {
-    }
+    fn on_diff(&mut self, _: &mut Interner, _: WatchDiff) {}
 }
 
 impl Drop for EditorWatcher {
     fn drop(&mut self) {
         self.running.close();
         let text = serde_json::to_string(&json!({"type": "unload-bundle", "bundle": "programs/editor", "client": &self.editor_name})).unwrap();
-        self.ws_out.send(Message::Text(text)).unwrap();
+        self.ws_out
+            .send(Message::Text(text))
+            .unwrap();
     }
 }
 
@@ -208,40 +259,48 @@ impl Drop for EditorWatcher {
 
 pub struct EditorHostWatcher {
     name: String,
-    client_out: Sender<RunLoopMessage>
+    client_out: Sender<RunLoopMessage>,
 }
 
 impl EditorHostWatcher {
-    pub fn new(client_out:Sender<RunLoopMessage>) -> EditorHostWatcher {
-        EditorHostWatcher{name: "editor/host".to_owned(), client_out}
+    pub fn new(client_out: Sender<RunLoopMessage>)
+        -> EditorHostWatcher {
+        EditorHostWatcher {
+            name: "editor/host".to_owned(),
+            client_out,
+        }
     }
 }
 
 impl Watcher for EditorHostWatcher {
-    fn get_name(&self) -> String {
-        self.name.clone()
-    }
+    fn get_name(&self) -> String { self.name.clone() }
     fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
     }
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
+    fn on_diff(&mut self, interner: &mut Interner, diff: WatchDiff) {
         for remove in diff.removes {
-            if let &Internable::String(ref kind) = interner.get_value(remove[0]) {
+            if let &Internable::String(ref kind) =
+                interner.get_value(remove[0])
+            {
                 match (kind.as_ref(), &remove[1..]) {
                     ("pause", &[]) => {
-                        self.client_out.send(RunLoopMessage::Resume);
+                        self.client_out
+                            .send(RunLoopMessage::Resume);
                     }
-                    _ => unimplemented!()
+                    _ => unimplemented!(),
                 }
             }
         }
         for add in diff.adds {
-            if let &Internable::String(ref kind) = interner.get_value(add[0]) {
+            if let &Internable::String(ref kind) =
+                interner.get_value(add[0])
+            {
                 match (kind.as_ref(), &add[1..]) {
                     ("pause", &[]) => {
-                        self.client_out.send(RunLoopMessage::Pause);
+                        self.client_out
+                            .send(RunLoopMessage::Pause);
                     }
-                    _ => unimplemented!()
+                    _ => unimplemented!(),
                 }
             }
         }

@@ -1,16 +1,16 @@
-extern {}
+extern "C" {}
 
 extern crate eve;
 extern crate time;
 
 extern crate clap;
-use clap::{Arg, App};
+use clap::{App, Arg};
 
+use eve::ops::{DebugMode, Persister, ProgramRunner};
 use eve::paths::EvePaths;
-use eve::ops::{DebugMode, ProgramRunner, Persister};
-use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
+use eve::watchers::system::{PanicWatcher, SystemTimerWatcher};
 
 //-------------------------------------------------------------------------
 // Main
@@ -49,26 +49,48 @@ fn main() {
 
     let clean = matches.is_present("clean");
 
-    let eve_paths = EvePaths::new(clean,
-                                  matches.values_of("EVE_FILES").map_or(vec![], |files| files.collect()),
-                                  matches.value_of("server-file").map_or(vec![], |file| vec![file]),
-                                  matches.value_of("persist"),
-                                  matches.value_of("libraries-path"),
-                                  matches.value_of("programs-path"));
+    let eve_paths = EvePaths::new(
+        clean,
+        matches.values_of("EVE_FILES").map_or(
+            vec![],
+            |files| {
+                files.collect()
+            },
+        ),
+        matches.value_of("server-file").map_or(
+            vec![],
+            |file| {
+                vec![file]
+            },
+        ),
+        matches.value_of("persist"),
+        matches.value_of("libraries-path"),
+        matches.value_of("programs-path"),
+    );
 
     let mut runner = ProgramRunner::new("main");
-    matches.value_of("debug").map(|mode_name| runner.debug(match mode_name {
-        "compile" => DebugMode::Compile,
-        _ => panic!("Unknown debug mode '{:?}'.", mode_name)
-    }));
+    matches.value_of("debug")
+           .map(|mode_name| {
+        runner.debug(match mode_name {
+                         "compile" => DebugMode::Compile,
+                         _ => {
+                             panic!("Unknown debug mode '{:?}'.",
+                                    mode_name)
+                         }
+                     })
+    });
 
     let outgoing = runner.program.outgoing.clone();
     if !clean {
         runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
-        runner.program.attach(Box::new(FileWatcher::new(outgoing.clone())));
-        runner.program.attach(Box::new(ConsoleWatcher::new()));
-        runner.program.attach(Box::new(PrintDiffWatcher::new()));
-        runner.program.attach(Box::new(PanicWatcher::new()));
+        runner.program
+              .attach(Box::new(FileWatcher::new(outgoing.clone())));
+        runner.program
+              .attach(Box::new(ConsoleWatcher::new()));
+        runner.program
+              .attach(Box::new(PrintDiffWatcher::new()));
+        runner.program
+              .attach(Box::new(PanicWatcher::new()));
     }
 
     if let Some(persist_file) = eve_paths.persist() {

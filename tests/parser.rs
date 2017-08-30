@@ -1,8 +1,8 @@
 extern crate eve;
-use eve::ops::{Program};
-use eve::compiler::*;
-use eve::parser::*;
 use eve::combinators::*;
+use eve::compiler::*;
+use eve::ops::Program;
+use eve::parser::*;
 
 //--------------------------------------------------------------------
 // Helper macros

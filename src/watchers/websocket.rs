@@ -2,11 +2,11 @@ extern crate serde_json;
 
 
 extern crate ws;
-use self::ws::{Sender, Message};
-use super::super::indexes::{WatchDiff};
+use self::ws::{Message, Sender};
+use super::super::indexes::WatchDiff;
 use super::super::ops::{Interner, JSONInternable};
 
-use super::{Watcher};
+use super::Watcher;
 
 //-------------------------------------------------------------------------
 // Websocket client watcher
@@ -19,28 +19,47 @@ pub struct WebsocketClientWatcher {
 }
 
 impl WebsocketClientWatcher {
-    pub fn new(outgoing: Sender, client_name: &str) -> WebsocketClientWatcher {
+    pub fn new(outgoing: Sender,
+               client_name: &str)
+        -> WebsocketClientWatcher {
         let text = serde_json::to_string(&json!({"type": "init", "client": client_name})).unwrap();
-        outgoing.send(Message::Text(text)).unwrap();
-        WebsocketClientWatcher { name: "client/websocket".to_string(), outgoing, client_name: client_name.to_owned() }
+        outgoing.send(Message::Text(text))
+                .unwrap();
+        WebsocketClientWatcher {
+            name: "client/websocket".to_string(),
+            outgoing,
+            client_name: client_name.to_owned(),
+        }
     }
 }
 
 impl Watcher for WebsocketClientWatcher {
-    fn get_name(& self) -> String {
-        self.name.clone()
-    }
+    fn get_name(&self) -> String { self.name.clone() }
     fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
     }
-    fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        let adds:Vec<Vec<JSONInternable>> = diff.adds.iter().map(|row| {
-            row.iter().map(|v| interner.get_value(*v).into()).collect()
-        }).collect();
-        let removes:Vec<Vec<JSONInternable>> = diff.removes.iter().map(|row| {
-            row.iter().map(|v| interner.get_value(*v).into()).collect()
-        }).collect();
+    fn on_diff(&mut self, interner: &mut Interner, diff: WatchDiff) {
+        let adds: Vec<Vec<JSONInternable>> =
+            diff.adds
+                .iter()
+                .map(|row| {
+                row.iter()
+                   .map(|v| interner.get_value(*v).into())
+                   .collect()
+            })
+                .collect();
+        let removes: Vec<Vec<JSONInternable>> =
+            diff.removes
+                .iter()
+                .map(|row| {
+                row.iter()
+                   .map(|v| interner.get_value(*v).into())
+                   .collect()
+            })
+                .collect();
         let text = serde_json::to_string(&json!({"type": "diff", "adds": adds, "removes": removes, "client": self.client_name})).unwrap();
-        self.outgoing.send(Message::Text(text)).unwrap();
+        self.outgoing
+            .send(Message::Text(text))
+            .unwrap();
     }
 }
