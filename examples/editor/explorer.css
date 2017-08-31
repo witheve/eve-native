@@ -15,6 +15,7 @@
 .editor-explorer-result { margin: 0 5px; margin-bottom: 10px; background: white; border-radius: 4px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15); }
 .editor-explorer-result > .facet-record-button { flex: 1; }
 .editor-explorer-result > .facet-record { background: transparent; }
+.editor-explorer-result > .facet-record:empty { padding: 0; }
 
 /* Cards */
 
