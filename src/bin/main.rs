@@ -12,6 +12,10 @@ use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
 
+extern crate term_painter;
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
+
 //-------------------------------------------------------------------------
 // Main
 //-------------------------------------------------------------------------
@@ -75,10 +79,16 @@ fn main() {
         let mut persister = Persister::new(persist_file);
         persister.load(persist_file);
         runner.persist(&mut persister);
+    } else {
+        println!("{} No persistant file found.",
+                 BrightBlue.paint("Note:"));
     }
 
     if let &Some(path) = &eve_paths.libraries() {
         runner.load(path);
+    } else {
+        println!("{} No library files provided.",
+                 BrightBlue.paint("Note:"));
     }
     for file in eve_paths.files.iter() {
         runner.load(file);

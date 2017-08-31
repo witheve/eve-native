@@ -116,13 +116,33 @@ impl ClientHandler {
 
         thread::Builder::new().name("client file watcher".to_owned()).spawn(move || {
             let (outgoing, incoming) = mpsc::channel();
-            let mut watcher:RecommendedWatcher = Watcher::new(outgoing, Duration::from_secs(1)).unwrap();
+            let mut watcher:RecommendedWatcher = match Watcher::new(outgoing, Duration::from_secs(1)) {
+                Ok(w) => w,
+                Err(e) => {
+                    println!("{} Could not establish watcher due to error:\n{}", BrightRed.paint("Fatal Error:"), e);
+                    panic!();
+                }
+            };
 
             if let Some(path) = libraries {
-                watcher.watch(path, RecursiveMode::Recursive).unwrap();
+                match watcher.watch(path, RecursiveMode::Recursive) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        println!("{} Could not watch standard library source due to error:\n{}", BrightRed.paint("Error:"), e);
+                        panic!();
+                    }
+                };
+            } else {
+                println!("{} Eve standard libraries not found.", BrightYellow.paint("Warning:"));
             }
             for file in files.iter() {
-                watcher.watch(file, RecursiveMode::Recursive).unwrap();
+                match watcher.watch(file, RecursiveMode::Recursive) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        println!("{} Could not watch file {} due to error:\n{}", BrightRed.paint("Error:"), file, e);
+                        panic!();
+                    }
+                }
             }
 
             loop {
@@ -131,7 +151,7 @@ impl ClientHandler {
                     Ok(event) => {
                         match event {
                             DebouncedEvent::Error(err, ..) => {
-                                println!("Closing client file watcher due to unforeseen error: {:?}", err);
+                                println!("{} {:?}! Closing client file watcher...", BrightRed.paint("Unforeseen Error:"), err);
                                 break;
                             },
                             DebouncedEvent::NoticeRemove(path) |
