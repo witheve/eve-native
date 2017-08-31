@@ -3142,6 +3142,18 @@ impl PortableConstraint {
                 changes.push(RawChange::new(id.clone(), s("tag"), s("remove-entity"), s("compiler"), 1));
                 changes.push(RawChange::new(id.clone(), s("e"), eve_e, s("compiler"), 1));
             }
+            &PortableConstraint::Watch(ref name, ref args) => {
+                changes.push(RawChange::new(id.clone(), s("tag"), s("watch"), s("compiler"), 1));
+                changes.push(RawChange::new(id.clone(), s("watcher"), s(name.as_str()), s("compiler"), 1));
+                for (ix, raw_arg) in args.iter().enumerate() {
+                    let arg = raw_arg.to_eve_value(block, changes);
+                    let eve_ix = n((ix + 1) as f32);
+                    let arg_id = gen_id(vec![&eve_ix, &arg]).unwrap();
+                    changes.push(RawChange::new(arg_id.clone(), s("value"), arg, s("compiler"), 1));
+                    changes.push(RawChange::new(arg_id.clone(), s("index"), eve_ix, s("compiler"), 1));
+                    changes.push(RawChange::new(id.clone(), s("params"), arg_id, s("compiler"), 1));
+                }
+            },
             &PortableConstraint::Function(ref name, ref output, ref args) => {
                 let eve_output = output.to_eve_value(block, changes);
                 changes.push(RawChange::new(id.clone(), s("tag"), s("function"), s("compiler"), 1));

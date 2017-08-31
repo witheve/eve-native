@@ -750,6 +750,13 @@ Updates should be in the highest level.
       update.level += block.max-register-level + 1
     end
 
+Watches should be too.
+
+    search
+      w = [#watch block]
+    bind
+      w.level += block.max-register-level + 1
+    end
 
 Intermediate Representation (IR)
 ------------------------------------------------------
@@ -864,7 +871,7 @@ constraints that belong to that level.
       not(from.provider.tag-name = tag-name)
     bind
       sym = [#ir/symbol name:tag-name]
-      ir = [#ir/for block:to | symbol:sym tag-name:sym]
+      ir = [#ir/for block:to tag-name | symbol:sym tag-name:sym]
       chain.provider += [#provider level:0 tag-name symbol:sym ir]
     end
 
@@ -876,6 +883,20 @@ constraints that belong to that level.
       chain.provider += [#provider chain block level |
                           ir: [#ir/do chain block level]]
     end
+
+    search
+      chain = [#chain-link/optimized to:block from]
+      [#block-tag block tag-name e]
+      from.provider.tag-name = tag-name
+      ir = [#ir/do block level:1]
+    bind
+      ir.item += [#ir/let #id-lookup level:0
+                      name: [#ir/from-value value:e]
+                      value: [#ir/get
+                                symbol:from.provider.symbol
+                                attribute:[#ir/symbol name:"id"]]]
+    end
+
 
 We then put all the constraints in the appropriate container for their level, or
 if they don't have a level, in the child-container.
@@ -1018,6 +1039,17 @@ Multi-functions
           stop: [#ir/from-value value:stop]]
     end
 
+Watches
+
+    search
+      item = [#watch watcher params]
+    bind
+      item.ir +=
+        [#ir/watch item |
+          name:[#ir/from-value value:watcher]
+          arg: [#ir/from-value value:params.value index:params.index]]
+    end
+
 Updates
 
     search
@@ -1039,9 +1071,21 @@ Updates
       chain.provider += [#provider #constraint-provided #create-provider
                           create chain level block | tag-name symbol
                           ir: [#ir/do create chain level]]
-      create.ir += [#ir/let create |
+      create.ir += [#ir/let create level:-1 |
                       name:symbol
                       value: [#ir/create-struct create symbol]]
+    end
+
+    search
+      [#block-tag e tag-name]
+      create = [#real/create e level]
+      ir = [#ir/do create]
+    bind
+      ir.item += [#ir/let #id-lookup create level:0 |
+                      name: [#ir/from-value value:e]
+                      value: [#ir/get
+                                symbol:[#ir/symbol name:tag-name]
+                                attribute:[#ir/symbol name:"id"]]]
     end
 
     search
@@ -1074,11 +1118,13 @@ looking at IR nodes and constructing code strings out of them.
         if ir = [#ir/and items_js] then (ir, "({{items_js}})")
         if ir = [#ir/or items_js] then (ir, "({{items_js}})")
         if ir = [#ir/call func_js args_js] then (ir, "{{func_js}}({{args_js}})")
+        if ir = [#ir/watch name args_js] then (ir, "eve_watch({{name.js}}, [{{args_js}}]);")
         if ir = [#ir/create-struct symbol args_js] then (ir, "new {{symbol.js}}_struct({{args_js}})")
         if ir = [#ir/define-struct symbol args_js setters_js]
           then (ir, "var all_{{symbol.js}} = [];
                      function {{symbol.js}}_struct({{args_js}}) {
                         {{setters_js}}
+                        this.id = ['{{symbol.js}}', {{args_js}}].join('|');
                         all_{{symbol.js}}.push(this);
                         return this;
                      }")
@@ -1190,6 +1236,15 @@ concatenate them together.
       ir <- [args_js]
     end
 
+Like functions, we have to concatenate all the args together for watches.
+
+    search
+      ir = [#ir/watch arg]
+      args_js = gather/string-join[for:arg.index value:arg.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
+    end
+
 Structs also have args that need to be concatenated together as well as the
 setters for define-struct
 
@@ -1232,6 +1287,13 @@ the main.
       ons_js = gather/string-join[for:ir value:js separator:"\n\n" per:program]
     bind
       program <- [ons_js]
+    end
+
+    search
+      program = [#ir/program]
+      not([#ir/on js])
+    bind
+      program.ons_js += ""
     end
 
     search
@@ -1360,5 +1422,11 @@ Test
     end
 
     commit
-      [#program path:"examples/simple-bouncing.eve"]
+      [#program path:"examples/test.eve"]
+    end
+
+    search
+      [#ir/program js]
+    bind
+      [#file/write path:"dist/eve-compiled.js" contents:js]
     end
