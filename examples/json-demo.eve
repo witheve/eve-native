@@ -3,12 +3,12 @@
 ## Test Encoding
 
 commit
-  ellen = [#person name: "Ellen" age: 28.8]
-  [#person name: "Hugh" age: 30.5 wife: ellen zip: 12345]
+  rachel = [#person name: "Rachel" age: 28]
+  [#person name: "Corey" age: 30 wife: rachel zip: 95348]
 end
 
 search
-  p = [#person name: "Hugh"]
+  p = [#person name: "Corey"]
 commit
   [#json/encode record: p]
 end
@@ -16,7 +16,7 @@ end
 search
   [#json/encode json-string]
 commit
-  [#console/log text: "Encoded JSON: {{json-string}}"]
+  [#html/div text: "Encoded JSON: {{json-string}}"]
 end
 
 ## Test Decode
@@ -32,6 +32,6 @@ end
 search
   [#json/decode json-object]
 commit
-  [#console/log text: "Decoded: {{json-object}}"]
+  [#html/div text: "Decoded: {{json-object}}"]
   //[#console/log text: "Decoded a JSON: {{json-object.name}} is {{json-object.age}} years old and lives at {{json-object.zip}}"]
 end

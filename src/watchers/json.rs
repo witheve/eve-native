@@ -45,14 +45,16 @@ impl Watcher for JsonWatcher {
                         &Internable::String(ref n) => Value::String(String::from(n.clone())),
                         _ => Value::Null
                     };
-                    println!("Encoding: {:?} {:?}",a,v);
+                    println!("Encoding: {:?} {:?} {:?}",e,a,v);
                     if record_map.contains_key(&e) {
                         let record = record_map.get_mut(&e).unwrap();
                         let sub_record = record.as_object_mut().unwrap();
                         sub_record.insert(a, v);
+                        println!("Sub Record: {:?}",sub_record);
                     } else {
                         let mut new_record = Map::new();
                         new_record.insert(a, v);
+                        println!("New Record: {:?}",new_record);
                         record_map.insert(e, Value::Object(new_record));
                     }
                 },
@@ -65,11 +67,11 @@ impl Watcher for JsonWatcher {
                 _ => {},
             }
         }
-        
+        println!("Record Map: {:?}",record_map);
         if let Some(target_record) = record_map.get(&id) {
             let inner_map = target_record.as_object().unwrap();
+            println!("Inner Map: {:?}", inner_map);
             let dereferenced_target = dereference(inner_map, &record_map);
-            println!("Dereferenced Target: {:?}", dereferenced_target);
             let json = serde_json::to_string(&dereferenced_target).unwrap();
             let change_id = format!("json/encode/change|{:?}",id);
             changes.push(new_change(&change_id, "tag", Internable::from_str("json/encode/change"), "json/encode"));
@@ -88,6 +90,15 @@ fn dereference(target: &Map<String,Value>, flatmap: &Map<String,Value>) -> Map<S
     let mut dereferenced = Map::new();
     for key in target.keys() {
         let value = target.get(key).unwrap();
+        println!("DeRefVal: {:?}",value.as_str());
+        match value {
+            &Value::String(ref s) => println!("{:?}",s),
+            &Value::Number(ref n) => println!("{:?}",n),
+            x => println!("{:?}",x),
+        }
+
+
+
         match value.as_str() {
             Some(v) => {
                 if flatmap.contains_key(v) {
@@ -125,13 +136,16 @@ pub fn value_to_changes(id: &str, attribute: &str, value: Value, node: &str, cha
             changes.push(new_change(id,attribute,Internable::String(n.clone()),node));
         },
         Value::Bool(ref n) => {
-            let b = format!("{:?}", n);
-            changes.push(new_change(id,attribute,Internable::String(b),node));
+            let b = match n {
+                &true => "true",
+                &false => "false",
+            };
+            changes.push(new_change(id,attribute,Internable::from_str(b),node));
         },
         Value::Array(ref n) => {
             for (ix, value) in n.iter().enumerate() {
                 let ix = ix + 1;
-                let array_id = format!("array|{:?}|{:?}",ix,value);
+                let array_id = format!("array|{:?}|{:?}|{:?}", id, ix, value);
                 let array_id = &array_id[..];
                 changes.push(new_change(id,attribute,Internable::from_str(array_id),node));
                 changes.push(new_change(array_id,"tag",Internable::from_str("array"),node));
