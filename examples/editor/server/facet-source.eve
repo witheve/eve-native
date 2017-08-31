@@ -15,7 +15,8 @@ end
 Check if a value tile is a remote record.
 ~~~ eve
 search
-  attr-tile = [#facet/record/card source: "editor/explorer" av]
+  av = if [#facet/record/card source: "editor/explorer" av] then av
+       if [#facet/record source: "editor/explorer" av] then av
   [#editor/explorer/client-record value: av.value]
 bind
   av.kind += "facet/record/button"
