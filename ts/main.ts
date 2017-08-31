@@ -80,6 +80,7 @@ class MultiplexedConnection extends Connection {
       program.attach("canvas");
       program.attach("console");
       program.attach("code-block");
+      program.attach("graph");
     },
     "diff": (diff:DiffMessage) => {
       let program = this.programs[diff.client];
@@ -126,6 +127,7 @@ class MultiplexedConnection extends Connection {
   }
 }
 
+(window as any)["RemoteProgram"] = RemoteProgram;
 let connection = new MultiplexedConnection(new WebSocket(`ws://${location.hostname}:3012`));
 
 console.log(connection);
