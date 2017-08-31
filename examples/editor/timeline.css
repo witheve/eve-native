@@ -27,5 +27,4 @@
 
 .editor-transaction-viewer-output-name { line-height: 1.5; }
 .editor-transaction-viewer-output-name:before { content: "⬢"; color: #888; }
-.editor-transaction-viewer-output-name:not(:empty):before { margin-right: 8px; }
 .editor-transaction-viewer-output-name:after { content: "<-"; margin: 0 8px; color: #888; }

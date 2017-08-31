@@ -68,50 +68,17 @@ search
   card-list = [#editor/explorer/card-list]
 bind
   card-list.children +=
-  [#record-card/card #editor/explorer/card sort: record entity: record | av]
+  [#facet/record/card #editor/explorer/card source: "editor/explorer" sort: record entity: record | av]
 end
 ~~~
 
-Inject titles for open cards.
-~~~ eve
-search
-  card = [#record-card/card #editor/explorer/card entity]
-  [#editor/explorer/client-name entity name]
-bind
-  card.title += name
-end
-~~~
-
-
-Check if a value tile is a remote record.
-~~~ eve
-search
-  card = [#editor/explorer/card]
-  attr-tile = [#record-card/attribute-tile card value]
-  [#editor/explorer/client-record value]
-bind
-  attr-tile.type += "record"
-end
-~~~
-
-Apply titles to record value tiles for remote records.
-~~~ eve
-search
-  card = [#editor/explorer/card]
-  attr-tile = [#record-card/attribute-tile type: "record" card]
-  attr-value = [#record-card/value attr-tile value]
-  [#editor/explorer/client-name entity: value name: title]
-bind
-  attr-value.title += title
-end
-~~~
 
 ### Events
 
 Clicking a record button in a card opens its card too.
 ~~~ eve
 search
-  [#html/event/click element: [#record-card/record value]]
+  [#html/event/click element: [#facet/record/button value]]
   root = [#editor/explorer/root]
 commit
   root.open := value
@@ -121,7 +88,7 @@ end
 Clicking a tag button in a card adds that tag to the query.
 ~~~ eve
 search
-  [#html/event/click element: [#record-card/tag text]]
+  [#html/event/click element: [#facet/tag/button text]]
   root = [#editor/explorer/root]
   query = [#ui/token-completer #editor/explorer/query item]
   item.text = "#{{text}}"
