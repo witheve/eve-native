@@ -40,44 +40,40 @@ impl Router {
         thread::spawn(move || {
             let mut grouping:HashMap<Internable, Vec<RawRemoteChange>> = HashMap::new();
             loop {
-                let im = incoming.recv();
-                if let Ok(im) = im {
-                    match im {
-                        RouterMessage::Remote(remotes) => {
-                            for remote in remotes {
-                                let vs = grouping.entry(remote.to.clone()).or_insert_with(|| vec![]);
-                                vs.push(remote);
-                            }
-                            for (key, changes) in grouping.drain() {
-                                if let Internable::String(ref name) = key {
-                                    if let Some(channel) = clients2.lock().unwrap().get(name) {
-                                        channel.send(RunLoopMessage::RemoteTransaction(changes)).unwrap();
-                                    } else {
-                                        panic!("Failed to send remote TX to nonexistent or unregistered client: '{}'", &name);
-                                    }
-                                }
-                            }
+                match incoming.recv() {
+                    Ok(RouterMessage::Remote(remotes)) => {
+                        for remote in remotes {
+                            let vs = grouping.entry(remote.to.clone()).or_insert_with(|| vec![]);
+                            vs.push(remote);
                         }
-                        RouterMessage::Local(name, changes) => {
-                            if let Some(channel) = clients2.lock().unwrap().get(&name) {
-                                match channel.send(RunLoopMessage::Transaction(changes)) {
-                                    Ok(_) => (),
-                                    Err(e) => {
-                                        match e {
-                                            SendError(se) => {
-                                                println!("{} Failed to send {}",
-                                                         BrightRed.paint("Error:"), se.format_error());
-                                            }
-                                        }
-                                    }
+                        for (key, changes) in grouping.drain() {
+                            if let Internable::String(ref name) = key {
+                                if let Some(channel) = clients2.lock().unwrap().get(name) {
+                                    channel.send(RunLoopMessage::RemoteTransaction(changes)).unwrap();
+                                } else {
+                                    panic!("Failed to send remote TX to nonexistent or unregistered client: '{}'", &name);
                                 }
-                            } else {
-                                panic!("Failed to send local TX to nonexistent or unregistered client: '{}'", &name);
                             }
                         }
                     }
-                } else {
-                    if let Err(err) = im {
+                    Ok(RouterMessage::Local(name, changes)) => {
+                        if let Some(channel) = clients2.lock().unwrap().get(&name) {
+                            match channel.send(RunLoopMessage::Transaction(changes)) {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    match e {
+                                        SendError(se) => {
+                                            println!("{} Failed to send {}",
+                                                     BrightRed.paint("Error:"), se.format_error());
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            panic!("Failed to send local TX to nonexistent or unregistered client: '{}'", &name);
+                        }
+                    }
+                    Err(err) => {
                         if let Some(cause) = err.cause() {
                             println!("{} Receiving failed: {} due to {}\n",
                                      BrightRed.paint("Error: "), err.description(),
@@ -134,7 +130,8 @@ impl RemoteWatcher {
         }
     }
 
-    fn to_raw_change(&self, interner:&mut Interner,
+    fn to_raw_change(&self,
+                     interner:&mut Interner,
                      _type:Internable,
                      to:Interned,
                      _for:Interned,
@@ -180,6 +177,7 @@ impl Watcher for RemoteWatcher {
                             .collect::<Vec<_>>()
                             .join(", ");
                         println!("{} Invalid remote remove: ({})", BrightRed.paint("Error:"), slice_string);
+                        panic!();
                     }
                 }
 
@@ -192,12 +190,13 @@ impl Watcher for RemoteWatcher {
                     changes.push(self.to_raw_change(interner, Internable::String("add".to_string()), to, _for, entity, attribute, value));
                 }
                 s => {
-                        let slice_string = s.iter()
-                            .map(|i| format!("{}", i))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        println!("{} Invalid remote add: ({})", BrightRed.paint("Error:"), slice_string);
-                    }
+                    let slice_string = s.iter()
+                        .map(|i| format!("{}", i))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("{} Invalid remote add: ({})", BrightRed.paint("Error:"), slice_string);
+                    panic!();
+                }
             }
         }
         self.router_channel.send(RouterMessage::Remote(changes)).unwrap();

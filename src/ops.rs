@@ -11,7 +11,7 @@ extern crate natord;
 use unicode_segmentation::UnicodeSegmentation;
 
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry,
-    CollapsedChanges, RemoteIndex, RemoteChange, RawRemoteChange};
+              CollapsedChanges, RemoteIndex, RemoteChange, RawRemoteChange};
 use solver::Solver;
 use compiler::{make_block, parse_file, FunctionKind};
 use std::collections::{HashMap, HashSet, Bound, BTreeMap};
@@ -75,11 +75,11 @@ pub fn print_block_constraints(block:&Block) {
 }
 
 pub fn s(string: &str) -> Internable {
-   Internable::String(string.to_string())
+    Internable::String(string.to_string())
 }
 
 pub fn n(num: f32) -> Internable {
-   Internable::from_number(num)
+    Internable::from_number(num)
 }
 
 //-------------------------------------------------------------------------
@@ -140,15 +140,15 @@ impl RawChange {
     }
 
     pub fn to_change(self, interner: &mut Interner) -> Change {
-       Change {
-           e: interner.internable_to_id(self.e),
-           a: interner.internable_to_id(self.a),
-           v: interner.internable_to_id(self.v),
-           n: interner.internable_to_id(self.n),
-           round: 0,
-           transaction: 0,
-           count: self.count,
-       }
+        Change {
+            e: interner.internable_to_id(self.e),
+            a: interner.internable_to_id(self.a),
+            v: interner.internable_to_id(self.v),
+            n: interner.internable_to_id(self.n),
+            round: 0,
+            transaction: 0,
+            count: self.count,
+        }
     }
 }
 
@@ -194,11 +194,11 @@ pub struct Block {
 impl Block {
 
     pub fn new(interner:&mut Interner, name:&str, block_id:Interned, constraints:Vec<Constraint>) -> Block {
-       let mut me = Block { name:name.to_string(), block_id, path: "".to_owned(), constraints, solver:None, shapes: vec![] };
-       let shapes = me.to_shapes();
-       me.shapes.extend(shapes);
-       me.solver = Some(Solver::new(interner, block_id, 0, None, &me.constraints));
-       me
+        let mut me = Block { name:name.to_string(), block_id, path: "".to_owned(), constraints, solver:None, shapes: vec![] };
+        let shapes = me.to_shapes();
+        me.shapes.extend(shapes);
+        me.solver = Some(Solver::new(interner, block_id, 0, None, &me.constraints));
+        me
     }
 
     pub fn get_block_scans(&self) -> Vec<&Constraint> {
@@ -420,7 +420,7 @@ pub struct EstimateIter {
 
 impl EstimateIter {
     pub fn new() -> EstimateIter {
-       EstimateIter { pass_through:false, estimate:usize::MAX, iter:OutputingIter::Empty, constraint:0 }
+        EstimateIter { pass_through:false, estimate:usize::MAX, iter:OutputingIter::Empty, constraint:0 }
     }
 
     pub fn is_better(&self, estimate:usize) -> bool {
@@ -1880,7 +1880,7 @@ pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>,
                 let limit = Internable::to_number(interned_limit) as usize;
                 let mut iter = items.iter().rev().filter(|entry| {
                     entry.0.last() == limit_param &&
-                    is_aggregate_in_round(entry, current_round)
+                        is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
                 let mut local_params = params.clone();
                 local_params.push(interned_limit.clone());
@@ -1911,7 +1911,7 @@ pub fn aggregate_top_remove(current: &mut AggregateEntry, params: &Vec<Internabl
                 let limit = Internable::to_number(interned_limit) as usize;
                 let mut iter = items.iter().rev().filter(|entry| {
                     entry.0.last() == limit_param &&
-                    is_aggregate_in_round(entry, current_round)
+                        is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
                 let mut local_params = params.clone();
                 local_params.push(interned_limit.clone());
@@ -1945,7 +1945,7 @@ pub fn aggregate_bottom_add(current: &mut AggregateEntry, params: &Vec<Internabl
                 let limit = Internable::to_number(interned_limit) as usize;
                 let mut iter = items.iter().filter(|entry| {
                     entry.0.last() == limit_param &&
-                    is_aggregate_in_round(entry, current_round)
+                        is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
                 let mut local_params = params.clone();
                 local_params.push(interned_limit.clone());
@@ -1976,7 +1976,7 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
                 let limit = Internable::to_number(interned_limit) as usize;
                 let mut iter = items.iter().filter(|entry| {
                     entry.0.last() == limit_param &&
-                    is_aggregate_in_round(entry, current_round)
+                        is_aggregate_in_round(entry, current_round)
                 }).skip(limit - 1);
                 let mut local_params = params.clone();
                 local_params.push(interned_limit.clone());
@@ -2153,7 +2153,7 @@ pub fn clear_bit(solved:u64, bit:usize) -> u64 {
 }
 
 pub fn check_bit(solved:u64, bit:usize) -> bool {
-   solved & (1 << bit) != 0
+    solved & (1 << bit) != 0
 }
 
 //-------------------------------------------------------------------------
@@ -2489,22 +2489,22 @@ impl RunLoopMessage {
             },
             &RunLoopMessage::Transaction(ref changes) => {
                 let stringified_changes = changes.iter().map(|raw_change|
-                    format!("{}:{} <{}>",
-                            Internable::to_string(&raw_change.a),
-                            Internable::to_string(&raw_change.v),
-                            raw_change.count))
+                                                             format!("{}:{} <{}>",
+                                                                     Internable::to_string(&raw_change.a),
+                                                                     Internable::to_string(&raw_change.v),
+                                                                     raw_change.count))
                     .collect::<Vec<_>>().join("\n- ");
                 format!("`Transaction` with changes: \n- {}", stringified_changes)
             }
             &RunLoopMessage::RemoteTransaction(ref changes) => {
                 let stringified_changes = changes.iter().map(|raw_change|
-                    format!("{}:{} ({} -> {}) for {} of type {}",
-                            Internable::to_string(&raw_change.a),
-                            Internable::to_string(&raw_change.v),
-                            Internable::to_string(&raw_change.from),
-                            Internable::to_string(&raw_change.to),
-                            Internable::to_string(&raw_change._for),
-                            Internable::to_string(&raw_change._type)))
+                                                             format!("{}:{} ({} -> {}) for {} of type {}",
+                                                                     Internable::to_string(&raw_change.a),
+                                                                     Internable::to_string(&raw_change.v),
+                                                                     Internable::to_string(&raw_change.from),
+                                                                     Internable::to_string(&raw_change.to),
+                                                                     Internable::to_string(&raw_change._for),
+                                                                     Internable::to_string(&raw_change._type)))
                     .collect::<Vec<_>>().join("\n- ");
                 format!("`Remote transaction` with changes: \n- {}", stringified_changes)
             }
@@ -3363,7 +3363,7 @@ impl Persister {
     }
 
     pub fn send(&self, changes:Vec<RawChange>) {
-       self.outgoing.send(PersisterMessage::Write(changes)).unwrap();
+        self.outgoing.send(PersisterMessage::Write(changes)).unwrap();
     }
 
     pub fn wait(self) {
@@ -3379,7 +3379,7 @@ impl Persister {
     }
 
     pub fn close(&self) {
-       self.outgoing.send(PersisterMessage::Stop).unwrap();
+        self.outgoing.send(PersisterMessage::Stop).unwrap();
     }
 }
 
@@ -3400,7 +3400,7 @@ impl RunLoop {
     pub fn close(&self) {
         match self.outgoing.send(RunLoopMessage::Stop) {
             Ok(..) => (),
-            Err(SendError(e)) => println!("Error occured closing client: {:?}", e.format_error()),
+            Err(..) => (),
         }
     }
 

@@ -5,7 +5,7 @@
 #![feature(slice_concat_ext)]
 
 // #[link_args = "-s EXPORTED_FUNCTIONS=['_coolrand','_makeIter','_next']"]
-extern "C" {}
+extern {}
 
 #[macro_use]
 extern crate lazy_static;

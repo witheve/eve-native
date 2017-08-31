@@ -3,6 +3,7 @@ import {Connection, Message} from "./connection";
 
 export interface DiffMessage extends Message { type: "diff"; adds?:RawTuple[]; removes?:RawTuple[]; }
 export interface LoadBundleMessage extends Message { type: "load-bundle"; bundle: string }
+export interface ErrorMessage extends Message { type:"error"; error:string }
 
 interface Bundle { users: string[], css?: HTMLLinkElement, js?: HTMLScriptElement }
 

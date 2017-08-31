@@ -3,11 +3,6 @@ export interface Message {
   client:string;
 }
 
-export interface ErrorMessage {
-  type:string;
-  error:string;
-}
-
 const EMPTY:any[] = [];
 
 export class Connection {
