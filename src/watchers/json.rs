@@ -43,7 +43,6 @@ impl Watcher for JsonWatcher {
         self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        println!("New Diff");
         let mut changes: Vec<RawChange> = vec![];
         for remove in diff.removes {
             let kind = Internable::to_string(interner.get_value(remove[0]));
@@ -55,7 +54,6 @@ impl Watcher for JsonWatcher {
                     let join_strings = self.join_strings_map.get_mut(&id).unwrap();
                     let index = join_strings.strings.iter().position(|x| *x == string).unwrap();
                     join_strings.strings.remove(index);
-                    println!("Remove: {:?} {:?}", index, join_strings.strings);
                 },
                 _ => {},
             }
