@@ -13,6 +13,10 @@ commit
     "img"
     "a"
     "style"
+    "label"
+    "li"
+    "ul"
+    "ol"
     "audio"
     "source"
     "video"
@@ -156,7 +160,7 @@ Elements with an editable checked and an initial use it as the default checked
 search
   input = [#html/editable-checked initial]
   checked = if input.checked then input.checked else initial
-
+  not([#html/client-checked element: input])
 bind
   input.checked += checked
 end

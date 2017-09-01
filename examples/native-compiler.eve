@@ -1,0 +1,1432 @@
+Domains
+------------------------------------------------------
+
+Domains help us represent the valid values of some variable within a block. Knowing
+the domain for both the inputs and outputs of a block help us dramatically prune
+the otherwise very cyclic graph that most Eve programs end up forming. There are
+a few types of domains:
+
+    commit
+      [#define/domain type:"unknown" sort:1]
+      [#define/domain type:"removed" sort:2]
+      [#define/domain type:"string" sort:3]
+      [#define/domain type:"record" sort:4]
+      // numbers can also optionally have a from/to to help be even more
+      // specific about their bounds
+      [#define/domain type:"number" sort:5]
+      [#define/domain type:"multi-type" sort:6]
+    end
+
+One of the most important things for us to be able to do with domains is take a
+set of them and find out what the most specific domain we have is. The first
+step there is to check if we have multiple types.
+
+    search
+      set = [#domain-set domain: [#domain type]]
+      [#define/domain type sort > 2]
+      count = gather/count[for:type per:set]
+      count > 1
+    bind
+      set.domain += [#domain type:"multi-type"]
+    end
+
+To figure out what our final domain is given all the potential options we have,
+we look for the type with the highest defined sort.
+
+    search
+      set = [#domain-set domain: [#domain type]]
+      [#define/domain type sort]
+      gather/top[for:sort per:set limit:1]
+    bind
+      set.final += [#domain/final set type]
+    end
+
+Then, if it's a number we need to try and capture our numeric bounds by taking
+the largest `from` and smallest `to`.
+
+    search
+      set = [#domain-set final domain:[#domain from]]
+      gather/top[for:from per:set limit:1]
+    bind
+      final.from += from
+    end
+
+    search
+      set = [#domain-set final domain:[#domain to]]
+      gather/bottom[for:to per:set limit:1]
+    bind
+      final.to += to
+    end
+
+We also need to be able to do some basic arithmetic on domains to propagate
+constraints forward. We'll represent these as records with the operation as a
+tag and two extra attributes `a` and `b` representing the operands.
+
+    search
+      domain = if d = [#domain/add] then d
+               if d = [#domain/sub] then d
+               if d = [#domain/mul] then d
+               if d = [#domain/div] then d
+    bind
+      domain <- [#domain type:"number"]
+    end
+
+Add and subtract are exactly like what you'd expect:
+
+    search
+      add = [#domain/add a b]
+    bind
+      add.from += a.from + b.from
+    end
+
+    search
+      add = [#domain/add a b]
+    bind
+      add.to += a.to + b.to
+    end
+
+    search
+      sub = [#domain/sub a b]
+    bind
+      sub.from += a.from - b.from
+    end
+
+    search
+      sub = [#domain/sub a b]
+    bind
+      sub.to += a.to - b.to
+    end
+
+Multiplication and division have to deal with the fact that multiplying or
+dividing by a negative could potentially swap the from and to. To handle this,
+we'll set a maybe-from and maybe-to attribute and then resolve them to `to` and
+`from` later.
+
+    search
+      mult = [#domain/mul a b]
+    bind
+      mult.maybe-from += a.from * b.from
+    end
+
+    search
+      mult = [#domain/mul a b]
+    bind
+      mult.maybe-to += a.to * b.to
+    end
+
+    search
+      mult = [#domain/mul a b]
+      to = if a.to < 0, not(b.to) then "-Infinity"
+           else if b.to < 0, not(a.to) then "-Infinity"
+    bind
+      mult.maybe-to += to
+    end
+
+    search
+      div = [#domain/div a b]
+    bind
+      div.maybe-from += a.from / b.from
+    end
+
+    search
+      div = [#domain/div a b]
+    bind
+      div.maybe-to += a.to / b.to
+    end
+
+    search
+      div = [#domain/div a b]
+      to = if a.to < 0, not(b.to) then "-Infinity"
+           else if b.to < 0, not(a.to) then "-Infinity"
+    bind
+      div.maybe-to += to
+    end
+
+To resolve the maybes we created above, we just need to check if the from is
+actually greater than the to or if the to is less than the from. If from or to
+are missing then it represents infinity in that direction and we just take the
+maybe value as it is.
+
+    search
+      domain = [#domain maybe-to]
+      to = if domain.maybe-from > maybe-to then domain.maybe-from
+           else if maybe-to = "-Infinity" then domain.maybe-from
+           else if maybe-to != "-Infinity" then maybe-to
+    bind
+      domain.to += to
+    end
+
+    search
+      domain = [#domain maybe-from]
+      from = if domain.maybe-to < maybe-from then domain.maybe-to
+             else if domain.maybe-to != "-Infinity" then maybe-from
+             else if not(domain.maybe-to) then maybe-from
+    bind
+      domain.from += from
+    end
+
+It's also useful to be able to take an arbitrary value and turn it into a domain
+
+    search
+      domain = [#domain/from-value value]
+      "number" = eve/type-of[value]
+    bind
+      domain <- [#domain type:"number" from:value to:value]
+    end
+
+    search
+      domain = [#domain/from-value value]
+      "string" = eve/type-of[value]
+      not(lookup[entity:value, attribute:"tag"])
+    bind
+      domain <- [#domain type:"string"]
+    end
+
+    search
+      domain = [#domain/from-value value]
+      value = [#register]
+      [#domain-set register:value final]
+    bind
+      domain <- [#domain/from-final #domain type:final.type final]
+    end
+
+    search
+      domain = [#domain/from-final final]
+    bind
+      domain.from += final.from
+    end
+
+    search
+      domain = [#domain/from-final final]
+    bind
+      domain.to += final.to
+    end
+
+
+Tag info
+------------------------------------------------------
+
+We want to keep information that we know about tags based on all the blocks in
+the programs we see so that we can use the combined information to make some
+optimizations. So first step is to find all the tags, which are hidden away in
+scans and inserts.
+
+    search
+      [#scan a:"tag" v:tag-name]
+    bind
+      [#tag-info tag-name]
+    end
+
+    search
+      [#insert a:"tag" v:tag-name]
+    bind
+      [#tag-info tag-name]
+    end
+
+We also want to capture all the attributes we've seen for each tag.
+
+    search
+      [#block-tag e tag-name]
+      [#insert e a]
+      info = [#tag-info tag-name]
+    bind
+      info.attribute += [#attribute a]
+    end
+
+    search
+      [#block-tag e tag-name]
+      [#scan e a]
+      info = [#tag-info tag-name]
+    bind
+      info.attribute += [#attribute a]
+    end
+
+    search
+      info = [#tag-info tag-name attribute]
+      count = gather/count[for:attribute per:info]
+    bind
+      info.attribute-count += count
+    end
+
+Blocks and constraints
+------------------------------------------------------
+
+There's some useful information we can adorn blocks with, like how many
+constraints they have.
+
+    search
+      block = [#block constraint]
+      num-constraints = gather/count[for:constraint per:block]
+    bind
+      block <- [num-constraints]
+    end
+
+    search
+      block = [#block constraint]
+    bind
+      constraint <- [block #constraint]
+    end
+
+We need to gather what tag each e belongs to in each block. We then
+need to gather our inputs and outputs for the block based on what tag they
+represent.
+
+    search
+      [#scan block e a:"tag" v]
+    bind
+      [#block-tag block e tag-name:v]
+    end
+
+    search
+      [#block-tag block e tag-name]
+      [#scan block e a]
+    bind
+      [#block-input block tag-name a]
+    end
+
+    search
+      (block e v) = if [#insert block e a:"tag" v] then (block e v)
+                    else if [#remove block e a:"tag" v] then (block e v)
+    bind
+      [#block-tag block e tag-name:v]
+    end
+
+    search
+      [#block-tag block e tag-name]
+      (block a) = if [#insert block e a] then (block a)
+                    else if [#remove block e a] then (block a)
+    bind
+      [#block-output block tag-name a]
+    end
+
+Match all the inputs with the outputs per block and create a link between those
+blocks. Note that recursive blocks will have themselves as both inputs and
+outputs.
+
+    search
+      [#block-input block:to tag-name a]
+      [#block-output block:from tag-name a]
+    bind
+      [#link from to]
+    end
+
+Find blocks that serve as roots. These are either blocks that rely on an
+external tag, and therefore an event, or they are blocks without scans and act
+as a setup
+
+    search
+      [#external-tags tag-name]
+      [#block-input block tag-name]
+    bind
+      block += #root
+    end
+
+    search
+      block = [#block]
+      not([#scan block])
+      not([#if block])
+    bind
+      block += #setup
+    end
+
+Each setup and each root block will ultimately turn into the starting points for
+chains of execution in the compiled program.
+
+    search
+      block = [#setup]
+    bind
+      [#chain type:"setup" to:block]
+    end
+
+    search
+      block = [#root]
+      [#block-input block tag-name]
+      [#external-tags tag-name]
+    bind
+      [#chain type:"root" tag-name | to:block]
+    end
+
+We create this chain by walking the links between blocks starting at the #root
+or #setup. We also want to discover cycles here, which we figure out by looking
+for a link that has the same to, but a lower level
+
+    search
+      chain = [#chain to]
+    bind
+      [#chain-link chain from:chain to level:1]
+    end
+
+    search
+      link = [#chain-link to]
+    bind
+      link += #chain-link/visited
+      link.visited += [link to]
+    end
+
+    search
+      link = [#chain-link from]
+    bind
+      link.visited += from.visited
+    end
+
+    search
+      link = [#chain-link/visited chain from:prev to:from level]
+      [#link from to]
+      not(link.visited.to = to)
+      next-level = level + 1
+    bind
+      [#chain-link chain from:link to level:next-level]
+    end
+
+    search
+      link = [#chain-link/visited chain to:from visited level]
+      [#link from to:visited.to]
+    bind
+      [#cycle-link chain from:link to-link:visited.link level:level + 1]
+    end
+
+Turn output constraints into their "real" equivalents
+
+    search
+      [#insert block e a v]
+      [#remove-attribute block e a]
+    bind
+      set = [#real/set block e a v]
+      block.constraint += set
+    end
+
+    search
+      [#function block op:"gen_id" output: e]
+      [#insert block e a v]
+    bind
+      create = [#real/create block e | attribute: [a v]]
+      block.constraint += create
+    end
+
+    search
+      [#insert block e a v]
+      not([#set block e a])
+      not([#create block e])
+    bind
+      update = [#real/update block e a v]
+      block.constraint += update
+    end
+
+    search
+      [#remove block e a v]
+      not([#set block e a])
+    bind
+      remove = [#real/remove block e a v]
+      block.constraint += remove
+    end
+
+
+Block heuristics
+------------------------------------------------------
+
+Event-like things follow a common pattern where they exist for exactly one
+frame. This is accomplished by looking for a tag and then removing any full
+record that matches. We've seen these called "pulses" elsewhere, so that's the
+name we'll use here. We conservatively look for these by checking for blocks
+with only two constraints, one that is a tag lookup and the other that is
+remove-entity for that record.
+
+    search
+      block.num-constraints = 2
+      [#scan block e a:"tag" v: tag-name]
+      [#remove-entity block e]
+      tag-info = [#tag-info tag-name]
+    bind
+      block += #pulse
+      tag-info += #pulse
+    end
+
+
+Register domains
+------------------------------------------------------
+
+In order to determine what the domains of our inputs and outputs are, we need to
+figure out the domains of each register in a block. We do this by creating a
+domain set for each register and then by looking through the constraints to
+supply domains.
+
+    search
+      register = [#register]
+    bind
+      [#domain-set register]
+    end
+
+For scans we know that the e register is in the record domain, an a register is
+in the string domain and a v is unknown.
+
+    search
+      [#scan e]
+      set = [#domain-set register:e]
+    bind
+      set.domain += [#domain type:"record"]
+    end
+
+    search
+      [#scan a]
+      set = [#domain-set register:a]
+    bind
+      set.domain += [#domain type:"string"]
+    end
+
+    search
+      [#scan v]
+      set = [#domain-set register:v]
+    bind
+      set.domain += [#domain type:"unknown"]
+    end
+
+For filters we need to find out ...
+
+    search
+      [#filter op:">" left right]
+      set = [#domain-set register:left]
+      not(right = [#register])
+    bind
+      set.domain += [#domain type:"number" from:right]
+    end
+
+    search
+      [#filter op:">" left right]
+      set = [#domain-set register:right]
+      not(left = [#register])
+    bind
+      set.domain += [#domain type:"number" to:left]
+    end
+
+    search
+      [#filter op:"<" left right]
+      set = [#domain-set register:left]
+      not(right = [#register])
+    bind
+      set.domain += [#domain type:"number" to:right]
+    end
+
+    search
+      [#filter op:"<" left right]
+      set = [#domain-set register:right]
+      not(left = [#register])
+    bind
+      set.domain += [#domain type:"number" from:left]
+    end
+
+Functions...
+
+    search
+      [#function op:"+" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/add
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
+    search
+      [#function op:"-" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/sub
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
+    search
+      [#function op:"*" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/mul
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
+    search
+      [#function op:"/" params: [index:1 value:left] [index:2 value:right] output]
+      set = [#domain-set register:output]
+    bind
+      set.domain += [#domain/div
+                      a: [#domain/from-value output value:left]
+                      b: [#domain/from-value output value:right]]
+    end
+
+
+Block -> tag domains
+------------------------------------------------------
+
+For input/output tag in our block, we need to determine what the domains of the
+attributes of that tag are. We'll then use this information in the chain
+optimizer to remove nodes that can't actually follow after eachother.
+
+    search
+      [#scan block e a v]
+      [#block-tag block e tag-name]
+      input = [#block-input block tag-name a]
+      [#domain-set register:v final]
+    bind
+      input.domain += final
+    end
+
+    search
+      [#insert block e a v]
+      [#block-tag block e tag-name]
+      output = [#block-output block tag-name a]
+      [#domain-set register:v final]
+    bind
+      output.domain += final
+    end
+
+
+Optimizing
+------------------------------------------------------
+
+While on the surface blocks tend to produce many cycles, they're often written
+in such a way that if you knew the bounds of their inputs and their outputs, you
+could prove that they don't actually form a cycle. Much of the optimizer is just
+us using this domain information to "simulate" the program's execution and start
+pruning chain-links. Instead of modifying our original chain-links, we'll create
+a new set of optimized ones and any link that hasn't been removed by some
+optimization rule is part of the new, optimized chain.
+
+    search
+      from = [#chain]
+      link = [#chain-link chain from to level]
+      not([#link-removal link])
+    bind
+      [#chain-link/optimized chain from-link:link from to level]
+    end
+
+    search
+      from = [#chain-link/optimized from-link]
+      link = [#chain-link chain from:from-link to level]
+      not([#link-removal link])
+    bind
+      [#chain-link/optimized chain from-link:link from to level]
+    end
+
+On to the link removers. The first one we'll do is that if a block has a pulse
+as an input, and the from of a chain-link doesn't output that input, then the to
+can't run.
+
+    search
+      link = [#chain-link from to]
+      [#block-input block:to tag-name]
+      [#tag-info #pulse tag-name]
+      not([#block-output block:from.to tag-name a:"tag"])
+      not(from.tag-name = tag-name)
+    bind
+      [#link-removal link reason: "Relies on a pulse that has already been removed"]
+    end
+
+
+Constraint ordering
+------------------------------------------------------
+
+Within a block, constraints have to be ordered by their dependencies, otherwise
+we might end up trying to compute a function or filter before its inputs are
+actually available. While the constraint itself doesn't care about this
+information, we'll adorn it with an ordering so that we can use it during IR
+generation. Figuring this ordering out is a two step process. First, we need to
+annotate the registers with the level they are provided at. Then we take the max
+level for each constraint to determine its level.
+
+We'll have our rules annotate registers with a `maybe-level` since there could
+be multiple constraints that provide the value for some register at different
+levels. The real level of the register is just the min of those.
+
+    search
+      reg = [#register maybe-level]
+      gather/bottom[for:maybe-level per:reg limit:1]
+    bind
+      reg.level += maybe-level
+    end
+
+    search
+      reg = [#register block level]
+      gather/top[for:level per:block limit:1]
+    bind
+      block.max-register-level += level
+    end
+
+Scans are easy - all their registers are 1 and the scan itself is also 1.
+
+    search
+      scan = [#scan]
+      reg = if scan.e = [#register] then scan.e
+            if scan.a = [#register] then scan.a
+            if scan.v = [#register] then scan.v
+    bind
+      scan.level += 1
+      reg.maybe-level += 1
+    end
+
+Filters doesn't produce any output, but *do* rely on their left and right being
+provided, so their level is one higher than the max of their registers.
+
+    search
+      filter = [#filter]
+      reg = if filter.left = [#register] then filter.left
+            if filter.right = [#register] then filter.right
+      gather/top[for:reg.level per:filter limit:1]
+    bind
+      filter.level += reg.level + 1
+    end
+
+Functions are similar to filters, except we also have to level their output.
+It's also possible that this function has no register params, in which case,
+its level is 1.
+
+    search
+      func = [#function params]
+      gather/top[for:params.value.level per:func limit:1]
+    bind
+      func.level += params.value.level + 1
+    end
+
+    search
+      func = [#function output level]
+    bind
+      output.maybe-level += level + 1
+    end
+
+    search
+      func = [#function]
+      not(func.params.value.level)
+    bind
+      func.level += 1
+      func.output.level += 2
+    end
+
+Multi-functions are basically the same as functions in this regard except that
+they have multiple outputs instead of one.
+
+
+    search
+      func = [#multi-function params]
+      gather/top[for:params.value.level per:func limit:1]
+    bind
+      func.level += params.value.level + 1
+    end
+
+    search
+      func = [#multi-function outputs level]
+    bind
+      outputs.maybe-level += level + 1
+    end
+
+    search
+      func = [#multi-function]
+      not(func.params.value.level)
+    bind
+      func.level += 1
+      func.outputs.level += 2
+    end
+
+Updates should be in the highest level.
+
+    search
+      update = [#real/set block]
+    bind
+      update.level += block.max-register-level + 1
+    end
+
+    search
+      update = [#real/create block]
+    bind
+      update.level += block.max-register-level + 1
+    end
+
+    search
+      update = [#real/update block]
+    bind
+      update.level += block.max-register-level + 1
+    end
+
+    search
+      update = [#real/remove block]
+    bind
+      update.level += block.max-register-level + 1
+    end
+
+Watches should be too.
+
+    search
+      w = [#watch block]
+    bind
+      w.level += block.max-register-level + 1
+    end
+
+Intermediate Representation (IR)
+------------------------------------------------------
+
+With a set of optimized chains, we can now generate a language agnostic IR tree
+that represents the optimized program.
+
+    search
+      program = [#program]
+    bind
+      [#ir/program program]
+      [#ir/main program]
+    end
+
+All the setup blocks contribute to our main function.
+
+    search
+      [#chain type:"setup" provider: [ir]]
+      main = [#ir/main]
+    bind
+      main.item += ir
+    end
+
+
+Define all the structs that we need.
+
+    search
+      tag-info = [#tag-info tag-name attribute-count > 1]
+    bind
+      [#ir/define-struct tag-info symbol: [#ir/symbol name:tag-name]]
+    end
+
+    search
+      ir = [#ir/define-struct tag-info]
+      attribute = tag-info.attribute
+      attribute.a != "tag"
+    bind
+      ir.field += [#ir/field name:[#ir/symbol name:attribute.a]]
+    end
+
+Setups
+
+    search
+      chain = [#chain type:"setup"]
+    bind
+      chain.provider += [#provider level:0 ir:[#ir/do chain]]
+    end
+
+Roots
+
+    search
+      chain = [#chain type:"root" tag-name]
+    bind
+      sym = [#ir/symbol name:tag-name]
+      ir = [#ir/on symbol:sym tag-name:sym]
+      chain.provider += [#provider level:0 tag-name symbol:sym ir]
+    end
+
+    search
+      chain = [#chain provider]
+    bind
+      chain.child-container += provider
+    end
+
+    search
+      link = [#chain-link/optimized from]
+    bind
+      link.chain-providers += from.provider
+    end
+
+    search
+      link = [#chain-link/optimized provider]
+    bind
+      link.chain-providers += provider
+    end
+
+
+Blocks via chain-link/optimized
+
+    search
+      link = [#chain-link/optimized provider]
+      gather/top[for:(provider.level, provider) per:link limit:1]
+    bind
+      link.child-container += provider
+    end
+
+    search
+      link = [#chain-link/optimized from provider]
+      level = if provider.level then provider.level
+              else 0
+      (_, next) = gather/next[for:(level, provider) per:link]
+    bind
+      provider.ir.item += next.ir
+    end
+
+    search
+      link = [#chain-link/optimized from provider]
+      gather/bottom[for:(provider.level, provider) per:link limit:1]
+    bind
+      from.child-container.ir.item += provider.ir
+    end
+
+We need to setup providers for the tags a block uses, as well as for every level
+the scans of this block belong to that wouldn't otherwise end up with a
+provider. We determine the latter by looking if there's a constraint that
+has-items. If there's not, then we'll need an `#ir/do` to wrap up the
+constraints that belong to that level.
+
+    search
+      chain = [#chain-link/optimized to from]
+      [#block-input block:to tag-name]
+      not(from.provider.tag-name = tag-name)
+    bind
+      sym = [#ir/symbol name:tag-name]
+      ir = [#ir/for block:to tag-name | symbol:sym tag-name:sym]
+      chain.provider += [#provider level:0 tag-name symbol:sym ir]
+    end
+
+    search
+      chain = [#chain-link/optimized to:block]
+      constraint = [#constraint block level]
+      not(chain.provider = [#constraint-provided level])
+    bind
+      chain.provider += [#provider chain block level |
+                          ir: [#ir/do chain block level]]
+    end
+
+    search
+      chain = [#chain-link/optimized to:block from]
+      [#block-tag block tag-name e]
+      from.provider.tag-name = tag-name
+      ir = [#ir/do block level:1]
+    bind
+      ir.item += [#ir/let #id-lookup level:0
+                      name: [#ir/from-value value:e]
+                      value: [#ir/get
+                                symbol:from.provider.symbol
+                                attribute:[#ir/symbol name:"id"]]]
+    end
+
+
+We then put all the constraints in the appropriate container for their level, or
+if they don't have a level, in the child-container.
+
+    disabled search
+      link = [#chain-link/optimized to:[constraint] provider child-container]
+    bind
+      child-container.ir.item += constraint.ir
+    end
+
+    search
+      link = [#chain-link/optimized to:[constraint] provider]
+      provider.level = constraint.level
+    bind
+      provider.ir.item += constraint.ir
+    end
+
+Now that we've set up providers for all the tags in our chain, it's useful to be
+able to lookup the symbol for a given register. To facilitate that, we'll creat
+a nice little mapping for it:
+
+    search
+      [#chain-link/optimized to chain-providers: [#provider tag-name symbol]]
+      block-tag = [#block-tag block:to e tag-name]
+    bind
+      block-tag.symbol += symbol
+    end
+
+IR for constraints
+------------------------------------------------------
+
+Values to IR
+
+    search
+      ir = [#ir/from-value value]
+      not(value.tag = "register")
+      "string" = eve/type-of[value]
+    bind
+      ir += #ir/string
+    end
+
+    search
+      ir = [#ir/from-value value]
+      "number" = eve/type-of[value]
+    bind
+      ir += #ir/number
+    end
+
+    search
+      ir = [#ir/from-value value]
+      value = [#register block offset]
+    bind
+      ir <- [#ir/symbol name:"{{block}}_{{offset}}"]
+    end
+
+Scans
+
+    search
+      [#block-tag e symbol]
+      scan = [#scan block:to e a v]
+      v = [#register]
+    bind
+      scan.ir += [#ir/let scan |
+                          name:[#ir/from-value value:v]
+                          value:[#ir/get symbol attribute:[#ir/symbol name:a]]]
+    end
+
+Filters
+
+    search
+      chain = [#chain-link/optimized to:block]
+      [#filter level block]
+    bind
+      chain.provider += [#provider #constraint-provided #filter-provider chain level block]
+    end
+
+    search
+      provider = [#filter-provider block level]
+    bind
+      provider.ir += [#ir/if provider block level | cond: [#ir/and provider]]
+    end
+
+    search
+      provider = [#filter-provider block]
+      filter = [#filter block op left right]
+    bind
+      provider.ir.cond.item +=
+        [#ir/infix filter | op
+          left:[#ir/from-value value:left]
+          right:[#ir/from-value value:right]]
+    end
+
+Functions
+
+    search
+      function = [#function output op params:[index:1 value:left] [index:2 value:right]]
+      [#define/function/infix name:op]
+    bind
+      function.ir +=
+        [#ir/let function |
+          name: [#ir/from-value value:output]
+          value: [#ir/infix function | op
+                    left:[#ir/from-value value:left]
+                    right:[#ir/from-value value:right]]]
+    end
+
+    search
+      function = [#function output op params]
+      not([#define/function/infix name:op])
+      op != "gen_id"
+    bind
+      function.ir +=
+        [#ir/let function |
+          name: [#ir/from-value value:output]
+          value: [#ir/call function |
+                    func:[#ir/symbol name:op]
+                    arg: [#ir/from-value value:params.value index:params.index]]]
+    end
+
+Multi-functions
+
+    search
+      chain = [#chain-link/optimized to:block]
+      func = [#multi-function level block]
+    bind
+      chain.provider += [#provider #constraint-provided #multi-function-provider chain level block func]
+    end
+
+    search
+      provider = [#multi-function-provider func]
+      func = [#multi-function
+                   op:"math/range"
+                   outputs:[index:1 value:output]
+                   params:[index:1 value:start] [index:2 value:stop]]
+    bind
+      provider.ir +=
+        [#ir/range func |
+          symbol: [#ir/from-value value:output]
+          start: [#ir/from-value value:start]
+          stop: [#ir/from-value value:stop]]
+    end
+
+Watches
+
+    search
+      item = [#watch watcher params]
+    bind
+      item.ir +=
+        [#ir/watch item |
+          name:[#ir/from-value value:watcher]
+          arg: [#ir/from-value value:params.value index:params.index]]
+    end
+
+Updates
+
+    search
+      [#block-tag e symbol]
+      set = [#real/set e a v]
+    bind
+      set.ir +=
+        [#ir/set set | symbol
+          attribute:[#ir/symbol name:a]
+          value:[#ir/from-value value:v]]
+    end
+
+    search
+      chain = [#chain-link/optimized to:block]
+      [#block-tag block e tag-name]
+      create = [#real/create e level]
+    bind
+      symbol = [#ir/symbol name:tag-name]
+      chain.provider += [#provider #constraint-provided #create-provider
+                          create chain level block | tag-name symbol
+                          ir: [#ir/do create chain level]]
+      create.ir += [#ir/let create level:-1 |
+                      name:symbol
+                      value: [#ir/create-struct create symbol]]
+    end
+
+    search
+      [#block-tag e tag-name]
+      create = [#real/create e level]
+      ir = [#ir/do create]
+    bind
+      ir.item += [#ir/let #id-lookup create level:0 |
+                      name: [#ir/from-value value:e]
+                      value: [#ir/get
+                                symbol:[#ir/symbol name:tag-name]
+                                attribute:[#ir/symbol name:"id"]]]
+    end
+
+    search
+      ir = [#ir/create-struct create]
+      attribute = create.attribute
+      attribute.a != "tag"
+    bind
+      ir.field += [#ir/field attribute |
+                    name: [#ir/symbol name:attribute.a]
+                    value: [#ir/from-value value:attribute.v]]
+    end
+
+Code Generation
+------------------------------------------------------
+
+From the IR we can generate actual source code in some language that we can then
+execute. At this point, code generation is largely a mechanical process of
+looking at IR nodes and constructing code strings out of them.
+
+    search
+      (ir, js) =
+        if ir = [#ir/symbol name_js] then (ir, name_js)
+        if ir = [#ir/string value] then (ir, "\"{{value}}\"")
+        if ir = [#ir/number value] then (ir, "{{value}}")
+        if ir = [#ir/infix op left right] then (ir, "{{left.js}} {{op}} {{right.js}}")
+        if ir = [#ir/let name value] then (ir, "var {{name.js}} = {{value.js}};")
+        if ir = [#ir/set symbol attribute value] then (ir, "{{symbol.js}}.{{attribute.js}} = {{value.js}};")
+        if ir = [#ir/get symbol attribute] then (ir, "{{symbol.js}}.{{attribute.js}}")
+        if ir = [#ir/do items_js] then (ir, items_js)
+        if ir = [#ir/and items_js] then (ir, "({{items_js}})")
+        if ir = [#ir/or items_js] then (ir, "({{items_js}})")
+        if ir = [#ir/call func_js args_js] then (ir, "{{func_js}}({{args_js}})")
+        if ir = [#ir/watch name args_js] then (ir, "eve_watch({{name.js}}, [{{args_js}}]);")
+        if ir = [#ir/create-struct symbol args_js] then (ir, "new {{symbol.js}}_struct({{args_js}})")
+        if ir = [#ir/define-struct symbol args_js setters_js]
+          then (ir, "var all_{{symbol.js}} = [];
+                     function {{symbol.js}}_struct({{args_js}}) {
+                        {{setters_js}}
+                        this.id = ['{{symbol.js}}', {{args_js}}].join('|');
+                        all_{{symbol.js}}.push(this);
+                        return this;
+                     }")
+        if ir = [#ir/if cond items_js]
+          then (ir, "if( {{cond.js}} ) {
+                        {{items_js}}
+                     }")
+        if ir = [#ir/range symbol start stop items_js]
+          then (ir, "for(var {{symbol.js}} = {{start.js}}; {{symbol.js}} <= {{stop.js}}; {{symbol.js}}++) {
+                        {{items_js}}
+                     }")
+        if ir = [#ir/for symbol tag-name items_js]
+          then (ir, "for(var {{symbol.js}} of all_{{tag-name.js}}) {
+                        {{items_js}}
+                     }")
+        if ir = [#ir/on symbol tag-name items_js]
+          then (ir, "function on_{{tag-name.js}}({{symbol.js}}) {
+                        {{items_js}}
+                     }")
+        if ir = [#ir/main items_js]
+          then (ir, "(function main() {
+                        {{items_js}}
+                     })()")
+        if ir = [#ir/program structs_js ons_js main]
+          then (ir, "//--------------------------------------------
+                     // Structs
+                     //--------------------------------------------
+
+                     {{structs_js}}
+
+                     //--------------------------------------------
+                     // Event handlers
+                     //--------------------------------------------
+
+                     {{ons_js}}
+
+                     //--------------------------------------------
+                     // Main
+                     //--------------------------------------------
+
+                     {{main.js}}")
+    bind
+      ir <- [js]
+    end
+
+For symbols, we sadly can't just take the name, we have to make sure that any
+characters that aren't allowed in JS symbols are replaced with _
+
+    search
+      ir = [#ir/symbol name]
+      name2 = string/replace[text:name replace:"-" with:"_"]
+      name3 = string/replace[text:name2 replace:"/" with:"_"]
+      name4 = string/replace[text:name3 replace:"|" with:"_"]
+      name_js = string/replace[text:name4 replace:" " with:"_"]
+    bind
+      ir <- [name_js]
+    end
+
+All of the ir nodes that are wrappers around a set of items (e.g. do) need to
+have their items concatenated into a string with each item on its own line.
+
+    search
+      ir = if ir = [#ir/do] then ir
+           if ir = [#ir/and] then ir
+           if ir = [#ir/or] then ir
+           if ir = [#ir/if] then ir
+           if ir = [#ir/range] then ir
+           if ir = [#ir/for] then ir
+           if ir = [#ir/on] then ir
+           if ir = [#ir/main] then ir
+    bind
+      ir += #ir/has-items
+    end
+
+    search
+      ir = [#ir/has-items item]
+      level = if item.level then item.level
+              else 0
+      separator = if ir.tag = "ir/and" then " && "
+                  else if ir.tag = "ir/or" then " || "
+                  else "\n"
+      items_js = gather/string-join[for:(level, item) value:item.js separator per:ir]
+    bind
+      ir <- [items_js]
+    end
+
+For functions we may need to map an eve function name to a particular javascript
+function and we also need to gather the arguments to the function and
+concatenate them together.
+
+    commit
+      [#function-mapping eve: "random/number" js: "Math.random"]
+      [#function-mapping eve: "math/sin" js: "Math.sin"]
+      [#function-mapping eve: "math/cos" js: "Math.cos"]
+    end
+
+    search
+      ir = [#ir/call func]
+      func_js = if [#function-mapping eve:func.name js] then js
+                else func.js
+    bind
+      ir <- [func_js]
+    end
+
+    search
+      ir = [#ir/call arg]
+      args_js = gather/string-join[for:arg.index value:arg.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
+    end
+
+Like functions, we have to concatenate all the args together for watches.
+
+    search
+      ir = [#ir/watch arg]
+      args_js = gather/string-join[for:arg.index value:arg.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
+    end
+
+Structs also have args that need to be concatenated together as well as the
+setters for define-struct
+
+    search
+      ir = [#ir/define-struct field:[#ir/field name]]
+      args_js = gather/string-join[for:name.js value:name.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
+    end
+
+    search
+      ir = [#ir/define-struct field:[#ir/field name]]
+      setter = "  this.{{name.js}} = {{name.js}};"
+      setters_js = gather/string-join[for:name.js value:setter separator:"\n" per:ir]
+    bind
+      ir <- [setters_js]
+    end
+
+    search
+      ir = [#ir/create-struct field:[#ir/field name value]]
+      args_js = gather/string-join[for:name.js value:value.js separator:", " per:ir]
+    bind
+      ir <- [args_js]
+    end
+
+For a whole program, we have to gather all the structs and all the ons, and
+the main.
+
+    search
+      program = [#ir/program]
+      ir = [#ir/define-struct js]
+      structs_js = gather/string-join[for:ir value:js separator:"\n\n" per:program]
+    bind
+      program <- [structs_js]
+    end
+
+    search
+      program = [#ir/program]
+      ir = [#ir/on js]
+      ons_js = gather/string-join[for:ir value:js separator:"\n\n" per:program]
+    bind
+      program <- [ons_js]
+    end
+
+    search
+      program = [#ir/program]
+      not([#ir/on js])
+    bind
+      program.ons_js += ""
+    end
+
+    search
+      program = [#ir/program]
+      main = [#ir/main]
+    bind
+      program <- [main]
+    end
+
+
+File parsing
+------------------------------------------------------
+
+    search
+      program = [#program path]
+    bind
+      [#file/read path]
+    end
+
+    search
+      program = [#program path]
+      [#file/read path contents]
+    watch eve/text-compiler
+      ("to-blocks", program, path, contents)
+    end
+
+
+Drawing
+------------------------------------------------------
+
+    search
+      ir = [#ir/program js]
+      output = [#compiler-output]
+    bind
+      output <- [#html/element tagname:"textarea" text:js]
+    end
+
+    search
+      program = [#program]
+    bind
+      [#ui/column children:
+        [#compiler-output style: [height:"50vh"]]
+        [#ui/row children:
+          [#graph/graph #link-graph program]
+          [#graph/graph #optimized-graph program]]]
+    end
+
+    search
+      link = [#chain]
+      label = if link.type = "setup" then "setup"
+              else link.tag-name
+      graph = [#link-graph]
+    bind
+      node = [#graph/node link | label]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link to]
+      graph = [#link-graph]
+    bind
+      node = [#graph/node link | label:to.name]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link from:from-link]
+      from = [#graph/node link:from-link]
+      to = [#graph/node link]
+      graph = [#link-graph]
+    bind
+      edge = [#graph/edge link | from to]
+      graph.edges += edge
+    end
+
+    search
+      link = [#cycle-link from:from-link to-link]
+      from = [#graph/node link:from-link]
+      to = [#graph/node link:to-link]
+      graph = [#link-graph]
+    bind
+      edge = [#graph/back-edge link | from to]
+      graph.edges += edge
+    end
+
+    search
+      link = [#chain]
+      label = if link.type = "setup" then "setup"
+              else link.tag-name
+      graph = [#optimized-graph]
+    bind
+      node = [#graph/node link | label]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link/optimized to]
+      graph = [#optimized-graph]
+    bind
+      node = [#graph/node link | label:to.name]
+      graph.nodes += node
+    end
+
+    search
+      link = [#chain-link/optimized from:from-link]
+      from = [#graph/node link:from-link]
+      to = [#graph/node link]
+      graph = [#optimized-graph]
+    bind
+      edge = [#graph/edge link | from to]
+      graph.edges += edge
+    end
+
+    search
+      graph = [#graph/graph]
+    bind
+      graph.style += [width: "900px" height:"50vh"]
+    end
+
+Test
+------------------------------------------------------
+
+    commit
+      [#external-tags tag-name: ("system/timer/change")]
+      [#define/function/infix name: ("+" "-" "/" "*")]
+    end
+
+    commit
+      [#program path:"examples/test.eve"]
+    end
+
+    search
+      [#ir/program js]
+    bind
+      [#file/write path:"dist/eve-compiled.js" contents:js]
+    end

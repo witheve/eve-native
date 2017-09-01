@@ -2,7 +2,9 @@ extern crate time;
 extern crate walkdir;
 extern crate term_painter;
 
+use std::hash::Hash;
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::RandomState;
 use std::collections::hash_map::Entry;
 use ops::{Interner, Field, Constraint, register, make_scan, make_anti_scan, Internable,
           make_intermediate_insert, make_intermediate_scan, make_filter, make_function,
@@ -38,6 +40,7 @@ pub enum FunctionKind {
     Scalar,
     Sum,
     Sort,
+    SortedSum,
     NeedleSort,
 }
 
@@ -88,9 +91,21 @@ impl FunctionInfo {
 }
 
 lazy_static! {
+    static ref DETERMINISTIC_STATE: RandomState = RandomState::new();
+}
+
+pub fn make_det_hash_map<K: Hash + Eq, V>() -> HashMap<K, V> {
+    HashMap::with_hasher(DETERMINISTIC_STATE.clone())
+}
+
+pub fn make_det_hash_set<V: Hash + Eq>() -> HashSet<V> {
+    HashSet::with_hasher(DETERMINISTIC_STATE.clone())
+}
+
+lazy_static! {
     static ref FUNCTION_INFO: HashMap<String, FunctionInfo> = {
-        let mut m = HashMap::new();
-        let mut info = HashMap::new();
+        let mut m = make_det_hash_map();
+        let mut info = make_det_hash_map();
         info.insert("degrees".to_string(), 0);
         m.insert("math/sin".to_string(), FunctionInfo::new(vec!["degrees"]));
         m.insert("math/cos".to_string(), FunctionInfo::new(vec!["degrees"]));
@@ -115,8 +130,11 @@ lazy_static! {
         m.insert("string/split".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("eve-internal/string/split-reverse".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));
+        m.insert("eve/type-of".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("eve/parse-value".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["sum"], FunctionKind::Sum));
         m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["average"], FunctionKind::Sum));
+        m.insert("gather/string-join".to_string(), FunctionInfo::aggregate(vec!["value", "separator"], vec!["string"], FunctionKind::SortedSum));
         m.insert("gather/count".to_string(), FunctionInfo::aggregate(vec![], vec!["count"], FunctionKind::Sum));
         m.insert("gather/top".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["top"], FunctionKind::Sort));
         m.insert("gather/bottom".to_string(), FunctionInfo::aggregate(vec!["limit"], vec!["bottom"], FunctionKind::Sort));
@@ -709,8 +727,8 @@ impl<'a> Node<'a> {
                             ParamType::Output(ix) => { cur_outputs[ix] = v; }
                             ParamType::Invalid => {
                                 match (info.kind, a) {
-                                    (FunctionKind::Sum, "per") | (FunctionKind::Sort, "per") | (FunctionKind::NeedleSort, "per") => { group.push(v) }
-                                    (FunctionKind::Sum, "for") | (FunctionKind::Sort, "for") | (FunctionKind::NeedleSort, "for") => { projection.push(v) }
+                                    (FunctionKind::Sum, "per") | (FunctionKind::SortedSum, "per") | (FunctionKind::Sort, "per") | (FunctionKind::NeedleSort, "per") => { group.push(v) }
+                                    (FunctionKind::Sum, "for") | (FunctionKind::SortedSum, "for") | (FunctionKind::Sort, "for") | (FunctionKind::NeedleSort, "for") => { projection.push(v) }
                                     (FunctionKind::NeedleSort, "from") => { needle.push(v) }
                                     _ => {
                                         cur_block.error(span, error::Error::UnknownFunctionParam(op.to_string(), a.to_string()));
@@ -770,7 +788,7 @@ impl<'a> Node<'a> {
                     FunctionKind::Multi => {
                         cur_block.constraints.push(make_multi_function(op, cur_params, cur_outputs));
                     },
-                    FunctionKind::Sort | FunctionKind::Sum => {
+                    FunctionKind::Sort | FunctionKind::Sum | FunctionKind::SortedSum => {
                         let mut sub_block = Compilation::new_child(cur_block);
                         let unified_output:Vec<Field> = cur_outputs.iter().map(|x| cur_block.get_unified(x)).collect();
                         sub_block.constraints.push(make_aggregate(op, group.clone(), projection.clone(), cur_params.clone(), unified_output.clone(), info.kind));
@@ -1312,7 +1330,7 @@ impl<'a> Node<'a> {
 
     pub fn sub_blocks(&self, interner:&mut Interner, parent:&mut Compilation) {
         // gather all the registers that we know about at the root
-        let mut parent_registers:HashSet<Field> = HashSet::new();
+        let mut parent_registers:HashSet<Field> = make_det_hash_set();
         for constraint in parent.constraints.iter() {
             parent_registers.extend(constraint.get_registers().iter());
         }
@@ -1322,11 +1340,11 @@ impl<'a> Node<'a> {
 
         let ref mut ancestor_constraints = parent.constraints;
 
-        let mut block_to_inputs = vec![HashSet::new(); parent.sub_blocks.len()];
+        let mut block_to_inputs = vec![make_det_hash_set(); parent.sub_blocks.len()];
         // go through the sub blocks to determine what their inputs are and generate their
         // outputs
         for (ix, sub_block) in parent.sub_blocks.iter_mut().enumerate() {
-            let mut sub_registers = HashSet::new();
+            let mut sub_registers = make_det_hash_set();
             sub_registers.extend(sub_block.get_all_registers().iter());
             block_to_inputs[ix].extend(parent_registers.intersection(&sub_registers).cloned());
             ancestor_constraints.push(self.sub_block_output(interner, sub_block, ix, &block_to_inputs[ix]));
@@ -1462,7 +1480,7 @@ impl<'a> Node<'a> {
 }
 
 pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
-    let mut related = HashSet::new();
+    let mut related = make_det_hash_set();
     for hay in haystack {
         let mut found = false;
         let outs = hay.get_output_registers();
@@ -1512,7 +1530,7 @@ pub fn get_input_constraints(needles:&HashSet<Field>, haystack:&Vec<Constraint>)
 
 pub fn get_input_constraints_transitive(needles:&HashSet<Field>, haystack:&Vec<Constraint>) -> Vec<Constraint> {
     let mut transitive_needles = needles.clone();
-    let mut related = HashSet::new();
+    let mut related = make_det_hash_set();
     let mut changed = true;
     while changed {
         changed = false;
@@ -1571,7 +1589,7 @@ pub struct Compilation {
 
 impl Compilation {
     pub fn new(block_name:String) -> Compilation {
-        Compilation { mode: CompilationMode::Search, vars:HashMap::new(), var_values:HashMap::new(), unified_registers:HashMap::new(), provided_registers:HashMap::new(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false, errors: vec![] }
+        Compilation { mode: CompilationMode::Search, vars:make_det_hash_map(), var_values:make_det_hash_map(), unified_registers:make_det_hash_map(), provided_registers:make_det_hash_map(), equalities:vec![], id:0, block_name, constraints:vec![], sub_blocks:vec![], required_fields:vec![], is_child: false, errors: vec![] }
     }
 
     pub fn new_child(parent:&Compilation) -> Compilation {
@@ -1630,8 +1648,8 @@ impl Compilation {
     }
 
     pub fn get_inputs(&self, haystack: &Vec<Constraint>) -> HashSet<Field> {
-        let mut regs = HashSet::new();
-        let mut input_regs = HashSet::new();
+        let mut regs = make_det_hash_set();
+        let mut input_regs = make_det_hash_set();
         for needle in self.constraints.iter() {
             for reg in needle.get_registers() {
                 regs.insert(reg);
@@ -1650,13 +1668,13 @@ impl Compilation {
 
     pub fn finalize(&mut self) {
         self.reassign_registers();
-        let mut collapsed = HashSet::new();
+        let mut collapsed = make_det_hash_set();
         collapsed.extend(self.constraints.drain(..));
         self.constraints.extend(collapsed);
     }
 
     pub fn reassign_registers(&mut self) {
-        let mut regs = HashMap::new();
+        let mut regs = make_det_hash_map();
         let ref var_values = self.var_values;
         let mut ix = 0;
         for c in self.constraints.iter() {
@@ -1752,13 +1770,17 @@ pub fn compilation_to_blocks(mut comp:Compilation, interner: &mut Interner, path
                 }
             }
             let interned_name = interner.string_id(&sub_name);
-            compilation_blocks.push(Block::new(interner, &sub_name, interned_name, sub_comp.constraints.clone()));
+            let mut block = Block::new(interner, &sub_name, interned_name, sub_comp.constraints.clone());
+            block.path = path.to_owned();
+            compilation_blocks.push(block);
         }
         subs.extend(sub_comp.sub_blocks.iter_mut());
         sub_ix += 1;
     }
     let interned_name = interner.string_id(&block_name);
-    compilation_blocks.push(Block::new(interner, &block_name, interned_name, comp.constraints));
+    let mut block = Block::new(interner, &block_name, interned_name, comp.constraints);
+    block.path = path.to_owned();
+    compilation_blocks.push(block);
     compilation_blocks
 }
 
@@ -1787,7 +1809,7 @@ pub fn parse_string(interner:&mut Interner, content:&str, path:&str, debug: bool
                         println!("   {:?}", c);
                     }
                 }
-                program_blocks.extend(compilation_to_blocks(comp, interner, &block_name[..], content, debug));
+                program_blocks.extend(compilation_to_blocks(comp, interner, path, content, debug));
             }
             program_blocks
         } else {
@@ -1809,7 +1831,7 @@ pub fn parse_file(interner:&mut Interner, path:&str, report: bool, debug: bool) 
                let ext = entry.path().extension().map(|x| x.to_str().unwrap());
                match ext {
                    Some("eve") | Some("md") => {
-                       paths.push(entry.path().to_str().unwrap().to_string());
+                       paths.push(entry.path().canonicalize().unwrap().to_str().unwrap().to_string());
                    },
                    _ => {}
                }

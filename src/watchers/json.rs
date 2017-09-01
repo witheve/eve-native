@@ -5,16 +5,33 @@ use super::Watcher;
 
 extern crate serde_json;
 extern crate serde;
-use self::serde_json::{Map, Value, Number};
+use self::serde_json::{Value};
+use std::collections::HashMap;
 
 pub struct JsonWatcher {
     name: String,
     outgoing: Sender<RunLoopMessage>,
+    join_strings_map: HashMap<String, JoinStrings>,
 }
 
 impl JsonWatcher {
     pub fn new(outgoing: Sender<RunLoopMessage>) -> JsonWatcher {
-        JsonWatcher { name: "json".to_string(), outgoing }
+        JsonWatcher { name: "json".to_string(), join_strings_map: HashMap::new(), outgoing }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JoinStrings {
+    strings: Vec<String>,
+    with: String
+}
+
+impl JoinStrings {
+    pub fn new(with: String) -> JoinStrings {
+        JoinStrings { with, strings: vec![]  }
+    }
+    pub fn join(&self) -> String {
+        self.strings.join(self.with.as_ref())
     }
 }
 
@@ -26,52 +43,53 @@ impl Watcher for JsonWatcher {
         self.name = name.to_string();
     }
     fn on_diff(&mut self, interner:&mut Interner, diff:WatchDiff) {
-        let mut record_map = Map::new();
         let mut changes: Vec<RawChange> = vec![];
-        let mut id = "".to_string();
-        for add in diff.adds {
-            let kind = Internable::to_string(interner.get_value(add[0]));
-            let record_id = Internable::to_string(interner.get_value(add[1]));
-            let j_arg = Internable::to_string(interner.get_value(add[2]));
-            
-            match (&kind[..], j_arg) {
-                ("encode/target", _) => {
-                    id = Internable::to_string(interner.get_value(add[2]));
-                },
-                ("encode/eav", j_arg) => {
-                    let e = j_arg;
-                    let a = Internable::to_string(interner.get_value(add[3]));
-                    let v: Value = match interner.get_value(add[4]) {
-                        &Internable::Number(ref n) => Value::Number(Number::from(n.clone())),
-                        &Internable::String(ref n) => Value::String(String::from(n.clone())),
-                        _ => Value::Null,
-                    };
-                    if record_map.contains_key(&e) {
-                        let record = record_map.get_mut(&e).unwrap();
-                        let sub_record = record.as_object_mut().unwrap();
-                        sub_record.insert(a, v);
-                    } else {
-                        let mut new_record = Map::new();
-                        new_record.insert(a, v);
-                        record_map.insert(e, Value::Object(new_record));
-                    }
-                },
-                ("decode", value) => {
-                    let v: Value = serde_json::from_str(&value).unwrap();
-                    value_to_changes(&record_id.to_string(), "json-object", v, "json/decode", &mut changes);
+        for remove in diff.removes {
+            let kind = Internable::to_string(interner.get_value(remove[0]));
+            match kind.as_ref() {
+                "join" => {
+                    let id = Internable::to_string(interner.get_value(remove[1]));
+                    let string = Internable::to_string(interner.get_value(remove[2]));
+                    let join_strings = self.join_strings_map.get_mut(&id).unwrap();
+                    let index = join_strings.strings.iter().position(|x| *x == string).unwrap();
+                    join_strings.strings.remove(index);
                 },
                 _ => {},
             }
         }
-        
-        if let Some(target_record) = record_map.get(&id) {
-            let inner_map = target_record.as_object().unwrap();
-            let dereferenced_target = dereference(inner_map, &record_map);
-            let json = serde_json::to_string(&dereferenced_target).unwrap();
-            let change_id = format!("json/encode/change|{:?}",id);
-            changes.push(new_change(&change_id, "tag", Internable::from_str("json/encode/change"), "json/encode"));
-            changes.push(new_change(&change_id, "json-string", Internable::String(json), "json/encode"));
-            changes.push(new_change(&change_id, "record", Internable::String(id), "json/encode"));
+        for add in diff.adds {
+            let kind = Internable::to_string(interner.get_value(add[0]));
+            let record_id = Internable::to_string(interner.get_value(add[1]));
+            match kind.as_ref() {
+                "decode" => {
+                    let value = Internable::to_string(interner.get_value(add[2]));
+                    let v: Value = serde_json::from_str(&value).unwrap();                    let change_id = format!("json/decode/change|{:?}",record_id);
+                    value_to_changes(change_id.as_ref(), "json-object", v, "json/decode", &mut changes);
+                    changes.push(new_change(&change_id, "tag", Internable::from_str("json/decode/change"), "json/decode"));
+                    changes.push(new_change(&change_id, "decode", Internable::String(record_id), "json/decode"));
+                },
+                "join" => {
+                    let id = Internable::to_string(interner.get_value(add[1]));
+                    let string = Internable::to_string(interner.get_value(add[2]));
+                    let with = Internable::to_string(interner.get_value(add[3]));
+                    if self.join_strings_map.contains_key(&id) {
+                        let join_strings = self.join_strings_map.get_mut(&id).unwrap();
+                        join_strings.strings.push(string);
+                    } else {
+                        let mut join_strings = JoinStrings::new(with);
+                        join_strings.strings.push(string);
+                        self.join_strings_map.insert(id, join_strings);
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        for (record_id, join_strings) in self.join_strings_map.iter() {
+            let join_id = format!("string/join|{:?}",record_id);
+            changes.push(new_change(&join_id, "tag", Internable::from_str("string/join/result"), "string/join"));
+            changes.push(new_change(&join_id, "result", Internable::String(join_strings.join()), "string/join"));
+            changes.push(new_change(&join_id, "record", Internable::String(record_id.to_owned()), "string/join"));
         }
         match self.outgoing.send(RunLoopMessage::Transaction(changes)) {
             Err(_) => (),
@@ -80,26 +98,6 @@ impl Watcher for JsonWatcher {
     }
 }
 
-// Resolves all the object links in the flat map
-fn dereference(target: &Map<String,Value>, flatmap: &Map<String,Value>) -> Map<String,Value> {
-    let mut dereferenced = Map::new();
-    for key in target.keys() {
-        let value = target.get(key).unwrap();
-        match value.as_str() {
-            Some(v) => {
-                if flatmap.contains_key(v) {
-                    let value = flatmap.get(v).unwrap().as_object().unwrap();
-                    dereferenced.insert(key.to_string(),Value::Object(dereference(value, flatmap)));
-                } else {
-                    dereferenced.insert(key.to_string(),value.clone());
-                }
-            },
-            None => (),
-        };
-    }
-    dereferenced
-}
-    
 pub fn new_change(e: &str, a: &str, v: Internable, n: &str) -> RawChange {
     RawChange {e: Internable::from_str(e), a: Internable::from_str(a), v: v.clone(), n: Internable::from_str(n), count: 1}
 }
@@ -122,13 +120,16 @@ pub fn value_to_changes(id: &str, attribute: &str, value: Value, node: &str, cha
             changes.push(new_change(id,attribute,Internable::String(n.clone()),node));
         },
         Value::Bool(ref n) => {
-            let b = format!("{:?}", n);
-            changes.push(new_change(id,attribute,Internable::String(b),node));
+            let b = match n {
+                &true => "true",
+                &false => "false",
+            };
+            changes.push(new_change(id,attribute,Internable::from_str(b),node));
         },
         Value::Array(ref n) => {
             for (ix, value) in n.iter().enumerate() {
                 let ix = ix + 1;
-                let array_id = format!("array|{:?}|{:?}",ix,value);
+                let array_id = format!("array|{:?}|{:?}|{:?}", id, ix, value);
                 let array_id = &array_id[..];
                 changes.push(new_change(id,attribute,Internable::from_str(array_id),node));
                 changes.push(new_change(array_id,"tag",Internable::from_str("array"),node));
@@ -145,56 +146,5 @@ pub fn value_to_changes(id: &str, attribute: &str, value: Value, node: &str, cha
             }
         },
     _ => {},
-    }  
-}   
-
-/*
-#[derive(Debug)]
-pub enum ChangeVec {
-    Changes(Vec<RawChange>)
-}
-
-impl ChangeVec {
-    pub fn new() -> ChangeVec {
-        ChangeVec::Changes(Vec::new())
     }
 }
-
-impl<'de> Deserialize<'de> for ChangeVec {
-
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer<'de>
-    {
-        struct ChangeVecVisitor {
-            marker: PhantomData<ChangeVec>
-        }
-
-        impl ChangeVecVisitor {
-            fn new() -> Self {
-                ChangeVecVisitor {
-                    marker: PhantomData
-                }
-            }
-        }
-
-        impl<'de> Visitor<'de> for ChangeVecVisitor {
-            type Value = ChangeVec;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("expecting a thing")
-            }
-
-            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
-                where M: MapAccess<'de>
-            {
-                let mut vec = Vec::new();
-                while let Some(kv) = try!(access.next_entry()) {
-                    vec.push(kv);
-                }
-                Ok(ChangeVec::new())
-            }
-        }
-
-        deserializer.deserialize_any(ChangeVecVisitor::new())
-    }
-}*/

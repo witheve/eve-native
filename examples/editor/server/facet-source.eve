@@ -1,0 +1,67 @@
+# Facet Source
+
+## Editor Explorer
+
+Inject titles for open cards.
+~~~ eve
+search
+  card = [#facet/record/card source: "editor/explorer" entity]
+  [#editor/explorer/client-name entity name]
+bind
+  card.name += name
+end
+~~~
+
+Check if a value tile is a remote record.
+~~~ eve
+search
+  av = if [#facet/record/card source: "editor/explorer" av] then av
+       if [#facet/record source: "editor/explorer" av] then av
+  [#editor/explorer/client-record value: av.value]
+bind
+  av.kind += "facet/record/button"
+end
+~~~
+
+Apply titles to record value tiles for remote records.
+~~~ eve
+search
+  facet = [#facet/record/button source: "editor/explorer" value]
+  [#editor/explorer/client-name entity: value name]
+bind
+  facet.name += name
+end
+~~~
+
+
+## Editor Timeline
+
+Decorate literal values as records, if relevant.
+~~~ eve
+search
+  [#facet/record/literal source: "editor/timeline" av]
+  [#editor/explorer/client-name entity: av.value]
+bind
+  av.kind += "facet/record/button"
+end
+~~~
+
+Name client record buttons.
+~~~ eve
+search
+  button = [#facet/record/button source: "editor/timeline" value: entity]
+  [#editor/explorer/client-name entity name]
+bind
+  button.name += name
+end
+~~~
+
+Decorate value and tag literals with their change type.
+~~~ eve
+search
+  facet = if f = [#facet/value/literal source: "editor/timeline"] then f
+          if f = [#facet/tag/literal source: "editor/timeline"] then f
+bind
+  facet.change += facet.av.change
+end
+~~~
