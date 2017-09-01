@@ -15,6 +15,5 @@ pub mod json;
 pub mod http;
 pub mod textcompiler;
 pub mod editor;
-pub mod json;
 pub mod remote;
 pub mod websocket;
