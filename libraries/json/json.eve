@@ -159,4 +159,3 @@ commit
   decode.json-object := json-object
   decode-change := none
 end
-

@@ -63,8 +63,7 @@ impl Watcher for JsonWatcher {
             match kind.as_ref() {
                 "decode" => {
                     let value = Internable::to_string(interner.get_value(add[2]));
-                    let v: Value = serde_json::from_str(&value).unwrap();
-                    let change_id = format!("json/decode/change|{:?}",record_id);
+                    let v: Value = serde_json::from_str(&value).unwrap();                    let change_id = format!("json/decode/change|{:?}",record_id);
                     value_to_changes(change_id.as_ref(), "json-object", v, "json/decode", &mut changes);
                     changes.push(new_change(&change_id, "tag", Internable::from_str("json/decode/change"), "json/decode"));
                     changes.push(new_change(&change_id, "decode", Internable::String(record_id), "json/decode"));
@@ -147,5 +146,5 @@ pub fn value_to_changes(id: &str, attribute: &str, value: Value, node: &str, cha
             }
         },
     _ => {},
-    }  
+    }
 }

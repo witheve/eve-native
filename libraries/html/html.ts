@@ -1,6 +1,7 @@
 import md5 from "md5";
 import "setimmediate";
 import {Program, Library, createId, RawValue, RawEAV, RawMap, handleTuples} from "../../ts";
+import url from "url";
 
 const EMPTY:never[] = [];
 
@@ -99,23 +100,30 @@ export class HTML extends Library {
     this._dummy = document.createElement("div");
 
     window.addEventListener("resize", this._resizeEventHandler("resize-window"));
+
+    // Mouse events
     window.addEventListener("click", this._mouseEventHandler("click"));
     window.addEventListener("dblclick", this._mouseEventHandler("double-click"));
     window.addEventListener("mousedown", this._mouseEventHandler("mouse-down"));
     window.addEventListener("mouseup", this._mouseEventHandler("mouse-up"));
     window.addEventListener("contextmenu", this._captureContextMenuHandler());
-
-    window.addEventListener("change", this._changeEventHandler("change"));
-    window.addEventListener("input", this._inputEventHandler("change"));
-    window.addEventListener("keydown", this._keyEventHandler("key-down"));
-    window.addEventListener("keyup", this._keyEventHandler("key-up"));
-    window.addEventListener("focus", this._focusEventHandler("focus"), true);
-    window.addEventListener("blur", this._focusEventHandler("blur"), true);
-
     document.body.addEventListener("mouseenter", this._hoverEventHandler("hover-in"), true);
     document.body.addEventListener("mouseleave", this._hoverEventHandler("hover-out"), true);
 
-    // window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
+    // Form events
+    window.addEventListener("change", this._changeEventHandler("change"));
+    window.addEventListener("input", this._inputEventHandler("change"));
+    window.addEventListener("focus", this._focusEventHandler("focus"), true);
+    window.addEventListener("blur", this._focusEventHandler("blur"), true);
+
+    // Keyboard events
+    window.addEventListener("keydown", this._keyEventHandler("key-down"));
+    window.addEventListener("keyup", this._keyEventHandler("key-up"));
+
+    // Frame events
+    window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
+    //window.addEventListener("pageshow", this._pageShowHandler("page-show"));
+    this.getURL(window.location);
   }
 
   protected decorate(elem:Element, elemId:RawValue): Instance {
@@ -397,6 +405,11 @@ export class HTML extends Library {
         if(!instance.__capturedKeys) instance.__capturedKeys = {[code]: true};
         else instance.__capturedKeys[code] = true;
       }
+    }),
+    "redirect": handleTuples(({adds, removes}) => {
+      for(let [url] of adds || EMPTY) {
+        window.location.replace(`${url}`);
+      }
     })
   };
 
@@ -630,6 +643,93 @@ export class HTML extends Library {
       }
       if(eavs.length) this._sendEvent(eavs);
     };
+  }
+
+  _hashChangeHandler(tagname:string) {
+    console.log("Hash Change");
+    return (event: HashChangeEvent) => {
+      if (event.newURL !== null) {
+        let eavs:RawEAV[] = [];
+        let eventId = createId();
+        let urlId = createId();
+        let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(event.newURL, true);
+        eavs.push(
+          [eventId, "tag", "html/event"],
+          [eventId, "tag", `html/event/${tagname}`],
+          [eventId, "url", `${urlId}`],
+          [urlId, "tag", "html/url"],
+          [urlId, "host", `${host}`],
+          [urlId, "hash", `${hash}`],
+          [urlId, "hostname", `${hostname}`],
+          [urlId, "href", `${href}`],
+          [urlId, "pathname", `${pathname}`],
+          [urlId, "port", `${port}`],
+          [urlId, "protocol", `${protocol}`],
+        );
+        let ix = 1;
+        for (var key in query) {
+          let value = query[key];
+          let queryId = createId();
+          eavs.push(
+            [urlId, "query", `${queryId}`],
+            [queryId, "index", `${ix}`],
+            [queryId, "key", key],
+            [queryId, "value", value],
+          )
+          ix++;
+        }
+        this._sendEvent(eavs);
+      }    
+    }
+  }
+
+  getURL(location: Location) {
+    let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(location.href, true);
+    let eavs:RawEAV[] = [];
+    let urlId = createId();
+    eavs.push(
+      [urlId, "tag", "html/url"],
+      [urlId, "host", `${host}`],
+      [urlId, "hash", `${hash}`],
+      [urlId, "hostname", `${hostname}`],
+      [urlId, "href", `${href}`],
+      [urlId, "pathname", `${pathname}`],
+      [urlId, "port", `${port}`],
+      [urlId, "protocol", `${protocol}`],
+    );
+    // Parse Query String
+    let ix = 1;
+    for (var key in query) {
+      let value = query[key];
+      let queryId = createId();
+      eavs.push(
+        [urlId, "query", `${queryId}`],
+        [queryId, "tag", `html/url/query`],
+        [queryId, "index", `${ix}`],
+        [queryId, "key", key],
+        [queryId, "value", value],
+      )
+      ix++;
+    }
+    // Parse Hash String
+    if (hash !== undefined && hash !== null) {
+      let pairs = hash.substring(1).split('&');  
+      for (var pair of pairs) {
+        let queryId = createId();
+        let parts = pair.split('=');
+        if (parts.length == 2) {
+          eavs.push(
+            [urlId, "query", `${queryId}`],
+            [queryId, "tag", `html/url/query`],
+            [queryId, "index", `${ix}`],
+            [queryId, "key", parts[0]],
+            [queryId, "value", parts[1]],
+          )
+        }
+        ix++;
+      }
+    }
+    this._sendEvent(eavs);
   }
 }
 

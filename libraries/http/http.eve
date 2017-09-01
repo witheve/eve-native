@@ -1,0 +1,103 @@
+# HTTP
+
+
+
+## Send an HTTP Request
+
+Watch for HTTP requests. requests with multiple headers will be processed
+several times, but the request is not send until the diff is completely
+resolved to avoid duplicate requests.
+
+search
+  request = [#http/request address method body headers: [#http/header key value]]
+watch http
+  ("request", request, address, method, body, key, value)
+end
+
+Default method
+
+search
+  request = [#http/request]
+  not(request.method)
+commit
+  request.method := "GET"
+end
+
+Default empty body
+
+search
+  request = [#http/request]
+  not(request.body)
+commit
+  request.body := ""
+end
+
+Default empty header
+
+search
+  request = [#http/request]
+  not(request.headers)
+commit
+  request.headers := [#http/header key: "" value: ""]
+end
+
+Associate response with its request
+
+search
+  response = [#http/response request]
+  request = [#http/request]
+commit
+  request.response := response
+end
+
+Associate an error with its request
+
+search
+  error = [#http/request/error request]
+  request = [#http/request]
+commit
+  request.error := error
+end
+
+Tag a finished request as such
+
+search
+  [#http/request/finished request]
+commit
+  request += #finished
+end
+
+Reconstruct a body from chunks, only after the request is`#finished`
+
+search
+  [#http/body-chunk response chunk index]
+  response = [#http/response request]
+  request = [#http/request #finished]
+watch http
+  ("body", response, chunk, index)
+end
+
+When the full body is reconstructed, attach it to the response
+
+search
+  q = [#http/full-body body response]
+commit
+  response.body := body
+end
+
+Clean up body chunks once the body is reconstructed
+
+search
+  chunk = [#http/body-chunk response]
+  response = [#http/response body]
+commit
+  chunk := none
+end
+
+## Process HTTP Requests
+
+search
+  server = [#http/server address]
+watch http
+  ("server", server, address)
+end

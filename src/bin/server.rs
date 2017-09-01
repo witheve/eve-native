@@ -28,6 +28,8 @@ use eve::paths::EvePaths;
 use eve::ops::{ProgramRunner, RunLoop, RunLoopMessage, RawChange, Internable, Persister, JSONInternable};
 use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::compiler::{CompilerWatcher};
+use eve::watchers::http::{HttpWatcher};
+use eve::watchers::json::JsonWatcher;
 use eve::watchers::textcompiler::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
 use eve::watchers::json::JsonWatcher;
@@ -35,6 +37,7 @@ use eve::watchers::file::{FileWatcher};
 use eve::watchers::editor::EditorWatcher;
 use eve::watchers::remote::{Router, RouterMessage, RemoteWatcher};
 use eve::watchers::websocket::WebsocketClientWatcher;
+
 
 extern crate iron;
 extern crate staticfile;
@@ -79,6 +82,8 @@ impl ClientHandler {
         router.lock().expect("ERROR: Failed to lock router: Cannot register new client.").register(&client_name, outgoing.clone());
         if !eve_flags.clean {
             runner.program.attach(Box::new(SystemTimerWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
+            runner.program.attach(Box::new(HttpWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(CompilerWatcher::new(outgoing.clone(), false)));
             runner.program.attach(Box::new(RawTextCompilerWatcher::new(outgoing.clone())));
             runner.program.attach(Box::new(FileWatcher::new(outgoing.clone())));

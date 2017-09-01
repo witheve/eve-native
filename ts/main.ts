@@ -79,6 +79,7 @@ class MultiplexedConnection extends Connection {
       this.addPane(client, html.getContainer());
       program.attach("canvas");
       program.attach("console");
+      program.attach("stream");
       program.attach("code-block");
       program.attach("graph");
     },

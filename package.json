@@ -17,6 +17,7 @@
   "license": "UNLICENSED",
   "dependencies": {
     "@types/vis": "^4.18.4",
+    "hls.js": "^0.7.11",
     "codemirror": "^5.28.0",
     "codemirror-mode-eve": "0.0.1",
     "md5": "^2.2.1",
@@ -24,11 +25,13 @@
     "setimmediate": "^1.0.5",
     "uuid": "^3.1.0",
     "vis": "^4.20.1"
+    "url": "^0.11.0"
   },
   "devDependencies": {
     "@types/codemirror": "0.0.41",
     "@types/md5": "^2.1.32",
     "@types/uuid": "^3.4.0",
+    "@types/hls.js": "^0.7.5",
     "autoprefixer": "^7.1.2",
     "postcss-color-function": "^4.0.0",
     "postcss-custom-properties": "^6.1.0",

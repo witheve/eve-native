@@ -12,6 +12,7 @@ use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
 use eve::watchers::json::JsonWatcher;
+use eve::watchers::http::HttpWatcher;
 
 //-------------------------------------------------------------------------
 // Main
@@ -70,6 +71,7 @@ fn main() {
         runner.program.attach(Box::new(ConsoleWatcher::new()));
         runner.program.attach(Box::new(PrintDiffWatcher::new()));
         runner.program.attach(Box::new(JsonWatcher::new(outgoing.clone())));
+        runner.program.attach(Box::new(HttpWatcher::new(outgoing.clone())));
         runner.program.attach(Box::new(PanicWatcher::new()));
     }
 
