@@ -127,6 +127,7 @@ class MultiplexedConnection extends Connection {
   }
 }
 
+(window as any)["RemoteProgram"] = RemoteProgram;
 let connection = new MultiplexedConnection(new WebSocket(`ws://${location.hostname}:3012`));
 
 console.log(connection);

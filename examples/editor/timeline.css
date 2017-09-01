@@ -3,7 +3,7 @@
     to { margin-top: 0;  }
 }
 
-.editor-timeline-root { position: relative; overflow-x: visible; }
+.editor-timeline-root { flex: 0 0 auto; position: relative; overflow-x: visible; }
 .editor-timeline-scroller { height: 100vh; width: 50px; overflow-y: hidden; }
 .editor-timeline { flex-direction: column-reverse; justify-content: flex-end; }
 .editor-transaction { flex: 0 0 auto; position: relative; padding: 5px 10px; border: 1px solid #f9f9f9; border-left-width: 2px; border-right-width: 2px; background: #ddd; text-align: center; cursor: pointer; user-select: none; animation-name: slide-in; animation-duration: 0.2s; animation-fill-mode: forwards; animation-timing-function: ease-in; }
@@ -27,5 +27,4 @@
 
 .editor-transaction-viewer-output-name { line-height: 1.5; }
 .editor-transaction-viewer-output-name:before { content: "⬢"; color: #888; }
-.editor-transaction-viewer-output-name:not(:empty):before { margin-right: 8px; }
 .editor-transaction-viewer-output-name:after { content: "<-"; margin: 0 8px; color: #888; }

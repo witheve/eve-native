@@ -133,7 +133,7 @@ search
   viewer = [#editor/transaction-viewer transaction: [input]]
   inputs = [#editor/transaction-viewer/inputs viewer]
 bind
-  inputs.children += [#record-card/record-literal input | av: input.av]
+  inputs.children += [#facet/record/literal input source: "editor/timeline" | av: input.av]
 end
 ~~~
 
@@ -144,8 +144,8 @@ search
   outputs = [#editor/transaction-viewer/outputs viewer]
 bind
   outputs.children += [#html/div output | children:
-    [#ui/button #record-card/record #editor/transaction-viewer/output/name value: output.entity]
-    [#record-card/record-literal output | av: output.av]]
+    [#ui/button #facet/record/button #editor/transaction-viewer/output/name class: "flat" value: output.entity]
+    [#facet/record/literal output source: "editor/timeline" | av: output.av]]
 end
 ~~~
 
@@ -155,21 +155,9 @@ search
   output = [#editor/transaction-viewer/output/name value: entity]
   [#editor/explorer/client-name entity name]
 bind
-  output.text += name
+  output.name += name
 end
 ~~~
-
-Decorate literal values as records, if relevant.
-~~~ eve
-search
-  [#record-card/record-literal av]
-  [#editor/explorer/client-name entity: av.value name]
-bind
-  av.type += "record"
-  av.text += name
-end
-~~~
-
 
 
 ## Transaction Saving

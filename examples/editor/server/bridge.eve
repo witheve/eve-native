@@ -102,7 +102,7 @@ When the completion pattern has at least one attribute, create a completer block
 ~~~ eve
 search
   [#editor/explorer/query completion-pattern]
-  completion-pattern.attribute
+  completion-pattern.av
 bind
   record-var = [#eve/compiler/variable name: "record" completion-pattern]
   attr-var = [#eve/compiler/variable name: "attribute" completion-pattern]
@@ -110,24 +110,24 @@ bind
   tag-var = [#eve/compiler/variable name: "tag" completion-pattern]
   program-var = [#eve/compiler/variable name: "editor-program"]
   editor-var = [#eve/compiler/variable name: "editor-name"]
-  [#eve/compiler/block #editor/explorer/completer type: "bind" | record-var constraint:
+  [#eve/compiler/block #editor/explorer/completer type: "bind" | editor-var record-var constraint:
     [#eve/compiler/scan entity: program-var attribute: "tag" value: "editor/program"]
     [#eve/compiler/scan entity: program-var attribute: "name" value: editor-var]
     [#eve/compiler/scan entity: record-var attribute: attr-var value: val-var]
     [#eve/compiler/scan entity: record-var attribute: "tag" value: tag-var] // @FIXME: This won't work on records with no tags **********
     [#eve/compiler/remote-output to: editor-var for: "completion-record" entity: completion-pattern attribute: "record" value: record-var]
-    [#eve/compiler/remote-output to: editor-var for: "completion-attribute" entity: record-var attribute: "value" value: attr-var]
-    [#eve/compiler/remote-output to: editor-var for: "completion-tag" entity: record-var attribute: "value" value: tag-var]]
+    [#eve/compiler/remote-output to: editor-var for: "completion-tag" entity: completion-pattern attribute: "value" value: tag-var]
+    [#eve/compiler/remote-output to: editor-var for: "completion-attribute" entity: completion-pattern attribute: "value" value: attr-var]]
 end
 ~~~
 
 Fully formed AVs translate into eAV scans.
 ~~~ eve
 search
-  [#editor/explorer/query completion-pattern: [attribute: [attribute value]]]
+  [#editor/explorer/query completion-pattern: [av: [attribute value]]]
   block = [#editor/explorer/completer record-var]
 bind
-  block.constraint += [#eve/compiler/scan entity: record-var attribute value]
+  block <- [constraint: [#eve/compiler/scan entity: record-var attribute value]]
 end
 ~~~
 
@@ -135,12 +135,14 @@ AVs with only an A translate into eAv scans.
 ~~~ eve
 search
   [#editor/explorer/query completion-pattern]
-  completion-pattern = [attribute]
-  not(attribute.value)
-  block = [#editor/explorer/completer record-var]
+  completion-pattern = [av]
+  not(av.value)
+  block = [#editor/explorer/completer record-var editor-var]
 bind
-  value-var = [#eve/compiler/variable completion-pattern attribute]
-  block.constraint += [#eve/compiler/scan entity: record-var attribute: attribute.attribute value: value-var]
+  value-var = [#eve/compiler/variable completion-pattern av]
+  block <- [constraint:
+    [#eve/compiler/scan entity: record-var attribute: av.attribute value: value-var]
+    [#eve/compiler/remote-output to: editor-var for: "completion-record-av" entity: record-var attribute: av.attribute value: value-var]]
 end
 ~~~
 
@@ -170,17 +172,17 @@ end
 Dump completion tags into the editor.
 ~~~ eve
 search
-  lookup-remote[for: "completion-tag" entity: record attribute: "value" value: tag type: "add"]
+  lookup-remote[for: "completion-tag" entity: pattern attribute: "value" value: tag type: "add"]
 commit
-  [#editor/explorer/completion-tag record value: tag]
+  [#editor/explorer/completion-tag pattern value: tag]
 end
 ~~~
 
 Nuke old completion tags.
 ~~~ eve
 search
-  lookup-remote[for: "completion-tag" entity: record attribute: "value" value: tag type: "remove"]
-  completion = [#editor/explorer/completion-tag record value: tag]
+  lookup-remote[for: "completion-tag" entity: pattern attribute: "value" value: tag type: "remove"]
+  completion = [#editor/explorer/completion-tag pattern value: tag]
 commit
   completion := none
 end
@@ -191,19 +193,43 @@ end
 Dump completion attributes into the editor.
 ~~~ eve
 search
-  lookup-remote[for: "completion-attribute" entity: record attribute: "value" value: attribute type: "add"]
+  lookup-remote[for: "completion-attribute" entity: pattern attribute: "value" value: attribute type: "add"]
 commit
-  [#editor/explorer/completion-attribute record value: attribute]
+  [#editor/explorer/completion-attribute pattern value: attribute]
 end
 ~~~
 
 Nuke old completion attributes.
 ~~~ eve
 search
-  lookup-remote[for: "completion-attribute" entity: record attribute: "value" value: attribute type: "remove"]
-  completion = [#editor/explorer/completion-attribute record value: attribute]
+  lookup-remote[for: "completion-attribute" entity: pattern attribute: "value" value: attribute type: "remove"]
+  completion = [#editor/explorer/completion-attribute pattern value: attribute]
 commit
   completion := none
+end
+~~~
+
+### Completion AVs
+
+Dump completion AVs into the editor.
+~~~ eve
+search
+  lookup-remote[for: "completion-record-av" entity: record attribute value type: "add"]
+  completion-record = [#editor/explorer/completion-record record]
+commit
+  completion-record.av += [record attribute value]
+end
+~~~
+
+Nuke old completion AVs.
+~~~ eve
+search
+  lookup-remote[for: "completion-record-av" entity: record attribute value type: "remove"]
+  completion-record = [#editor/explorer/completion-record record av]
+  av = [attribute value]
+commit
+  completion-record.av -= av
+  av := none
 end
 ~~~
 

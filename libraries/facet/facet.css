@@ -1,0 +1,57 @@
+/* Record Default */
+
+.facet-record { padding: 10px; line-height: 1.5; }
+.facet-av > label { padding-right: 5px; min-width: 60px; }
+.facet-av > * + * { margin-left: 5px; }
+
+.facet-record { background: white; border-radius: 4px; }
+
+/* Record Button */
+.ui-button.facet-record-button:before { content: "⬢"; margin-right: 0; opacity: 0.5; }
+
+/* Record Literal */
+
+.facet-record-literal { line-height: 1.4; }
+.facet-record-literal > * { display: inline-block; margin: 2px 0; }
+.facet-record-literal > * + * { margin-left: 8px; }
+.facet-record-literal:before { content: "["; margin: 2px 0; }
+.facet-record-literal:after { content: "]"; margin: 2px 0; }
+.facet-record-literal-tag { color: #0076ce; }
+.facet-av-literal > label:after { content: ":"; }
+.facet-av-literal > * + * { margin-left: 5px; }
+.facet-av-literal > .facet-record-button { padding: 5px 10px; display: inline-block; }
+
+/* Record Card */
+
+.facet-record-card { display: flex; flex: 0 0 auto; flex-direction: column; align-items: stretch; margin: 20px; min-width: 300px; max-width: 300px; }
+.facet-record-card { background: white; border-radius: 3px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+
+.facet-record-card > * { padding: 10px 20px; }
+.facet-record-card > * + * { border-top: 1px solid #eee; }
+
+.facet-record-card-header { display: flex; flex-direction: row; }
+.facet-record-card h2 { margin: 0; padding: 0; text-align: left; font-size: 1.2rem; color: rgb(106,138,156); }
+
+.facet-av-tile { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; line-height: 1.5; }
+.facet-av-tile > label { opacity: 0.6; }
+.facet-av-tile > * + * { margin-left: 10px; }
+.facet-av-tile > * + .facet-record-button,
+.facet-av-tile > * + .facet-tag-button { margin-left: 0; }
+.facet-av-tile > .facet-record-button + *,
+.facet-av-tile > .facet-tag-button + * { margin-left: 0; }
+
+
+/* Tag Default / Button / Literal */
+.facet-tag:before { content: "#" }
+.ui-button.facet-tag-button:before { content: "#"; margin-right: 0;  opacity: 0.6; }
+.facet-tag-literal { color: #0076ce; }
+.facet-tag-literal:before { content: "#" }
+
+/* Value Literal */
+
+.facet-value-literal { padding: 0 2px; }
+.facet-value-literal[change="remove"] { background: rgba(255, 0, 0, 0.15); }
+.facet-value-literal[type="string"] { color: #00a588; }
+.facet-value-literal[type="string"]:before,
+.facet-value-literal[type="string"]:after { content: "\""; }
+.facet-value-literal[type="number"] { color: rgb(74, 64, 136); }

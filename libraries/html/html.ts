@@ -456,7 +456,7 @@ export class HTML extends Library {
         if(this.isInstance(current)) {
           eavs.push([eventId, "element", current.__element]);
           anyInstances = true;
-          if(button === 2 && current.__listeners && current.__listeners["context-menu"] === true) {
+          if(button === 2 && current.__listeners && current.__listeners["html/listener/context-menu"] === true) {
             capturesContextMenu = true;
           }
         }
@@ -476,7 +476,7 @@ export class HTML extends Library {
       let captureContextMenu = false;
       let current:Element|null = event.target as Element;
       while(current && this.isInstance(current)) {
-        if(current.__listeners && current.__listeners["context-menu"] === true) {
+        if(current.__listeners && current.__listeners["html/listener/context-menu"] === true) {
           captureContextMenu = true;
         }
         current = current.parentElement;
@@ -620,7 +620,7 @@ export class HTML extends Library {
 
       let eavs:RawEAV[] = [];
       let elemId = target.__element!;
-      if(target.__listeners && target.__listeners["hover"]) {
+      if(target.__listeners && target.__listeners["html/listener/hover"]) {
         let eventId = createId();
         eavs.push(
           [eventId, "tag", "html/event"],

@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Eve</title>
+    <link rel="stylesheet" type="text/css" href="/assets/css/ionicons.min.css">
+    <link rel="stylesheet" type="text/css" href="/assets/css/program-panes.css">
+    <link rel="stylesheet" type="text/css" href="/dist/eve-libraries.css">
+  </head>
+  <body>
+    <script src="/dist/eve-libraries.js"></script>
+    <script type="text/javascript">
+      var program = new RemoteProgram("local", function(type, diff) {
+        console.log("I want to send: ", type, diff);
+      });
+      program.attach("html");
+      program.attach("canvas");
+      program.attach("console");
+      program.attach("code-block");
+      program.attach("graph");
+
+      function eve_watch(name, args) {
+        console.log("WATCH!", name, args);
+        //args.unshift(name);
+        program.handleDiff({adds: [args], removes: []});
+      }
+    </script>
+    <script src="/dist/eve-compiled.js"></script>
+  </body>
+</html>
+

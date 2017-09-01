@@ -10,53 +10,46 @@ bind
     [#ui/row #editor/explorer/query-box | children:
       [#ui/token-completer #editor/explorer/query placeholder: "search..." | completion-pattern: [#editor/explorer/pattern]]
       [#ui/button #editor/explorer/query-button icon: "ios-search-strong"]]
-    [#ui/row #editor/explorer/symbol-list]
+    [#ui/row #editor/explorer/result-list]
     [#ui/row #editor/explorer/card-list]]
+end
+~~~
+
+
+## Query Results
+
+~~~ eve
+search
+  result = [#editor/explorer/result record]
+  name = if [#editor/explorer/completion-record record]
+            [#editor/explorer/client-name entity: record name: n] then n else "Untitled"
+bind
+  result <- [#ui/column sort: "{{name}}|{{record}}" children:
+    [#facet/record/button source: "editor/explorer" class: "flat" value: record name]
+  [#facet/record #editor/explorer/result/table source: "editor/explorer" entity: record]]
+end
+~~~
+
+Inject a table of matched AVs, if attributes are in the search.
+~~~ eve
+search
+  table = [#editor/explorer/result/table entity: record]
+  [#editor/explorer/completion-record record av]
+bind
+    table.av += av
 end
 ~~~
 
 Draw each matching record as a record symbol.
 ~~~ eve
 search
-  [#editor/explorer/root record]
-  symbol-list = [#editor/explorer/symbol-list]
-bind
-  symbol-list.children += [#editor/explorer/record-symbol record]
-end
-~~~
-
-Otherwise, show the completion records.
-~~~ eve
-search
-  root = [#editor/explorer/root]
   [#editor/explorer/completion-record record]
+  result-list = [#editor/explorer/result-list]
 bind
-  root.record += record
+  result-list.children += [#editor/explorer/result record]
 end
 ~~~
 
-
-## Record Symbol
-
-~~~ eve
-search
-  symbol = [#editor/explorer/record-symbol record]
-  title = if [#editor/explorer/client-name entity: record name: t] then t else "Untitled"
-bind
-  symbol <- [#ui/button class: "flat" record sort: record text: title]
-end
-~~~
-
-Clicking a record symbol opens its card.
-~~~ eve
-search
-  [#html/event/click element: [#editor/explorer/record-symbol record]]
-  root = [#editor/explorer/root]
-commit
-  // root.open += record // @FIXME: Why doesn't this work if we do + and -
-  root.open := record
-end
-~~~
 
 ## Record Card
 
@@ -68,50 +61,17 @@ search
   card-list = [#editor/explorer/card-list]
 bind
   card-list.children +=
-  [#record-card/card #editor/explorer/card sort: record entity: record | av]
+  [#facet/record/card #editor/explorer/card source: "editor/explorer" sort: record entity: record | av]
 end
 ~~~
 
-Inject titles for open cards.
-~~~ eve
-search
-  card = [#record-card/card #editor/explorer/card entity]
-  [#editor/explorer/client-name entity name]
-bind
-  card.title += name
-end
-~~~
-
-
-Check if a value tile is a remote record.
-~~~ eve
-search
-  card = [#editor/explorer/card]
-  attr-tile = [#record-card/attribute-tile card value]
-  [#editor/explorer/client-record value]
-bind
-  attr-tile.type += "record"
-end
-~~~
-
-Apply titles to record value tiles for remote records.
-~~~ eve
-search
-  card = [#editor/explorer/card]
-  attr-tile = [#record-card/attribute-tile type: "record" card]
-  attr-value = [#record-card/value attr-tile value]
-  [#editor/explorer/client-name entity: value name: title]
-bind
-  attr-value.title += title
-end
-~~~
 
 ### Events
 
 Clicking a record button in a card opens its card too.
 ~~~ eve
 search
-  [#html/event/click element: [#record-card/record value]]
+  [#html/event/click element: [#facet/record/button value]]
   root = [#editor/explorer/root]
 commit
   root.open := value
@@ -121,7 +81,7 @@ end
 Clicking a tag button in a card adds that tag to the query.
 ~~~ eve
 search
-  [#html/event/click element: [#record-card/tag text]]
+  [#html/event/click element: [#facet/tag/button text]]
   root = [#editor/explorer/root]
   query = [#ui/token-completer #editor/explorer/query item]
   item.text = "#{{text}}"
@@ -161,8 +121,7 @@ Add tags that match possible completions.
 ~~~ eve
 search
   query = [#editor/explorer/query completion-pattern]
-  [#editor/explorer/completion-record record]
-  [#editor/explorer/completion-tag record value: tag]
+  [#editor/explorer/completion-tag pattern: completion-pattern value: tag]
   not(completion-pattern.attribute = [attribute: "tag" value: tag])
 bind
   query.completion += [value: tag text: "#{{tag}}"]
@@ -173,13 +132,13 @@ Add tags that match possible completions.
 ~~~ eve
 search
   query = [#editor/explorer/query]
-  [#editor/explorer/completion-record record]
-  [#editor/explorer/completion-attribute record value: attribute]
+  [#editor/explorer/completion-attribute pattern: completion-pattern value: attribute]
   not(completion-pattern.attribute = [attribute])
 bind
   query.completion += [value: attribute text: attribute]
 end
 ~~~
+
 
 ### Token Parsing
 
@@ -203,7 +162,7 @@ search
   1 = string/index-of[text: token substring: "#"]
   value = string/substring[text: token from: 2 to: 0]
 bind
-  pattern.attribute += [attribute: "tag" value]
+  pattern.av += [attribute: "tag" value]
 end
 ~~~
 
@@ -214,7 +173,7 @@ search
   not(1 = string/index-of[text: token substring: "#"])
   token != ""
 bind
-  pattern.attribute += [attribute: token]
+  pattern.av += [attribute: token]
 end
 ~~~
 

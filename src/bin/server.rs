@@ -233,6 +233,7 @@ fn http_server(address: String) -> std::thread::JoinHandle<()> {
         mount.mount("/", Static::new(Path::new("assets/index.html")));
         mount.mount("/assets/", Static::new(Path::new("assets/")));
         mount.mount("/dist/", Static::new(Path::new("dist/")));
+        mount.mount("/examples/", Static::new(Path::new("examples/")));
 
         let mut chain = Chain::new(mount);
         chain.link_after(Custom404);

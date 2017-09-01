@@ -1,0 +1,302 @@
+# Record Facets
+
+Record facets represent aspects of records. These records may either be local (from the current program) or remote (from another program or virtual source). Record facets must provide adequate hooks such that a program embedding remote records can provide a like-local experience from an unknown data source.
+
+Record Facet List
+- button - a button with the record's name.
+- default - a simple embedding of the record's name and its attributes. Attributes may optionally be whitelisted.
+- card - a card tiled with the record's attributes and faceted values.
+- literal - a textual representation of the record as it would appear in Eve source code.
+
+Value Facet List
+- literal - a textual representation of the value as it would appear in Eve source code.
+- default - trim floats to a reasonable precision.
+
+Tag facet List
+- default
+- literal
+
+## Default
+
+Decorate records as a column.
+~~~ eve
+search
+  facet = [#facet/record]
+  source = if s = facet.source then s else "local"
+bind
+  facet <- [#ui/column source]
+end
+~~~
+
+If the facet is local, populate it's AV's from the DB.
+~~~ eve
+search
+  facet = [#facet/record source: "local" record]
+  lookup[entity: record attribute value]
+bind
+  facet.av += [facet attribute value]
+end
+~~~
+
+Detect local record values.
+~~~ eve
+search
+  facet = [#facet/record source: "local" av]
+  lookup[entity: av.value]
+bind
+  av.kind += "facet/record/button"
+end
+~~~
+
+
+Fill the facet with AVs.
+~~~ eve
+search
+  facet = [#facet/record source av]
+  attribute = av.attribute
+  sort = if attribute = "tag" then "1|{{av.value}}" else "2|{{attribute}}"
+bind
+   facet.children +=
+    [#facet/av facet source attribute | sort av]
+end
+~~~
+
+Decorate AVs as a labelled row of values.
+~~~ eve
+search
+  facet = [#facet/av source attribute av]
+  kind = if k = av.kind then k
+         if av.attribute = "tag" then "facet/tag"
+         else "facet/value"
+bind
+  facet <- [#ui/row children:
+    [#html/label text: attribute]
+    [tag: kind class: "flat" facet source value: av.value | sort: av.value]]
+end
+~~~
+
+## Record Button
+
+Decorate record as a labelled button.
+~~~ eve
+search
+  facet = [#facet/record/button name]
+bind
+  facet <- [#ui/button text: name]
+end
+~~~
+
+Local record buttons fetch the name from the DB.
+~~~ eve
+search
+  facet = [#facet/record/button source: "local" value]
+  name = if n = value.name then n else "Untitled"
+bind
+  facet.name += name
+end
+~~~
+
+## Record Literal
+
+Decorate the literal.
+~~~ eve
+search
+  literal = [#facet/record/literal]
+  source = if s = literal.source then s else "local"
+bind
+  literal <- [#html/div source]
+end
+~~~
+
+If the facet is local, populate it's AV's from the DB.
+~~~ eve
+search
+  facet = [#facet/record/literal source: "local" record]
+  lookup[entity: record attribute value]
+bind
+  facet.av += [facet attribute value]
+end
+~~~
+
+Detect local record values.
+~~~ eve
+search
+  facet = [#facet/record/literal source: "local" av]
+  lookup[entity: av.value]
+bind
+  av.kind += "facet/record/button"
+end
+~~~
+
+
+Fill in AVs.
+~~~ eve
+search
+  literal = [#facet/record/literal av source]
+  av = [attribute value]
+  sort = if attribute = "tag" then 1 else "2|{{attribute}}"
+  bind
+  literal.children +=
+  [#facet/av/literal literal source attribute | sort av]
+end
+~~~
+
+Decorate AVs as a KV pair.
+~~~ eve
+search
+  facet = [#facet/av/literal source attribute av]
+  attribute != "tag"
+  kind = if k = av.kind then k else "facet/value/literal"
+bind
+  facet <- [#html/div children:
+    [#html/label text: attribute]
+    [tag: kind class: "flat" facet source av value: av.value | sort: av.value]]
+end
+
+search
+  facet = [#facet/av/literal source attribute: "tag" av]
+  kind = if k = av.kind then k else "facet/tag/literal"
+bind
+  facet <- [#html/div children:
+    [tag: kind class: "flat" facet source av value: av.value | sort: av.value]]
+end
+~~~
+
+## Record Card
+
+Decorate records as a card.
+~~~ eve
+search
+  facet = [#facet/record/card]
+  source = if s = facet.source then s else "local"
+bind
+  facet <- [#ui/column source children:
+    [#facet/record/card/header #html/div facet | sort: 0]]
+end
+~~~
+
+If the facet is local, populate it's AV's from the DB.
+~~~ eve
+search
+  facet = [#facet/record/card source: "local" record]
+  lookup[entity: record attribute value]
+  name = if n = record.name then n else "Untitled"
+bind
+  facet.av += [facet attribute value]
+  facet.name += name
+end
+~~~
+
+Detect local record values.
+~~~ eve
+search
+  facet = [#facet/record/card source: "local" av]
+  lookup[entity: av.value]
+bind
+  av.kind += "facet/record/button"
+end
+~~~
+
+Populate the card header.
+~~~ eve
+search
+  header = [#facet/record/card/header facet]
+  name = if n = facet.name then n else "Untitled"
+bind
+  header <- [children:
+    [#html/element tagname: "h2" text: facet.name]]
+end
+~~~
+
+Fill the facet with AVs.
+~~~ eve
+search
+  facet = [#facet/record/card source av]
+  attribute = av.attribute
+  attribute != "name"
+  sort = if attribute = "tag" then 1 else "2|{{attribute}}"
+bind
+   facet.children +=
+    [#facet/av/tile facet source attribute | sort av]
+end
+~~~
+
+Decorate AVs as a labelled row of values.
+~~~ eve
+search
+  facet = [#facet/av/tile source attribute av]
+  kind = if k = av.kind then k
+         if av.attribute = "tag" then "facet/tag/button"
+         else "facet/value"
+  label = if attribute = "tag" then "" else attribute
+bind
+  facet <- [#ui/row children:
+    [#html/label text: label]
+    [tag: kind class: "flat" facet source value: av.value | sort: av.value]]
+end
+~~~
+
+# Tag Facets
+
+## Default
+
+Decorate a tag as text.
+~~~ eve
+search
+  facet = [#facet/tag value]
+bind
+  facet <- [#ui/text text: value]
+end
+~~~
+
+## Button
+
+Decorate a tag as a button.
+~~~ eve
+search
+  facet = [#facet/tag/button value]
+bind
+  facet <- [#ui/button text: value]
+end
+~~~
+
+## Literal
+
+Decorate a tag as a literal.
+~~~ eve
+search
+  facet = [#facet/tag/literal value]
+bind
+  facet <- [#ui/text text: value]
+end
+~~~
+
+
+# Value Facets
+
+## Default
+
+Decorate a value in a reasonably readable, compact form.
+~~~ eve
+search
+  facet = [#facet/value value]
+  (text, title) = if 0 = math/mod[value by: 1] then (value, "")
+                  else if fixed = math/to-fixed[value to: 3] then (fixed, value)
+                  else (value, "")
+bind
+  facet <- [#ui/text text title]
+end
+~~~
+
+Decorate a value as an Eve literal (as it would be in Eve source).
+~~~ eve
+search
+  facet = [#facet/value/literal value]
+  type = if x = value + 1 then "number" else "string"
+  (text, title) = if 0 = math/mod[value by: 1] then (value, "")
+                  else if fixed = math/to-fixed[value to: 3] then (fixed, value)
+                  else (value, "")
+bind
+  facet <- [#ui/text text title type]
+end
+~~~
