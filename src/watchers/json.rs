@@ -5,7 +5,7 @@ use super::Watcher;
 
 extern crate serde_json;
 extern crate serde;
-use self::serde_json::{Map, Value, Number};
+use self::serde_json::{Value};
 use std::collections::HashMap;
 
 pub struct JsonWatcher {
@@ -50,7 +50,6 @@ impl Watcher for JsonWatcher {
                 "join" => {
                     let id = Internable::to_string(interner.get_value(remove[1]));
                     let string = Internable::to_string(interner.get_value(remove[2]));
-                    let with = Internable::to_string(interner.get_value(remove[3]));
                     let join_strings = self.join_strings_map.get_mut(&id).unwrap();
                     let index = join_strings.strings.iter().position(|x| *x == string).unwrap();
                     join_strings.strings.remove(index);
