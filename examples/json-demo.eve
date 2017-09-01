@@ -9,6 +9,16 @@ commit
   rachel = [#person name: "Rachel" | age: 28 cats: (giselle, twylah) husband: corey]
 end
 
+commit
+  [#system/timer resolution: 1000]
+end
+
+search
+  [#system/timer]
+commit
+  [#html/div text: "Hello"]
+end
+
 search
   p = [#person name: "Rachel"]
 bind
