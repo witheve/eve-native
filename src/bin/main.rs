@@ -12,10 +12,6 @@ use eve::watchers::system::{SystemTimerWatcher, PanicWatcher};
 use eve::watchers::console::{ConsoleWatcher, PrintDiffWatcher};
 use eve::watchers::file::FileWatcher;
 
-extern crate term_painter;
-use self::term_painter::ToStyle;
-use self::term_painter::Color::*;
-
 //-------------------------------------------------------------------------
 // Main
 //-------------------------------------------------------------------------

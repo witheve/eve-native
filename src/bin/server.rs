@@ -119,8 +119,7 @@ impl ClientHandler {
             let mut watcher:RecommendedWatcher = match Watcher::new(outgoing, Duration::from_secs(1)) {
                 Ok(w) => w,
                 Err(e) => {
-                    println!("{} Unable to monitor files for hot-reloading due to error:\n{}", BrightRed.paint("Fatal Error:"), e);
-                    panic!();
+                    panic!(println!("{} Unable to monitor files for hot-reloading due to error:\n{}", BrightRed.paint("Fatal Error:"), e));
                 }
             };
 
@@ -128,8 +127,7 @@ impl ClientHandler {
                 match watcher.watch(path, RecursiveMode::Recursive) {
                     Ok(_) => (),
                     Err(e) => {
-                        println!("{} Could not watch standard library source due to error:\n{}", BrightRed.paint("Error:"), e);
-                        panic!();
+                        panic!(println!("{} Could not watch standard library source due to error:\n{}", BrightRed.paint("Error:"), e));
                     }
                 };
             }

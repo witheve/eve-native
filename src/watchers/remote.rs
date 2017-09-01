@@ -60,13 +60,9 @@ impl Router {
                         if let Some(channel) = clients2.lock().unwrap().get(&name) {
                             match channel.send(RunLoopMessage::Transaction(changes)) {
                                 Ok(_) => (),
-                                Err(e) => {
-                                    match e {
-                                        SendError(se) => {
-                                            println!("{} Failed to send {}",
-                                                     BrightRed.paint("Error:"), se.format_error());
-                                        }
-                                    }
+                                Err(SendError(se)) => {
+                                    println!("{} Failed to send {}",
+                                             BrightRed.paint("Error:"), se.format_error());
                                 }
                             }
                         } else {
@@ -176,8 +172,7 @@ impl Watcher for RemoteWatcher {
                             .map(|i| format!("{}", i))
                             .collect::<Vec<_>>()
                             .join(", ");
-                        println!("{} Invalid remote remove: ({})", BrightRed.paint("Error:"), slice_string);
-                        panic!();
+                        panic!(println!("{} Invalid remote remove: ({})", BrightRed.paint("Error:"), slice_string));
                     }
                 }
 
