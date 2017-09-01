@@ -1,5 +1,6 @@
 # Timeline
 
+First party transaction labels
 ~~~ eve
 commit
   [#editor/transaction-label tagname: "html/event/mouse-down" label: "🖰🡓"]
@@ -8,34 +9,34 @@ commit
   [#editor/transaction-label tagname: "html/event/double-click" label: "🖰⇕"]
   [#editor/transaction-label tagname: "html/event/key-down" label: "⌨🡓"]
   [#editor/transaction-label tagname: "html/event/key-up" label: "⌨🡑"]
-  [#editor/transaction-label tagname: "html/event/change" label: "..⌶"]
+  [#editor/transaction-label tagname: "html/event/change" label: "✎.."]
   [#editor/transaction-label tagname: "html/event/focus" label: "○"]
   [#editor/transaction-label tagname: "html/event/blur" label: "◌"]
   [#editor/transaction-label tagname: "system/timer/change" label: "⏱"]
 end
 ~~~
 
-
+## Timeline
 ~~~ eve
 search
-  root = [#editor/timeline/root]
+  timeline = [#editor/timeline]
 bind
-  root <- [#ui/column children:
-    [#ui/column #editor/timeline-scroller | children:
-      [#ui/toggle class: "square" #editor/pause-client initial: "true"]
-      [#ui/column #editor/timeline]]]
+  timeline <- [#ui/column children:
+      [#ui/column #editor/timeline/scroller]]
 end
 ~~~
 
 Show transactions in the timeline.
 ~~~ eve
 search
-  timeline = [#editor/timeline]
+  timeline = [#editor/timeline/scroller]
   transaction = [#editor/transaction]
 bind
   timeline <- [children: transaction]
 end
 ~~~
+
+## Transaction
 
 A transactions size is it's output count.
 ~~~ eve
@@ -67,26 +68,26 @@ bind
 end
 ~~~
 
-
 Mark open transactions.
 ~~~ eve
 search
-  root = [#editor/timeline/root open: transaction]
+  [#editor/timeline open: transaction]
   transaction = [#editor/transaction]
 bind
   transaction += #editor/open
 end
 ~~~
 
+### Handlers
 
 Clicking a transaction opens it.
 ~~~ eve
 search
-  root = [#editor/timeline/root]
+  timeline = [#editor/timeline]
   transaction = [#editor/transaction]
   [#html/event/click element: transaction]
 commit
-  root.open := transaction
+  timeline.open := transaction
 end
 ~~~
 
@@ -94,24 +95,11 @@ end
 
 ~~~ eve
 search
-  root = [#editor/timeline/root open]
+  timeline = [#editor/timeline open]
 bind
-  root.children += [#editor/transaction-viewer transaction: open]
+  timeline.children += [#editor/transaction-viewer transaction: open]
 end
 ~~~
-
-Clicking outside a transaction viewer closes it.
-~~~ eve
-search
-  [#html/event/click]
-  root = [#editor/timeline/root]
-  viewer = [#editor/transaction-viewer transaction]
-  not([#html/event/click element: viewer])
-commit
-  root.open -= transaction
-end
-~~~
-
 
 Decorate transaction viewer.
 ~~~ eve
@@ -159,24 +147,37 @@ bind
 end
 ~~~
 
+### Handlers
+
+Clicking outside a transaction viewer closes it.
+~~~ eve
+search
+  [#html/event/click]
+  timeline = [#editor/timeline]
+  viewer = [#editor/transaction-viewer transaction]
+  not([#html/event/click element: viewer])
+commit
+  timeline.open -= transaction
+end
+~~~
+
 
 ## Transaction Saving
 
 The next transaction is the current transaction's sort + 1
 ~~~ eve
 search
-  root = [#editor/timeline/root]
+  timeline = [#editor/timeline]
   next = if [#editor/transaction sort] gather/top[for: sort limit: 1] then sort + 1 else 1
 bind
-  root.next-transaction += next
+  timeline.next-transaction += next
 end
 ~~~
-
 
 Save client transactions permanently.
 ~~~ eve
 search
-  [#editor/timeline/root next-transaction: sort]
+  [#editor/timeline next-transaction: sort]
   [#editor/event/meta-transaction]
 commit
   [#editor/transaction sort]
@@ -186,18 +187,17 @@ end
 Save transaction inputs.
 ~~~ eve
 search
-  [#editor/timeline/root next-transaction: sort]
+  [#editor/timeline next-transaction: sort]
   [#editor/event/meta-transaction input]
 commit
   [#editor/transaction sort | input]
 end
 ~~~
 
-
 Save transaction outputs.
 ~~~ eve
 search
-  [#editor/timeline/root next-transaction: sort]
+  [#editor/timeline next-transaction: sort]
   [#editor/event/meta-transaction output]
 commit
   [#editor/transaction sort | output]
@@ -217,7 +217,7 @@ end
 Open transactions are also kept alive.
 ~~~ eve
 search
-  [#editor/timeline/root open: transaction]
+  [#editor/timeline open: transaction]
   transaction = [#editor/transaction]
 bind
   transaction += #editor/keep-alive
@@ -258,12 +258,21 @@ commit
 end
 ~~~
 
-## Exports
+## Pause
 
 ~~~ eve
 search
-  pause = [#editor/pause-client]
-  not(pause.checked)
+  pause-client = [#editor/timeline/pause-client]
+bind
+  pause-client <- [#ui/toggle class: "square"]
+end
+~~~
+
+### Exports
+
+~~~ eve
+search
+  pause = [#editor/timeline/pause-client checked]
 watch editor/host
   ("pause")
 end

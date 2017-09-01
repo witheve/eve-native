@@ -4,9 +4,16 @@
 
 ~~~ eve
 commit
-  [#ui/row #editor/root | children:
-    [#editor/timeline/root]
-    [#editor/explorer/root]]
+  [#editor/root #ui/column | children:
+    [#editor/header #ui/row | children:
+      [#editor/timeline/pause-client]
+      [#editor/explorer/query]]
+    [#editor/main #ui/row | children:
+      [#editor/timeline]
+      [#editor/explorer/result-list]
+      [#editor/explorer/completion-list]
+      [#editor/footer #html/footer | children:
+      [#editor/explorer/deck-list]]]]
 end
 ~~~
 

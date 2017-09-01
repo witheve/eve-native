@@ -2,22 +2,46 @@
 
 ## Root
 
+## Query
+
+Decorate query.
 ~~~ eve
 search
-  root = [#editor/explorer/root]
+  query = [#editor/explorer/query]
 bind
-  root <- [#ui/column children:
-    [#ui/row #editor/explorer/query-box | children:
-      [#ui/token-completer #editor/explorer/query placeholder: "search..." | completion-pattern: [#editor/explorer/pattern]]
-      [#ui/button #editor/explorer/query-button icon: "ios-search-strong"]]
-    [#ui/row #editor/explorer/result-list]
-    [#ui/row #editor/explorer/card-list]]
+  pattern = [#editor/explorer/pattern]
+  query <- [#ui/row #ui/pill pattern children:
+    [#ui/button #editor/explorer/query/history query | class: "inset" icon: "chevron-down"]
+    [#ui/token-input #editor/explorer/query/input #html/listener/key query | captured-key: ("up" "down") class: "inset" submit-key: "space" separator: " " placeholder: "search..."]
+    [#ui/button #editor/explorer/query/button query | class: "inset" icon: "ios-search-strong"]]
 end
 ~~~
 
 
-## Query Results
+## Result List
 
+Decorate the result list.
+~~~ eve
+search
+  result-list = [#editor/explorer/result-list]
+bind
+  result-list <- [#ui/row]
+end
+~~~
+
+Inject results into the result list.
+~~~ eve
+search
+  [#editor/explorer/completion-record record]
+  result-list = [#editor/explorer/result-list]
+bind
+  result-list.children += [#editor/explorer/result record]
+end
+~~~
+
+## Result
+
+Decorate results.
 ~~~ eve
 search
   result = [#editor/explorer/result record]
@@ -37,16 +61,6 @@ search
   [#editor/explorer/completion-record record av]
 bind
     table.av += av
-end
-~~~
-
-Draw each matching record as a record symbol.
-~~~ eve
-search
-  [#editor/explorer/completion-record record]
-  result-list = [#editor/explorer/result-list]
-bind
-  result-list.children += [#editor/explorer/result record]
 end
 ~~~
 
@@ -91,9 +105,327 @@ end
 ~~~
 
 
-## Search
+## Completion List
 
-### Completions
+Decorate completion list.
+~~~ eve
+search
+  completion-list = [#editor/explorer/completion-list]
+bind
+  completion-list <- [#ui/column children:
+    [#editor/explorer/tag-tree completion-list]
+    [#editor/explorer/attribute-list #ui/column completion-list]]
+end
+~~~
+
+
+## Tag Tree
+
+Explode client tags.
+~~~ eve
+search
+  client-tag = [#editor/explorer/client-tag value: tag]
+  (text, ix) = string/split[text: tag by: "/"]
+bind
+  client-tag.part += [text ix]
+end
+~~~
+
+A tag tree is ordered alphabetically by default.
+~~~ eve
+search
+  tag-tree = [#editor/explorer/tag-tree]
+  ordering = if o = tag-tree.ordering then o else "alphabetical"
+bind
+  tag-tree.ordering += ordering
+end
+~~~
+
+Sort the nodes based on the tree's ordering.
+~~~ eve
+search
+  tag-tree = [#editor/explorer/tag-tree ordering]
+  node = [#editor/explorer/tag-tree/node tag-tree]
+  sort = if ordering = "alphabetical" then node.part.text
+bind
+  node.sort += sort
+end
+~~~
+
+Build a tree out of tag parts.
+~~~ eve
+search
+  tag-tree = [#editor/explorer/tag-tree]
+  client-tag = [#editor/explorer/client-tag value: tag part]
+  part.ix = 1
+bind
+  tag-tree <- [#ui/column children:
+    [#editor/explorer/tag-tree/node #editor/explorer/tag-tree/root tag-tree part | tag-set: tag]]
+end
+~~~
+
+Recursively add child nodes.
+~~~ eve
+search
+  node = [#editor/explorer/tag-tree/node tag-tree part: current]
+  client-tag = [#editor/explorer/client-tag value: tag part: current]
+  next = client-tag.part
+  next.ix = current.ix + 1
+bind
+  node.children += [#editor/explorer/tag-tree/node tag-tree part: next | tag-set: tag]
+end
+~~~
+
+Nodes without child nodes are leaves.
+~~~ eve
+search
+  node = [#editor/explorer/tag-tree/node]
+  not(node.children = [#editor/explorer/tag-tree/node])
+bind
+  node += #editor/explorer/tag-tree/leaf
+end
+~~~
+
+When the input has a value, we're matching.
+~~~ eve
+search
+  [#editor/explorer/query/input value != ""]
+  tag-tree = [#editor/explorer/tag-tree]
+bind
+  tag-tree += #editor/explorer/matching
+end
+~~~
+
+The queries tag-parts are the value stripped of "#" and split by "/".
+~~~ eve
+search
+  query-input = [#editor/explorer/query/input value]
+  1 = string/index-of[text: value substring: "#"]
+  trimmed = string/replace[text: value replace: "#" with: ""]
+  (text ix) = string/split[text: trimmed by: "/"]
+bind
+  query-input.tag-part += [query-input text ix]
+end
+~~~
+
+
+The queries tag-depth is the number of tag-parts it has.
+~~~ eve
+search
+  query-input = [#editor/explorer/query/input tag-part]
+  depth = gather/count[for: tag-part per: query-input]
+bind
+  query-input.tag-depth += depth
+end
+~~~
+
+Match each part of a tag.
+~~~ eve
+search
+  query-input = [#editor/explorer/query/input tag-part: [text: needle ix]]
+  [#editor/explorer/client-tag part]
+  part.ix = ix
+  string/contains[text: part.text substring: needle]
+bind
+  part += #editor/explorer/matched
+end
+~~~
+
+A tag is matched if every part of it matches and it has at least as man parts as the query.
+~~~ eve
+search
+  query-input = [#editor/explorer/query/input tag-depth]
+  client-tag = [#editor/explorer/client-tag part]
+  part = [#editor/explorer/matched]
+  tag-depth = gather/count[for: part per: client-tag]
+bind
+  client-tag += #editor/explorer/matched
+end
+~~~
+
+Nodes not mapping to a matched client tag are unmatched.
+~~~ eve
+search
+  query-input = [#editor/explorer/query/input tag-depth]
+  node = [#editor/explorer/tag-tree/node tag-set: tag]
+  not([#editor/explorer/client-tag #editor/explorer/matched value: tag])
+bind
+  node += #editor/explorer/unmatched
+end
+~~~
+
+Nodes deeper than the query tag depth are unmatched.
+~~~ eve
+search
+  query-input = [#editor/explorer/query/input tag-depth]
+  node = [#editor/explorer/tag-tree/node part: [ix > tag-depth]]
+bind
+  node += #editor/explorer/unmatched
+end
+~~~
+
+Nodes that aren't unmatched are matched.
+~~~ eve
+search
+  query-input = [#editor/explorer/query/input tag-depth]
+  tag-tree = [#editor/explorer/tag-tree]
+  node = [#editor/explorer/tag-tree/node tag-tree part: [ix: tag-depth]]
+  not(node = [#editor/explorer/unmatched])
+bind
+  tag-tree.match += node
+end
+~~~
+
+Link matches forwards.
+~~~ eve
+search
+  tag-tree = [#editor/explorer/tag-tree match]
+  (_, next) = gather/next[for: (match.sort match) per: tag-tree]
+  tag-tree = [#editor/explorer/tag-tree match: next]
+bind
+  match.next += next
+end
+~~~
+
+Link matches backwards.
+~~~ eve
+search
+  tag-tree = [#editor/explorer/tag-tree match]
+  (_, previous) = gather/previous[for: (match.sort match) per: tag-tree]
+  tag-tree = [#editor/explorer/tag-tree match: previous]
+bind
+  match.previous += previous
+end
+~~~
+
+If completion tags are present and the node doesn't match one of them, it's absent.
+~~~ eve
+search
+  tag-tree = [#editor/explorer/tag-tree match]
+bind
+  [#html/div #matchy match | sort: "1  {{match.sort}}" children:
+    [#ui/text sort: 2 text: match.sort]]
+end
+
+search
+  tag-tree = [#editor/explorer/tag-tree match]
+  matchy = [#matchy match]
+bind
+  matchy.children += [#ui/text sort: 1 text: "{{match.previous.sort}} -> "]
+end
+
+search
+  tag-tree = [#editor/explorer/tag-tree match]
+  matchy = [#matchy match]
+bind
+  matchy.children += [#ui/text sort: 3 text: " -> {{match.next.sort}}"]
+end
+
+search
+  tag-tree = [#editor/explorer/tag-tree match]
+  matchy = [#matchy match]
+  not(match.previous)
+bind
+  matchy.children += [#ui/text sort: 4 text: " *FIRST*"]
+end
+
+search
+  tag-tree = [#editor/explorer/tag-tree current]
+  matchy = [#matchy match: current]
+bind
+  matchy.children += [#ui/text sort: 5 text: " *CUR*"]
+end
+~~~
+
+
+Decorate tree nodes.
+~~~ eve
+search
+  node = [#editor/explorer/tag-tree/node part]
+bind
+  node <- [#ui/column children:
+  [#ui/text text: part.text sort: 0]]
+end
+~~~
+
+When the query is active for tags, place a cursor in the tag tree.
+~~~ eve
+search
+  [#editor/explorer/query/input #ui/active]
+  tag-tree = [#editor/explorer/tag-tree match]
+  not(tag-tree.current)
+  not(match.previous)
+commit
+  tag-tree.current := match
+end
+~~~
+
+If the current node is no longer a match, drop it.
+~~~ eve
+search
+  [#editor/explorer/query/input #ui/active value tag-depth]
+  tag-tree = [#editor/explorer/tag-tree current]
+  not(current = tag-tree.match)
+commit
+  tag-tree.current := none
+end
+~~~
+
+Indicate the current tag tree node.
+~~~ eve
+search
+  tag-tree = [#editor/explorer/tag-tree current]
+bind
+  current += #editor/explorer/current
+end
+~~~
+
+
+### Handlers
+
+If the user navigates up, move the current.
+~~~ eve
+search
+  [#editor/explorer/query/input #ui/active tag-depth]
+  [#html/event/key-down key: "up"]
+  tag-tree = [#editor/explorer/tag-tree current]
+commit
+  tag-tree.current := current.previous
+end
+~~~
+
+If the user navigates down, move the current.
+~~~ eve
+search
+  [#editor/explorer/query/input #ui/active tag-depth]
+  [#html/event/key-down key: "down"]
+  tag-tree = [#editor/explorer/tag-tree current]
+commit
+  tag-tree.current := current.next
+end
+~~~
+
+Hitting enter on a tree node completes it. If it's a leaf, it also submits it.
+~~~ eve
+search
+  token-input = [#editor/explorer/query/input #ui/active tag-depth]
+  input = [#ui/token-input/input token-input]
+  [#html/event/key-down key: "enter"]
+  tag-tree = [#editor/explorer/tag-tree current]
+  [#editor/explorer/client-tag value: current.tag-set part: [text ix]]
+  ix <= tag-depth
+  completion = gather/string-join[for: ix value: text separator: "/"]
+  suffix = if current = [#editor/explorer/tag-tree/leaf] then "" else "/"
+commit
+  input.value := "#{{completion}}{{suffix}}"
+end
+~~~
+
+
+
+
+
+## Completions
 
 Add tag completions to queries with no existing filters.
 ~~~ eve
@@ -120,9 +452,9 @@ end
 Add tags that match possible completions.
 ~~~ eve
 search
-  query = [#editor/explorer/query completion-pattern]
-  [#editor/explorer/completion-tag pattern: completion-pattern value: tag]
-  not(completion-pattern.attribute = [attribute: "tag" value: tag])
+  query = [#editor/explorer/query pattern]
+  [#editor/explorer/completion-tag pattern value: tag]
+  not(pattern.attribute = [attribute: "tag" value: tag])
 bind
   query.completion += [value: tag text: "#{{tag}}"]
 end
@@ -132,8 +464,8 @@ Add tags that match possible completions.
 ~~~ eve
 search
   query = [#editor/explorer/query]
-  [#editor/explorer/completion-attribute pattern: completion-pattern value: attribute]
-  not(completion-pattern.attribute = [attribute])
+  [#editor/explorer/completion-attribute pattern value: attribute]
+  not(pattern.attribute = [attribute])
 bind
   query.completion += [value: attribute text: attribute]
 end
@@ -145,11 +477,9 @@ end
 If multiple tokens exist, assume all but the last are fully formed tags or attributes to filter upon.
 ~~~ eve
 search
-  query = [#editor/explorer/query completion-pattern token last-ix]
-  token.ix != last-ix
-
+  query = [#editor/explorer/query/input query: [pattern] token]
 bind
-  [#editor/explorer/tokens-to-pattern pattern: completion-pattern token: token.token]
+  [#editor/explorer/tokens-to-pattern pattern token: token.text]
 end
 ~~~
 
@@ -179,3 +509,11 @@ end
 
 
 # DEBUG
+
+~~~ eve
+search
+  [#editor/explorer/query/input tag-depth]
+bind
+  [#html/div text: tag-depth]
+end
+~~~

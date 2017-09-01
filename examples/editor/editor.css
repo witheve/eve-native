@@ -2,3 +2,6 @@ body { max-height: 100vh; }
 .program-pane { overflow-y: auto; }
 
 .editor-root { display: flex; flex: 1; max-width: 900px; min-width: 450px; max-height: 100vh; background: #f9f9f9; }
+.editor-header { align-items: stretch; margin-bottom: 20px; }
+.editor-header > * + * { margin-left: 20px; }
+.editor-main > .editor-explorer-result-list { flex: 1; }

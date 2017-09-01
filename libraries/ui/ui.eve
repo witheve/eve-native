@@ -787,6 +787,234 @@ end
 ~~~
 
 
+## Token Input
+
+Decorate the input.
+~~~ eve
+search
+  token-input = [#ui/token-input]
+bind
+  token-input <- [#ui/row children:
+    [#ui/token-input/token-list #ui/row token-input]
+    [#ui/token-input/input #ui/input token-input]]
+end
+~~~
+
+If the token-input has a submit-key, capture it.
+~~~ eve
+search
+  token-input = [#ui/token-input submit-key]
+  input = [#ui/token-input/input token-input]
+bind
+  input <- [#html/listener/key captured-key: submit-key]
+end
+~~~
+
+A token input's value is its inputs.
+~~~ eve
+search
+  [#ui/token-input/input token-input value]
+bind
+  token-input.value += value
+end
+~~~
+
+
+Add completed tokens to the token list.
+~~~ eve
+search
+  token-list = [#ui/token-input/token-list token-input: [token]]
+bind
+  token-list.children +=
+    [#html/div #ui/token-input/token token | text: token.text sort: token.sort]
+end
+~~~
+
+If the token input deactivates, clear its current.
+~~~ eve
+search
+  token-input = [#ui/token-input current]
+  not(token-input = [#ui/active])
+commit
+  token-input.current := none
+end
+~~~
+
+If the input ceases being empty, clear the current.
+~~~ eve
+search
+  input = [#ui/token-input/input token-input value != ""]
+commit
+  token-input.current := none
+end
+~~~
+
+if the current token is no longer legal, clear it.
+~~~ eve
+search
+  token-input = [#ui/token-input current]
+  not(current = token-input.token)
+commit
+  token-input.current := none
+end
+~~~
+
+
+Mark the current token.
+~~~ eve
+search
+  [#ui/token-input current]
+  elem = [#ui/token-input/token token: current]
+bind
+  elem += #ui/current
+end
+~~~
+
+If the input has any tokens, add a clear button.
+~~~ eve
+search
+  token-input = [#ui/token-input token]
+bind
+  token-input.children += [#ui/button #ui/token-input/clear token-input | sort: 3 class: "flat" icon: "close-round"]
+end
+~~~
+
+
+### Handlers
+
+Clicking the clear button clears the token input.
+~~~ eve
+search
+  [#html/event/click element: [#ui/token-input/clear token-input]]
+commit
+  token-input.token := none
+  token-input.current := none
+end
+~~~
+
+
+When the input is focused, activate the token input.
+~~~ eve
+search
+  [#html/event/focus element: [#ui/token-input/input token-input]]
+commit
+  token-input += #ui/active
+end
+~~~
+
+When the input is blurred, deactivate the token input.
+~~~ eve
+search
+  [#html/event/blur element: [#ui/token-input/input token-input]]
+commit
+  token-input -= #ui/active
+end
+~~~
+
+If a user presses the submit key, consume the input as a token.
+~~~ eve
+search
+  [#html/event/key-down key]
+  token-input = [#ui/token-input submit-key: key]
+  input = [#ui/token-input/input token-input value]
+  value != ""
+  sort = if token = token-input.token
+            gather/top[for: token.sort per: token-input limit: 1]
+            then token.sort + 1
+            else 1
+commit
+  token-input.token += [token-input text: value sort]
+  input.value := ""
+end
+~~~
+
+If a bunch of tokens are pasted from the clipboard, consume them.
+~~~ eve
+search
+  input = [#ui/token-input/input token-input value]
+  string/contains[text: value substring: token-input.separator]
+  (text, ix) = string/split[text: value by: token-input.separator]
+  offset = if token = token-input.token
+              gather/top[for: token.sort per: token-input limit: 1]
+              then token.sort
+           else 0
+commit
+  token-input.token += [token-input text sort: ix + offset]
+  input.value := ""
+end
+~~~
+
+If the input is empty, select the newest token.
+~~~ eve
+search
+  [#html/event/key-down key: "left"]
+  input = [#ui/token-input/input token-input value: ""]
+  token-input = [#ui/active token]
+  not(token-input.current)
+  gather/top[for: token.sort per: token-input limit: 1]
+commit
+  token-input.current := token
+end
+~~~
+
+if the last token is selected and the user moves right, clear current.
+~~~ eve
+search
+  [#html/event/key-down key: "right"]
+  token-input = [#ui/token-input #ui/active current token]
+  not(gather/next[for: token.sort per: token-input from: current.sort])
+commit
+  token-input.current := none
+end
+~~~
+
+If the user navigates left, move the current.
+~~~ eve
+search
+  [#html/event/key-down key: "left"]
+  token-input = [#ui/token-input current token]
+  (_, prev) = gather/previous[for: (token.sort token) from: (current.sort current)]
+commit
+  token-input.current := prev
+end
+~~~
+
+If the user navigates left, move the current.
+~~~ eve
+search
+  [#html/event/key-down key: "right"]
+  token-input = [#ui/token-input current token]
+  (_, next) = gather/next[for: (token.sort token) from: (current.sort current)]
+commit
+  token-input.current := next
+end
+~~~
+
+If the user presses delete with a token currently selected, delete it.
+~~~ eve
+search
+  if [#html/event/key-down key: "backspace"] then "true"
+  if [#html/event/key-down key: "delete"] then "true"
+  token-input = [#ui/token-input current]
+commit
+  token-input.token -= current
+  token-input.current -= current
+end
+~~~
+
+Choose the nearest token to the current to select when deleting.
+If this fails, than the last token will be selected, which is the appropriate choice.
+~~~ eve
+search
+  if [#html/event/key-down key: "backspace"] then "true"
+  if [#html/event/key-down key: "delete"] then "true"
+  token-input = [#ui/token-input current token]
+  (_, new) = gather/previous[for: (token.sort token) per: token-input from: (current.sort current)]
+commit
+  token-input.current := new
+end
+~~~
+
 
 
 Todo:

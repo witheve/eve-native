@@ -1,9 +1,19 @@
+:root {
+    --radius: 4px;
+    --active-fg: teal;
+}
+
 /******************************************************************************\
  * Containers                                                                 *
 \******************************************************************************/
 
 .ui-row { display: flex; flex-direction: row; }
+.ui-row.ui-pill > *:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.ui-row.ui-pill > *:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+
 .ui-column {display: flex;flex-direction: column;align-items: stretch;}
+.ui-column.ui-pill > *:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+.ui-column.ui-pill > *:last-child { border-radius: 0 0 var(--radius) var(--radius); }
 
 .ui-spacer { display: flex; flex: 1; }
 
@@ -11,4 +21,19 @@
  * Misc.                                                                      *
 \******************************************************************************/
 
-.ui-text { display: inline-block; white-space: pre-wrap; }
+.ui-text { display: inline-block; white-space: pre-wrap;  }
+
+.ui-token-input { background: white; border: 1px solid #eee; line-height: 1.4; }
+.ui-token-input,
+.ui-token-input-input { font-family: "Lato", "helvetica neue", sans-serif; }
+.ui-token-input-input { font-size: 1em; line-height: inherit; padding: 3px 5px; background: transparent; border: none; border-bottom: 1px solid transparent; transition: border-color 0.1os ease-out; }
+.ui-token-input-input:hover { border-bottom-color: var(--active-fg); outline: none; }
+.ui-token-input-input:focus { outline: none; }
+.ui-token-input:not([current]) > .ui-token-input-input:focus { border-bottom-color: var(--active-fg); }
+.ui-token-input-token { padding: 3px 5px; border-bottom: 1px solid transparent; vertical-align: bottom; transition: background 0.1s ease-out, border-color 0.1s ease-out; }
+.ui-token-input-token.ui-current,
+.ui-token-input-token:hover { background: rgba(0, 0, 0, 0.05); border-bottom-color: var(--active-fg); }
+.ui-token-input-clear { opacity: 0.5; }
+.ui-token-input-clear:hover { opacity: 1; color: crimson; }
+
+.ui-token-input.inset { box-shadow: inset 0 2px 1px rgba(0, 0, 0, 0.2); }
