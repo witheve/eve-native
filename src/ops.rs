@@ -13,7 +13,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use indexes::{HashIndex, DistinctIter, DistinctIndex, WatchIndex, IntermediateIndex, MyHasher, AggregateEntry,
     CollapsedChanges, RemoteIndex, RemoteChange, RawRemoteChange};
 use solver::Solver;
-use compiler::{make_block, parse_file, FunctionKind};
+use compiler::{make_block, parse_file, FunctionKind, Node};
 use std::collections::{HashMap, HashSet, Bound, BTreeMap};
 use std::mem::transmute;
 use std::cmp::{self, Eq, PartialOrd};
@@ -37,6 +37,8 @@ use std::usize;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use self::term_painter::ToStyle;
 use self::term_painter::Color::*;
+use parser;
+use combinators::{ParseState, ParseResult};
 
 
 //-------------------------------------------------------------------------
@@ -1307,6 +1309,7 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "string/substring" => string_substring,
         "string/length" => string_length,
         "eve/type-of" => eve_type_of,
+        "eve/parse-value" => eve_parse_value,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -1697,6 +1700,24 @@ pub fn eve_type_of(params: Vec<&Internable>) -> Option<Internable> {
     match params.get(0) {
         Some(&&Internable::String(_)) => Some(Internable::String("string".to_owned())),
         Some(&&Internable::Number(_)) => Some(Internable::String("number".to_owned())),
+        _ => { panic!("Type of called without a valid parameter") }
+    }
+}
+
+pub fn eve_parse_value(params: Vec<&Internable>) -> Option<Internable> {
+    match params.get(0) {
+        Some(&&Internable::String(ref s)) => {
+            let mut state = ParseState::new(s.as_ref());
+            let result = parser::number(&mut state);
+            match result {
+                ParseResult::Ok(Node::Pos(_, box Node::Float(f))) => { Some(Internable::from_number(f)) }
+                ParseResult::Ok(Node::Pos(_, box Node::Integer(i))) => { Some(Internable::from_number(i as f32)) }
+                _ => {
+                    Some(Internable::String(s.to_owned()))
+                }
+            }
+        }
+        Some(me @ &&Internable::Number(_)) => Some((*me).clone()),
         _ => { panic!("Type of called without a valid parameter") }
     }
 }
