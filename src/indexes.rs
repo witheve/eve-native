@@ -365,8 +365,8 @@ fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Cou
                             active_rounds[pos] = round as i32;
                         }
                     } else {
-                        panic!("{} Adding a round that already exists in the index at {:?}",
-                               BrightRed.paint("Fatal Internal Error:"), round)
+                        panic!(println!("{} Adding a round that already exists in the index at {:?}",
+                                        BrightRed.paint("Fatal Internal Error:"), round))
                     }
                 }
                 Err(pos) => active_rounds.insert(pos, round as i32),
@@ -574,8 +574,8 @@ impl DistinctIndex {
 
     pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
         if e == 0 || a == 0 || v == 0 {
-            panic!("{} Can't check availability of an unformed EAV ({}, {}, {})",
-                   BrightRed.paint("Fatal Internal Error:"), e, a, v);
+            panic!(println!("{} Can't check availability of an unformed EAV ({}, {}, {})",
+                            BrightRed.paint("Fatal Internal Error:"), e, a, v));
         }
         match self.eavs.get(&(e,a,v)) {
             Some(rounds) => {
@@ -777,7 +777,6 @@ impl AggregateEntry {
             &AggregateEntry::SortedSum { ref result, .. } => { vec![interner.internable_to_id(result.clone())] },
             &AggregateEntry::Sorted {..} => { unimplemented!() },
             &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
-        }
     }
 }
 
@@ -1061,8 +1060,8 @@ impl IntermediateIndex {
                         info.update_active(change.round, count);
                         !info.rounds.iter().any(|x| *x != 0) && info.active_rounds.len() == 0
                     },
-                    None => panic!("{} Updating active rounds for an intermediate that doesn't exist: {:?}",
-                                   BrightRed.paint("Fatal Internal Error:"), change)
+                    None => panic!(println!("{} Updating active rounds for an intermediate that doesn't exist: {:?}",
+                                            BrightRed.paint("Fatal Internal Error:"), change))
                 };
                 if remove {
                     lookup.remove(value);
@@ -1071,8 +1070,8 @@ impl IntermediateIndex {
             }
             Some(&mut IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
             Some(&mut IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
-            None => { panic!("{} Updating active rounds for an intermediate that doesn't exist: {:?}",
-                             BrightRed.paint("Fatal Internal Error:"), change) }
+            None => { panic!(println!("{} Updating active rounds for an intermediate that doesn't exist: {:?}",
+                                      BrightRed.paint("Fatal Internal Error:"), change)) }
         };
         if should_remove {
             self.index.remove(key);
