@@ -14,9 +14,10 @@ commit
 end
 
 search
-  [#system/timer]
-commit
-  [#html/div text: "Hello"]
+  p = [#person name: "Rachel" age]
+  [#system/timer second]
+bind
+  p.time += second
 end
 
 search
@@ -73,3 +74,88 @@ Decode the record we just encoded
   //[#ui/button #add-record text: "Add to record"]
   //[#ui/button #remove-record text: "Remove From Record"]
 //end
+
+
+
+## Debug Display
+
+search
+  [#json/encode]
+  [#json/encode/record record json-string]
+  output = [#output]
+bind
+  output.children += [#html/div sort: json-string text: "Target: {{json-string}}"]
+end
+
+search
+  [#json/encode]  
+  [#json/encode/sub-target record json-string]
+  output = [#output]
+bind
+  output.children += [#html/div text: "Sub: {{json-string}}"]
+end
+
+search
+  [#json/encode]
+  [#completed/target record json-string]
+  output = [#application]
+bind
+  output.children += [#html/div text: "Completed {{json-string}}"]
+end
+
+search
+  [#json/encode]
+  encode = [#encode-eavs]
+  eav = [#json/encode/eav record attribute value]
+  entity? = if eav = [#json/encode/entity] then "entity"
+            else ""
+bind
+  encode <- [| children:
+    [#html/div sort: 0 text: "Encode EAVs"]
+    [#html/table #eav-table | children:
+      [#html/tr #eav-row eav children: 
+        [#html/td sort:1 text: record]
+        [#html/td sort:2 text: attribute]
+        [#html/td sort:3 text: value]
+        [#html/td sort:4 text: entity?]
+      ]
+    ]
+    
+  ]
+end
+
+search
+  [#json/encode]
+  encode = [#flatten]
+  [#json/encode/flatten record]
+bind
+  encode <- [| children:
+    [#html/div sort: 0 text: "Flatten"]
+    [#html/div sort: 1 text: "{{record}}"]
+  ]
+end
+
+search
+  [#json/encode]
+commit
+  [#ui/column #application | children: 
+    [#ui/column #output | children: 
+      [#ui/button #next sort: -1 text: "Next"]
+    ]
+    [#ui/row #debug | children:
+      [#ui/column #encode-eavs]
+      [#ui/column #flatten]
+    ]
+  ]
+end
+
+commit
+  [#html/style text: "
+    td {padding: 10px;}
+    table {margin: 10px;}
+    .ui/column {padding: 10px;}
+    .ui/row {padding: 10px;}
+    .output {padding: 20px;}
+    .encode-eavs {min-width: 350px;}
+    "]
+end
