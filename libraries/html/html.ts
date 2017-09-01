@@ -541,6 +541,7 @@ export class HTML extends Library {
   }
 
   _keyMap:{[key:number]: string|undefined} = { // Overrides to provide sane names for common control codes.
+    8: "backspace",
     9: "tab",
     13: "enter",
     16: "shift",
@@ -552,6 +553,7 @@ export class HTML extends Library {
     38: "up",
     39: "right",
     40: "down",
+    46: "delete",
     91: "meta"
   }
 
