@@ -17,6 +17,8 @@ commit
     "li"
     "ul"
     "ol"
+    "header"
+    "footer"
     )]
 end
 ~~~
