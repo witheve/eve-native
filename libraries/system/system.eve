@@ -12,11 +12,11 @@ end
 
 search
   t = [#system/timer/change resolution hour minute second tick]
-  for = [#system/timer resolution]
+  //for = [#system/timer resolution]
 commit
-  for.minute := minute
-  for.second := second
-  for.hour := hour
-  for.tick := tick
+  //for.minute := minute
+  //for.second := second
+  //for.hour := hour
+  //for.tick := tick
   t := none
 end

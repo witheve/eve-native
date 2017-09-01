@@ -4,44 +4,237 @@ A library for encoding and decoding Eve records into and from JSON
 
 ## Encoding
 
-Encoding starts with a `#json/encode` record.
+Encoding a record is kicked off with `#json/encode`. It creates two records of consequence:
+
+- `#json/encode/record`: handles encoding records into json. This one is tagged `#json/encode/target-record`, which means it is flagged for output.
+- `#json/encode/flatten`: flattens a record into a/v pairs
 
 search
   [#json/encode record]
-commit
-  [#json/encode/target record]
+bind
+  [#json/encode/record #json/encode/target-record record]
   [#json/encode/flatten record]
 end
 
-Target records are specified for encoding
+`#json/encode/record` are given a starting point for JSON
 
 search
-  encode = [#json/encode/target record]
+  target = [#json/encode/record record]
+  not(target.json-string)
+commit
+  target.json-string := "{ "
+end
+
+We flatten records with lookup. 
+
+search
+  [#json/encode/flatten record]
+  lookup[entity: record attribute value]
+bind
+  encode-eav = [#json/encode/eav record attribute value]
+end
+
+sub-records are marked `#json/encode/entity`
+
+search
+  encode = [#json/encode/eav record attribute value]
+  lookup[entity: value]
+bind
+  encode += #json/encode/entity
+end
+
+## Encode A/V Pairs
+
+We can join all non entities in a json encoded string
+
+search
+  eav = [#json/encode/eav record attribute value]
+  not(eav = [#json/encode/entity])
+bind
+  [#json/encode/entity/av-pair record av: "'{{attribute}}': '{{value}}'"]
+end
+
+search
+  [#json/encode/entity/av-pair record av]
+bind
+  [#string/join #json/encode/join-avs record with: ", " | strings: av]
+end
+
+search
+  [#json/encode/join-avs record result]
+bind
+  [#json/encode/complete-av record json-string: result]
+end
+
+## Encode Sub records
+
+`#json/encode/entity` records can be encoded just like the target record.
+
+search
+  [#json/encode/eav record attribute value #json/encode/entity]
+bind
+  [#json/encode/record record: value]
+  [#json/encode/flatten record: value]
+end
+
+Join eavs into a json object
+
+search
+  encode = [#json/encode/eav #json/encode/entity attribute]
+  finished = [#json/encode/finished]
+  encode.value = finished.record
+bind
+  [#string/join #json/encode/join-object parent: encode.record attribute record: "{{encode.record}}|{{attribute}}" with: ", " | strings: finished.json-string ]
+end
+
+Put all json object strings into an array form. attaching its attribute
+
+search
+  [#json/encode/join-object result parent attribute]
+bind
+  [#json/encode/complete-av record: parent json-string: "'{{attribute}}': [ {{result}} ]"]
+end
+
+## Bring it all together
+
+Join all encoded avs into a compelte string
+
+search
+  complete-av = [#json/encode/complete-av record]
+  target-record = [#json/encode/record record]
+bind
+  [#string/join #json/encode/join-complete record with: ", " | strings: complete-av.json-string]
+end
+
+Ensconce finished records with curly braces
+
+search
+  [#json/encode/join-complete record result]
+bind
+  [#json/encode/finished record json-string: "{ {{result}} }"]
+end
+
+When the full target record is encoded, hang it on the orginal `#json-encode` record
+
+search
+  [#json/encode/finished record json-string]
+  encode = [#json/encode record]
+  [#json/encode/target-record record]
+bind
+  encode.json-string += json-string
+end
+
+
+
+
+
+
+## Joining Strings in Eve
+
+search
+  join = [#string/join strings with]
 watch json
-  ("encode/target", encode, record)
+  ("join", join, strings, with)
+end
+
+Put the joined string in the original `#string/join` record, and get rid of the result
+
+search
+  join-result = [#string/join/result result]
+  join = [#string/join strings with]
+  join-result.record = join
+commit
+  join-result := none
+  join.result := result
+end
+
+## Debug Display
+
+search
+  [#json/encode]
+  [#json/encode/record record json-string]
+  output = [#output]
+bind
+  output.children += [#html/div sort: json-string text: "Target: {{json-string}}"]
+end
+
+search
+  [#json/encode]  
+  [#json/encode/sub-target record json-string]
+  output = [#output]
+bind
+  output.children += [#html/div text: "Sub: {{json-string}}"]
+end
+
+
+search
+  [#json/encode]
+  [#completed/target record json-string]
+  output = [#application]
+bind
+  output.children += [#html/div text: "Completed {{json-string}}"]
+end
+
+
+
+search
+  [#json/encode]
+  encode = [#encode-eavs]
+  eav = [#json/encode/eav record attribute value]
+  entity? = if eav = [#json/encode/entity] then "entity"
+            else ""
+bind
+  encode <- [| children:
+    [#html/div sort: 0 text: "Encode EAVs"]
+    [#html/table #eav-table | children:
+      [#html/tr #eav-row eav children: 
+        [#html/td sort:1 text: record]
+        [#html/td sort:2 text: attribute]
+        [#html/td sort:3 text: value]
+        [#html/td sort:4 text: entity?]
+      ]
+    ]
+    
+  ]
+end
+
+search
+  [#json/encode]
+  encode = [#flatten]
+  [#json/encode/flatten record]
+bind
+  encode <- [| children:
+    [#html/div sort: 0 text: "Flatten"]
+    [#html/div sort: 1 text: "{{record}}"]
+  ]
+end
+
+
+search
+  [#json/encode]
+commit
+  [#ui/column #application | children: 
+    [#ui/column #output | children: 
+      [#ui/button #next sort: -1 text: "Next"]
+    ]
+    [#ui/row #debug | children:
+      [#ui/column #encode-eavs]
+      [#ui/column #flatten]
+    ]
+  ]
 end
 
 Flattening is done recursively. We start with the target record and look up all
 a/v pairs. Any v that is also a record (satisfies `lookup[entity]`) we will also
 flatten.
 
-search
-  [#json/encode/flatten record]
-  lookup[entity: record attribute value]
-  sub-record = if lookup[entity: value] then value
-               else ""
-commit
-  [#json/encode/flatten record: sub-record]
-  [#json/encode/eav record attribute value]
-end
-
 Raw EAVs are encoded as JSON
 
-search
-  encode = [#json/encode/eav record attribute value]
-watch json
-  ("encode/eav", encode, record, attribute, value)
-end
+//search
+//  encode = [#json/encode/eav record attribute value]
+//watch json
+//  ("encode/eav", encode, record, attribute, value)
+//end
 
 We get back a `json-string` as a change. Apply it as an attribute to the
 original `json/encode`
@@ -50,7 +243,8 @@ search
   [#json/encode/change record json-string]
   encode = [#json/encode record]
 commit
-  encode.json-string := json-string
+  [#html/div text: "json/encode/change {{json-string}}"]
+  encode.json-string += json-string
 end
 
 ## Decoding
@@ -59,4 +253,24 @@ search
   decode = [#json/decode json]
 watch json
   ("decode", decode, json)
+end
+
+A decoded string comes through on a change
+
+search
+  decode-change = [#json/decode/change decode json-object]
+commit
+  decode.json-object := json-object
+  decode-change := none
+end
+
+commit
+  [#html/style text: "
+    td {padding: 10px;}
+    table {margin: 10px;}
+    .ui/column {padding: 10px;}
+    .ui/row {padding: 10px;}
+    .output {padding: 20px;}
+    .encode-eavs {min-width: 350px;}
+    "]
 end

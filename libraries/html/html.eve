@@ -16,6 +16,9 @@ commit
     "li"
     "ul"
     "ol"
+    "table"
+    "tr"
+    "td"
     )]
 end
 ~~~
