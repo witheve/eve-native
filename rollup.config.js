@@ -15,7 +15,8 @@ function createBundle(name, entry, moduleName = name) {
     moduleName,
     entry,
     dest: `./dist/${name}.js`,
-
+    external: ["vis"],
+    globals: {"vis": "vis"},
     format: "iife",
     plugins: [
       multiEntry(),
