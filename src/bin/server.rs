@@ -32,7 +32,6 @@ use eve::watchers::http::{HttpWatcher};
 use eve::watchers::json::JsonWatcher;
 use eve::watchers::textcompiler::{RawTextCompilerWatcher};
 use eve::watchers::console::{ConsoleWatcher};
-use eve::watchers::json::JsonWatcher;
 use eve::watchers::file::{FileWatcher};
 use eve::watchers::editor::EditorWatcher;
 use eve::watchers::remote::{Router, RouterMessage, RemoteWatcher};
