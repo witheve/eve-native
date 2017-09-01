@@ -129,6 +129,7 @@ lazy_static! {
         m.insert("eve-internal/string/split-reverse".to_string(), FunctionInfo::multi(vec!["text", "by"], vec!["token", "index"]));
         m.insert("string/index-of".to_string(), FunctionInfo::multi(vec!["text", "substring"], vec!["index"]));
         m.insert("eve/type-of".to_string(), FunctionInfo::new(vec!["value"]));
+        m.insert("eve/parse-value".to_string(), FunctionInfo::new(vec!["value"]));
         m.insert("gather/sum".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["sum"], FunctionKind::Sum));
         m.insert("gather/average".to_string(), FunctionInfo::aggregate(vec!["value"], vec!["average"], FunctionKind::Sum));
         m.insert("gather/string-join".to_string(), FunctionInfo::aggregate(vec!["value", "separator"], vec!["string"], FunctionKind::SortedSum));
