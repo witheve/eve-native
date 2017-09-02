@@ -14,10 +14,6 @@ use std::iter::{Iterator, self};
 use std::collections::{BTreeMap, HashMap, BTreeSet, btree_map};
 use compiler::{FunctionKind};
 
-extern crate term_painter;
-use self::term_painter::Color::*;
-use self::term_painter::ToStyle;
-
 pub type MyHasher = BuildHasherDefault<FnvHasher>;
 
 //-------------------------------------------------------------------------
@@ -365,8 +361,7 @@ fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Cou
                             active_rounds[pos] = round as i32;
                         }
                     } else {
-                        panic!(println!("{} Adding a round that already exists in the index at {:?}",
-                                        BrightRed.paint("Fatal Internal Error:"), round))
+                        panic!("Adding a round that is already in the index: {:?}", round)
                     }
                 }
                 Err(pos) => active_rounds.insert(pos, round as i32),
@@ -574,8 +569,7 @@ impl DistinctIndex {
 
     pub fn is_available(&self, e:Interned, a:Interned, v:Interned) -> bool {
         if e == 0 || a == 0 || v == 0 {
-            panic!(println!("{} Can't check availability of an unformed EAV ({}, {}, {})",
-                            BrightRed.paint("Fatal Internal Error:"), e, a, v));
+            panic!("Can't check availability of an unformed EAV ({}, {}, {})", e, a, v);
         }
         match self.eavs.get(&(e,a,v)) {
             Some(rounds) => {
@@ -777,6 +771,7 @@ impl AggregateEntry {
             &AggregateEntry::SortedSum { ref result, .. } => { vec![interner.internable_to_id(result.clone())] },
             &AggregateEntry::Sorted {..} => { unimplemented!() },
             &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
+        }
     }
 }
 
@@ -1060,8 +1055,7 @@ impl IntermediateIndex {
                         info.update_active(change.round, count);
                         !info.rounds.iter().any(|x| *x != 0) && info.active_rounds.len() == 0
                     },
-                    None => panic!(println!("{} Updating active rounds for an intermediate that doesn't exist: {:?}",
-                                            BrightRed.paint("Fatal Internal Error:"), change))
+                    None => panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change)
                 };
                 if remove {
                     lookup.remove(value);
@@ -1070,8 +1064,7 @@ impl IntermediateIndex {
             }
             Some(&mut IntermediateLevel::SumAggregate(_)) => { unimplemented!(); },
             Some(&mut IntermediateLevel::SortAggregate(..)) => { unimplemented!(); },
-            None => { panic!(println!("{} Updating active rounds for an intermediate that doesn't exist: {:?}",
-                                      BrightRed.paint("Fatal Internal Error:"), change)) }
+            None => { panic!("Updating active rounds for an intermediate that doesn't exist: {:?}", change) }
         };
         if should_remove {
             self.index.remove(key);

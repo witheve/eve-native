@@ -116,29 +116,13 @@ impl ClientHandler {
 
         thread::Builder::new().name("client file watcher".to_owned()).spawn(move || {
             let (outgoing, incoming) = mpsc::channel();
-            let mut watcher:RecommendedWatcher = match Watcher::new(outgoing, Duration::from_secs(1)) {
-                Ok(w) => w,
-                Err(e) => {
-                    panic!(println!("{} Unable to monitor files for hot-reloading due to error:\n{}", BrightRed.paint("Fatal Error:"), e));
-                }
-            };
+            let mut watcher:RecommendedWatcher = Watcher::new(outgoing, Duration::from_secs(1)).unwrap();
 
             if let Some(path) = libraries {
-                match watcher.watch(path, RecursiveMode::Recursive) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        panic!(println!("{} Could not watch standard library source due to error:\n{}", BrightRed.paint("Error:"), e));
-                    }
-                };
+                watcher.watch(path, RecursiveMode::Recursive).unwrap();
             }
             for file in files.iter() {
-                match watcher.watch(file, RecursiveMode::Recursive) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        println!("{} Could not watch file {} due to error:\n{}", BrightRed.paint("Error:"), file, e);
-                        panic!();
-                    }
-                }
+                watcher.watch(file, RecursiveMode::Recursive).unwrap();
             }
 
             loop {
@@ -147,7 +131,7 @@ impl ClientHandler {
                     Ok(event) => {
                         match event {
                             DebouncedEvent::Error(err, ..) => {
-                                println!("{} {:?}! Closing client file watcher...", BrightRed.paint("Error:"), err);
+                                println!("Closing client file watcher due to unforeseen error: {:?}", err);
                                 break;
                             },
                             DebouncedEvent::NoticeRemove(path) |
@@ -193,8 +177,8 @@ impl ClientHandler {
 impl Handler for ClientHandler {
 
     //fn on_request(&mut self, req: &ws::Request) -> Result<ws::Response,ws::Error> {
-    //println!("Handler received request:\n{:?}");
-    //ws::Response::from_request(req)
+        //println!("Handler received request:\n{:?}");
+        //ws::Response::from_request(req)
     //}
 
     fn on_message(&mut self, msg: Message) -> Result<(), ws::Error> {
@@ -314,61 +298,61 @@ pub struct EveFlags {
 
 fn main() {
     let matches = App::new("Eve")
-        .version("0.4")
-        .author("Kodowa Inc.")
-        .about("Creates an instance of the Eve server. Default values for options are in parentheses.")
-        .arg(Arg::with_name("editor")
-             .short("E")
-             .long("editor")
-             .help("Attaches an editor instance to each client program."))
-        .arg(Arg::with_name("watch")
-             .short("w")
-             .long("watch")
-             .help("Watches eve files for changes, and injects them into your running program."))
-        .arg(Arg::with_name("persist")
-             .short("s")
-             .long("persist")
-             .value_name("FILE")
-             .help("Sets the name for the database to load from and write to")
-             .takes_value(true))
-        .arg(Arg::with_name("library-path")
-             .short("L")
-             .long("library-path")
-             .value_name("PATH")
-             .help("Override default library path")
-             .takes_value(true))
-        .arg(Arg::with_name("EVE_FILES")
-             .help("The eve files and folders to load")
-             .required(true)
-             .multiple(true))
-        .arg(Arg::with_name("server-file")
-             .long("server")
-             .value_name("FILE")
-             .help("Loads the specified file into the server instance")
-             .takes_value(true))
-        .arg(Arg::with_name("port")
-             .short("p")
-             .long("port")
-             .value_name("PORT")
-             .help("Sets the port for the Eve server (3012)")
-             .takes_value(true))
-        .arg(Arg::with_name("http-port")
-             .short("t")
-             .long("http-port")
-             .value_name("PORT")
-             .help("Sets the port for the HTTP server (8081)")
-             .takes_value(true))
-        .arg(Arg::with_name("address")
-             .short("a")
-             .long("address")
-             .value_name("ADDRESS")
-             .help("Sets the address of the server (127.0.0.1)")
-             .takes_value(true))
-        .arg(Arg::with_name("clean")
-             .short("C")
-             .long("clean")
-             .help("Starts Eve with a clean database and no watchers (false)"))
-        .get_matches();
+                          .version("0.4")
+                          .author("Kodowa Inc.")
+                          .about("Creates an instance of the Eve server. Default values for options are in parentheses.")
+                          .arg(Arg::with_name("editor")
+                               .short("E")
+                               .long("editor")
+                               .help("Attaches an editor instance to each client program."))
+                          .arg(Arg::with_name("watch")
+                               .short("w")
+                               .long("watch")
+                               .help("Watches eve files for changes, and injects them into your running program."))
+                          .arg(Arg::with_name("persist")
+                               .short("s")
+                               .long("persist")
+                               .value_name("FILE")
+                               .help("Sets the name for the database to load from and write to")
+                               .takes_value(true))
+                          .arg(Arg::with_name("library-path")
+                               .short("L")
+                               .long("library-path")
+                               .value_name("PATH")
+                               .help("Override default library path")
+                               .takes_value(true))
+                          .arg(Arg::with_name("EVE_FILES")
+                               .help("The eve files and folders to load")
+                               .required(true)
+                               .multiple(true))
+                          .arg(Arg::with_name("server-file")
+                               .long("server")
+                               .value_name("FILE")
+                               .help("Loads the specified file into the server instance")
+                               .takes_value(true))
+                          .arg(Arg::with_name("port")
+                               .short("p")
+                               .long("port")
+                               .value_name("PORT")
+                               .help("Sets the port for the Eve server (3012)")
+                               .takes_value(true))
+                          .arg(Arg::with_name("http-port")
+                               .short("t")
+                               .long("http-port")
+                               .value_name("PORT")
+                               .help("Sets the port for the HTTP server (8081)")
+                               .takes_value(true))
+                          .arg(Arg::with_name("address")
+                               .short("a")
+                               .long("address")
+                               .value_name("ADDRESS")
+                               .help("Sets the address of the server (127.0.0.1)")
+                               .takes_value(true))
+                          .arg(Arg::with_name("clean")
+                               .short("C")
+                               .long("clean")
+                               .help("Starts Eve with a clean database and no watchers (false)"))
+                          .get_matches();
 
     println!("");
 
