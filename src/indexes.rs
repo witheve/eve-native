@@ -777,6 +777,7 @@ impl AggregateEntry {
             &AggregateEntry::SortedSum { ref result, .. } => { vec![interner.internable_to_id(result.clone())] },
             &AggregateEntry::Sorted {..} => { unimplemented!() },
             &AggregateEntry::Empty => panic!("Asked for result of AggregateEntry::Empty")
+        }
     }
 }
 
