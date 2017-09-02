@@ -10,8 +10,8 @@ import autoprefixer from "autoprefixer";
 import customProperties from "postcss-custom-properties";
 import colorFunction from "postcss-color-function";
 
-function createBundle(name, entry, moduleName) {
-  name = moduleName
+function createBundle(name, entry, moduleName = name) {
+  if(moduleName === undefined) moduleName = name;
   return {
     moduleName,
     entry,
