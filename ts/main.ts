@@ -92,14 +92,14 @@ class MultiplexedConnection extends Connection {
       this.loadBundle(bundle, client);
     },
     "crash": ({error}:ErrorMessage) => {
-      let message = document.createElement("h1");
+      let message: any = document.createElement("h1");
       let t = "We're sorry, but your Eve program has crashed.";
       message.addChild(document.createTextNode(t));
 
-      let error = document.createElement("pre");
-      error.addChild(document.createTextNode(error));
+      let errormessage: any = document.createElement("pre");
+      errormessage.addChild(document.createTextNode(error));
 
-      let alert = document.createElement("div");
+      let alert: any = document.createElement("div");
       alert.setAttribute("class", "alert");
       alert.addChild(message);
       alert.addChild(error);
