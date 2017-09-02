@@ -71,7 +71,7 @@ parser!(number(state) -> Node<'a> {
 
 whitespace_parser!(escaped_quote(state) -> Node<'a> {
     tag!(state, "\\");
-    let escaped = alt_tag!(state, ["\"" "n" "t"]);
+    let escaped = alt_tag!(state, ["\"" "\\" "n" "t"]);
     let ch = match escaped {
         "n" => "\n",
         "t" => "\t",

@@ -271,13 +271,13 @@ test!(base_string, {
 
 test!(base_string_escape_chars, {
     search
-        baz = "Hello \n \"World\" "
+        baz = "Hello \\ \n \"World\" "
     bind
         [#foo baz]
     end
 
     search
-        [#foo baz: "Hello \n \"World\" "]
+        [#foo baz: "Hello \\ \n \"World\" "]
     bind
         [#success]
     end
