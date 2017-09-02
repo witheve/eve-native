@@ -3,6 +3,7 @@ import {Connection, Message} from "./connection";
 
 export interface DiffMessage extends Message { type: "diff"; adds?:RawTuple[]; removes?:RawTuple[]; }
 export interface LoadBundleMessage extends Message { type: "load-bundle"; bundle: string }
+export interface ErrorMessage extends Message { type:"error"; error:string }
 
 interface Bundle { users: string[], css?: HTMLLinkElement, js?: HTMLScriptElement }
 
@@ -89,6 +90,19 @@ class MultiplexedConnection extends Connection {
     },
     "load-bundle": ({bundle, client}:LoadBundleMessage) => {
       this.loadBundle(bundle, client);
+    },
+    "crash": ({error}:ErrorMessage) => {
+      let message = document.createElement("h1");
+      let t = "We're sorry, but your Eve program has crashed.";
+      message.addChild(document.createTextNode(t));
+
+      let error = document.createElement("pre");
+      error.addChild(document.createTextNode(error));
+
+      let alert = document.createElement("div");
+      alert.setAttribute("class", "alert");
+      alert.addChild(message);
+      alert.addChild(error);
     }
   };
 

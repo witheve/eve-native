@@ -1,10 +1,21 @@
+extern crate serde_json;
+
 use super::super::indexes::{WatchDiff, RawRemoteChange};
-use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange, s};
+use super::super::ops::{Internable, Interner, Interned, RunLoopMessage, RawChange, s, JSONInternable};
 use super::Watcher;
-use std::sync::mpsc::{self, Sender};
+
+use std::sync::mpsc::{self, Sender, SendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::collections::HashMap;
+use std::error::Error;
+
+extern crate ws;
+use self::ws::Message;
+
+extern crate term_painter;
+use self::term_painter::ToStyle;
+use self::term_painter::Color::*;
 
 //-------------------------------------------------------------------------
 // Router
@@ -29,10 +40,9 @@ impl Router {
         thread::spawn(move || {
             let mut grouping:HashMap<Internable, Vec<RawRemoteChange>> = HashMap::new();
             loop {
-                match incoming.recv().unwrap() {
-                    RouterMessage::Remote(remotes) => {
+                match incoming.recv() {
+                    Ok(RouterMessage::Remote(remotes)) => {
                         for remote in remotes {
-                            // @FIXME is there really no way to do this without always cloning the to? :(
                             let vs = grouping.entry(remote.to.clone()).or_insert_with(|| vec![]);
                             vs.push(remote);
                         }
@@ -46,11 +56,27 @@ impl Router {
                             }
                         }
                     }
-                    RouterMessage::Local(name, changes) => {
+                    Ok(RouterMessage::Local(name, changes)) => {
                         if let Some(channel) = clients2.lock().unwrap().get(&name) {
-                            channel.send(RunLoopMessage::Transaction(changes)).unwrap();
+                            match channel.send(RunLoopMessage::Transaction(changes)) {
+                                Ok(_) => (),
+                                Err(SendError(se)) => {
+                                    println!("{} Failed to send {}",
+                                             BrightRed.paint("Error:"), se.format_error());
+                                }
+                            }
                         } else {
                             panic!("Failed to send local TX to nonexistent or unregistered client: '{}'", &name);
+                        }
+                    }
+                    Err(err) => {
+                        if let Some(cause) = err.cause() {
+                            println!("{} Receiving failed: {} due to {}\n",
+                                     BrightRed.paint("Error: "), err.description(),
+                                     cause);
+                        } else {
+                            println!("{} Receiving failed: {}\n",
+                                     BrightRed.paint("Error: "), err.description());
                         }
                     }
                 }
@@ -93,10 +119,21 @@ pub struct RemoteWatcher {
 
 impl RemoteWatcher {
     pub fn new(me:&str, router: &Router) -> RemoteWatcher {
-        RemoteWatcher {name: "eve/remote".to_string(), me: Internable::String(me.to_string()), router_channel: router.get_channel() }
+        RemoteWatcher {
+            name: "eve/remote".to_string(),
+            me: Internable::String(me.to_string()),
+            router_channel: router.get_channel()
+        }
     }
 
-    fn to_raw_change(&self, interner:&mut Interner, _type:Internable, to:Interned, _for:Interned, entity:Interned, attribute:Interned, value:Interned) -> RawRemoteChange {
+    fn to_raw_change(&self,
+                     interner:&mut Interner,
+                     _type:Internable,
+                     to:Interned,
+                     _for:Interned,
+                     entity:Interned,
+                     attribute:Interned,
+                     value:Interned) -> RawRemoteChange {
         RawRemoteChange {
             e: interner.get_value(entity).clone(),
             a: interner.get_value(attribute).clone(),
@@ -126,9 +163,17 @@ impl Watcher for RemoteWatcher {
                 match remove.as_slice() {
                     &[to, _for, entity, attribute, value, _] => {
                         // println!("SEND REMOVE: ({:?}, {:?}, {:?}, {:?}, {:?})", to, _for, entity, attribute, value);
-                        changes.push(self.to_raw_change(interner, Internable::String("remove".to_string()), to, _for, entity, attribute, value));
+                        changes.push(self.to_raw_change(interner,
+                                                        Internable::String("remove".to_string()),
+                                                        to, _for, entity, attribute, value));
                     }
-                    _ => panic!("Invalid remote watch")
+                    s => {
+                        let slice_string = s.iter()
+                            .map(|i| format!("{}", i))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        panic!(println!("{} Invalid remote remove: ({})", BrightRed.paint("Error:"), slice_string));
+                    }
                 }
 
             }
@@ -139,7 +184,14 @@ impl Watcher for RemoteWatcher {
                     // println!("SEND ADD: ({:?}, {:?}, {:?}, {:?}, {:?})", to, _for, entity, attribute, value);
                     changes.push(self.to_raw_change(interner, Internable::String("add".to_string()), to, _for, entity, attribute, value));
                 }
-                _ => panic!("Invalid remote watch")
+                s => {
+                    let slice_string = s.iter()
+                        .map(|i| format!("{}", i))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("{} Invalid remote add: ({})", BrightRed.paint("Error:"), slice_string);
+                    panic!();
+                }
             }
         }
         self.router_channel.send(RouterMessage::Remote(changes)).unwrap();
