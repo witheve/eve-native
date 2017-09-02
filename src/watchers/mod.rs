@@ -11,7 +11,6 @@ pub mod file;
 pub mod console;
 pub mod system;
 pub mod compiler;
-pub mod json;
 pub mod http;
 pub mod textcompiler;
 pub mod editor;

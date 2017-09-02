@@ -51,7 +51,7 @@ search
   eav = [#json/encode/eav record attribute value]
   not(eav = [#json/encode/entity])
 bind
-  [#json/encode/entity/av-pair record av: "'{{attribute}}': '{{value}}'"]
+  [#json/encode/entity/av-pair record av: "\"{{attribute}}\": \"{{value}}\""]
 end
 
 search
@@ -92,7 +92,7 @@ Put all json object strings into an array form. attaching its attribute
 search
   [#json/encode/join-object result parent attribute]
 bind
-  [#json/encode/complete-av record: parent json-string: "'{{attribute}}': [ {{result}} ]"]
+  [#json/encode/complete-av record: parent json-string: "\"{{attribute}}\": [ {{result}} ]"]
 end
 
 ### Bring it all together
