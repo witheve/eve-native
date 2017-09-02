@@ -94,7 +94,7 @@ whitespace_parser!(string_bracket(state) -> Node<'a> {
 });
 
 whitespace_parser!(string_chars(state) -> Node<'a> {
-    let chars = any_except!(state, "\"{");
+    let chars = any_except!(state, "\\\"{");
     result!(state, Node::RawString(chars))
 });
 
