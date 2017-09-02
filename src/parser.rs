@@ -71,7 +71,7 @@ parser!(number(state) -> Node<'a> {
 
 whitespace_parser!(escaped_quote(state) -> Node<'a> {
     tag!(state, "\\");
-    let escaped = alt_tag!(state, ["\"" "n" "t"]);
+    let escaped = alt_tag!(state, ["\"" "\\" "n" "t"]);
     let ch = match escaped {
         "n" => "\n",
         "t" => "\t",
@@ -94,7 +94,7 @@ whitespace_parser!(string_bracket(state) -> Node<'a> {
 });
 
 whitespace_parser!(string_chars(state) -> Node<'a> {
-    let chars = any_except!(state, "\"{");
+    let chars = any_except!(state, "\\\"{");
     result!(state, Node::RawString(chars))
 });
 

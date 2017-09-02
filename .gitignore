@@ -7,3 +7,4 @@ node_modules/
 build/
 dist/
 .vscode/tasks.json
+examples/test.eve
