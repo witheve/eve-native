@@ -1851,7 +1851,7 @@ pub fn parse_file(interner:&mut Interner, path:&str, report: bool, debug: bool) 
 
 #[test]
 pub fn parser_test() {
-    let mut file = File::open("examples/test2.eve").expect("Unable to open the file");
+    let mut file = File::open("examples/test.eve").expect("Unable to open the file");
     let mut contents = String::new();
     file.read_to_string(&mut contents).expect("Unable to read the file");
     let mut state = ParseState::new(&contents);

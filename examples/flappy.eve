@@ -16,7 +16,7 @@ commit
   [#obstacle gap: 35 offset: 0]
   [#obstacle gap: 35 offset: -1]
 
-  [#time #system/timer resolution: 1000 / 60]
+  [#time #system/timer resolution: 1000 / 5]
 end
 
 Next we draw the backdrop of the world. The player and obstacle will be drawn later based on their current state. Throughout the app we use resources from [@bhauman's flappy bird demo in clojure][1]. Since none of these things change over time, we commit them once when the player starts the game.

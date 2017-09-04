@@ -226,7 +226,7 @@ export class HTML extends Library {
   }
 
   protected toCSS(style:Style):string {
-    let dummy = this._dummy;
+    let dummy = document.createElement("div"); // @FIXME:
     // Clear previous values.
     let dummyStyle = dummy.style;
     for(let prop in dummyStyle) {
