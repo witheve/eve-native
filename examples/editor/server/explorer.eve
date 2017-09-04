@@ -281,7 +281,6 @@ Link matches forwards.
 search
   tag-tree = [#editor/explorer/tag-tree match]
   (_, next) = gather/next[for: (match.sort match) per: tag-tree]
-  tag-tree = [#editor/explorer/tag-tree match: next]
 bind
   match.next += next
 end
@@ -292,7 +291,6 @@ Link matches backwards.
 search
   tag-tree = [#editor/explorer/tag-tree match]
   (_, previous) = gather/previous[for: (match.sort match) per: tag-tree]
-  tag-tree = [#editor/explorer/tag-tree match: previous]
 bind
   match.previous += previous
 end
