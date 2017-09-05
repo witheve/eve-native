@@ -851,10 +851,95 @@ commit
   slider.value := numeric-value
 end
 
+## Tabbed Box
+
+search
+  tab-container = [#ui/tabbed-box tabs]
+bind
+  tab-container <- [#html/div children:
+    [#ui/tabbed-box/tab-row #ui/row | children: 
+      [#html/div #ui/tabbed-box/tab-display tab-container tab: tabs sort: tabs.sort, text: tabs.title]]
+    [#ui/tabbed-box/content tabs tab-container]]
+end
+
+Sort tabs by `title` if no sort is specified
+
+search
+  tab = [#ui/tabbed-box/tab title]
+  sort = if tab.sort then tab.sort else tab.title
+commit
+  tab.sort := sort
+end
+
+Inject `#selected` tab contents into the `#ui/tabbed-box` for display
+
+search
+  content-container = [#ui/tabbed-box/content tabs: [#ui/tabbed-box/tab #selected title]]
+bind
+   content-container <- [#html/div text: title]
+end
+
+If no tabs are `#selected`, then the first tab is `#selected`
+
+
+## Spinner
+
+search
+  spinner = [#ui/spinner size]
+  radius = "{{size}}px"
+  diameter = "{{size * 2}}px"
+  border = "{{size / 4}}px solid rgb(0,158,224)"
+
+bind
+  [#html/div text: size]
+  spinner <- [#html/div #top #rotate | style: [
+    height: radius 
+    width: diameter 
+    border-top-left-radius: diameter
+    border-top-right-radius: diameter
+    border-left: border
+    border-right: border
+    border-top: border
+    ]]
+end
+
+Give spinners a default size if none is specified
+
+search
+  spinner = [#ui/spinner]
+  not(spinner = [size])
+commit
+  spinner.size += 10
+end
+
+Remove the default size if one is set adter the fact
+
+search
+  spinner = [#ui/spinner size != 25]
+commit
+  spinner.size -= 25
+end
+
+Clicking on a tab changes the selected tab
+
+search
+  [#html/event/click element: [#ui/tabbed-box/tab-display tab-container tab: clicked-tab]]
+  [#ui/tabbed-box/tab-display tab: selected-tab]
+  selected-tab = [#selected]
+  selected-tab != clicked-tab
+commit
+  selected-tab -= #selected
+  clicked-tab += #selected
+end
+
 ## Styles
 
 commit
   [#html/style text: "
+    .ui-tabbed-box {border: 1px solid rgb(230,230,230);}
+    .ui-tabbed-box-tab-display { background-color: rgb(230,230,230); padding: 20px;}
+    .ui-tabbed-box-tab-display:hover { background-color: rgb(240,240,240); }
+    .ui-tabbed-box-content {padding: 20px;}
     .ui-progress {margin: 10px;}
     .ui-progress-label {font-size: 14px; margin-top: -2px; margin-left: 4px;}
     .ui-progress-container { background-color: rgb(200,200,200); height: 10px; border-radius: 5px; }
@@ -880,6 +965,30 @@ commit
     }
     input[type=range]:focus { outline: none; }
     input[type=range]:focus::-webkit-slider-runnable-track { background: #ccc; }
+
+.top {
+  background-color: rgba(0,0,0,0);
+}
+
+.rotate {
+  animation: 1s linear infinite rotate;
+  position: relative;
+  transform-origin: 50% 100%;
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg)
+  }
+  to {
+    transform: rotate(360deg)
+  }
+}
+
+
+
+
+
     "]
 end
 
