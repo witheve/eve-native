@@ -790,18 +790,17 @@ end
 
 search
   progress = [#ui/progress min max value width]
-  val = if value >= max then max else value
-  //percentage = val / (max - min)
-  //percentage-display = math/to-fixed[value: percentage * 100 to: 0]
-  //progress-width = width * val / (max - min)
-  //display = if progress = [#label] then "inline"
-  //          else "none"
+  val = if value > max then max else value
+  percentage = val / (max - min)
+  percentage-display = math/to-fixed[value: percentage * 100 to: 0]
+  progress-width = width * val / (max - min)
+  display = if progress = [#label] then "inline"
+            else "none"
 bind
-  progress <- [#ui/row children: 
-    [#html/div progress sort: 2 text: value]
-  //  [#html/div #ui/progress/label progress | sort: 2 text: "{{percentage-display}}%" style: [display]] 
-    [#html/div  #ui/progress/container progress | sort: 1 style: [width: "{{width}}px"]]]
-  //    [#html/div #ui/progress/bar progress | style: [width: "{{progress-width}}px"]]]]
+  progress <- [#ui/row | children: 
+    [#html/div #ui/progress/label progress | sort: 2 text: "{{percentage-display}}%" style: [display]] 
+    [#html/div  #ui/progress/container progress | sort: 1 style: [width: "{{width}}px"] children:
+      [#html/div #ui/progress/bar progress | style: [width: "{{progress-width}}px"]]]]
 end
 
 Progress bars at 100% are marked `#ui/progress/complete`
@@ -847,8 +846,9 @@ When the user changes the slider value, update its `value` in Eve
 search
   [#html/event/change element: slider value]
   slider = [#ui/slider]
+  numeric-value = eve/parse-value[value]
 commit
-  slider.value := value
+  slider.value := numeric-value
 end
 
 ## Styles
@@ -858,7 +858,7 @@ commit
     .ui-progress {margin: 10px;}
     .ui-progress-label {font-size: 14px; margin-top: -2px; margin-left: 4px;}
     .ui-progress-container { background-color: rgb(200,200,200); height: 10px; border-radius: 5px; }
-    .ui-progress-bar { background-color: green; height: 100%; border-radius: 5px; transition: width 0.5s; }
+    .ui-progress-bar { background-color: green; height: 100%; border-radius: 5px; }
     input[type=range]{ -webkit-appearance: none; }
 
     input[type=range]::-webkit-slider-runnable-track {
