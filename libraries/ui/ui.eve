@@ -853,34 +853,57 @@ end
 
 ## Tabbed Box
 
+Draw the `#ui/tabbed-box`
+
 search
   tab-container = [#ui/tabbed-box tabs]
 bind
-  tab-container <- [#html/div children:
+  tab-container <- [#html/div | children:
     [#ui/tabbed-box/tab-row #ui/row | children: 
-      [#html/div #ui/tabbed-box/tab-display tab-container tab: tabs sort: tabs.sort, text: tabs.title]]
-    [#ui/tabbed-box/content tabs tab-container]]
+      [#html/div #ui/tabbed-box/tab-display tab: tabs sort: tabs.title text: tabs.title]]
+    [#ui/tabbed-box/content-display tabs container: tab-container]]
 end
 
-Sort tabs by `title` if no sort is specified
+Give a default tag
 
 search
-  tab = [#ui/tabbed-box/tab title]
-  sort = if tab.sort then tab.sort else tab.title
+  content = [#ui/tabbed-box/content-display tabs]
+  gather/bottom[for: tabs limit: 1]
 commit
-  tab.sort := sort
+  tabs += #selected
 end
 
-Inject `#selected` tab contents into the `#ui/tabbed-box` for display
+Apply the selected tag to the `tag-display` for special styling
 
 search
-  content-container = [#ui/tabbed-box/content tabs: [#ui/tabbed-box/tab #selected title]]
+  tab = [#ui/tabbed-box/tab #selected title]
+  display = [#ui/tabbed-box/tab-display tab]
 bind
-   content-container <- [#html/div text: title]
+  display += #selected
 end
 
-If no tabs are `#selected`, then the first tab is `#selected`
+Inject tab content into the content are of thet `#ui/tabbed-box`
 
+search
+  content-display = [#ui/tabbed-box/content-display tabs]
+  tabs = [#ui/tabbed-box/tab #selected]
+  [#ui/tabbed-box/content tab: tabs content]
+bind
+  content-display <- [#html/div #ui/tabbed-box/has-content]
+  content-display.children += content
+end
+
+Clicking on a tab changes the selected tab
+
+search
+  [#html/event/click element: [#ui/tabbed-box/tab-display tab: clicked-tab]]
+  [#ui/tabbed-box/tab-display tab: selected-tab]
+  selected-tab = [#selected]
+  selected-tab != clicked-tab
+commit
+  selected-tab -= #selected
+  clicked-tab += #selected
+end
 
 ## Spinner
 
@@ -891,16 +914,14 @@ search
   border = "{{size / 4}}px solid rgb(0,158,224)"
 
 bind
-  [#html/div text: size]
-  spinner <- [#html/div #top #rotate | style: [
+  spinner <- [#html/div #ui/spinner/circle #ui/spinner/rotate | style: [
     height: radius 
     width: diameter 
     border-top-left-radius: diameter
     border-top-right-radius: diameter
     border-left: border
     border-right: border
-    border-top: border
-    ]]
+    border-top: border]]
 end
 
 Give spinners a default size if none is specified
@@ -920,26 +941,15 @@ commit
   spinner.size -= 25
 end
 
-Clicking on a tab changes the selected tab
-
-search
-  [#html/event/click element: [#ui/tabbed-box/tab-display tab-container tab: clicked-tab]]
-  [#ui/tabbed-box/tab-display tab: selected-tab]
-  selected-tab = [#selected]
-  selected-tab != clicked-tab
-commit
-  selected-tab -= #selected
-  clicked-tab += #selected
-end
-
 ## Styles
 
 commit
   [#html/style text: "
     .ui-tabbed-box {border: 1px solid rgb(230,230,230);}
     .ui-tabbed-box-tab-display { background-color: rgb(230,230,230); padding: 20px;}
+    .ui-tabbed-box-tab-display.selected { border-bottom: 3px solid rgb(0,158,224);}
     .ui-tabbed-box-tab-display:hover { background-color: rgb(240,240,240); }
-    .ui-tabbed-box-content {padding: 20px;}
+    .ui-tabbed-box-content-display {padding: 20px;}
     .ui-progress {margin: 10px;}
     .ui-progress-label {font-size: 14px; margin-top: -2px; margin-left: 4px;}
     .ui-progress-container { background-color: rgb(200,200,200); height: 10px; border-radius: 5px; }
@@ -966,29 +976,17 @@ commit
     input[type=range]:focus { outline: none; }
     input[type=range]:focus::-webkit-slider-runnable-track { background: #ccc; }
 
-.top {
-  background-color: rgba(0,0,0,0);
-}
+    .ui-spinner-circle { background-color: rgba(0,0,0,0); margin: 10px; }
+    .ui-spinner-rotate { animation: 1s linear infinite ui-spinner-rotate; position: relative; transform-origin: 50% 100%; }
 
-.rotate {
-  animation: 1s linear infinite rotate;
-  position: relative;
-  transform-origin: 50% 100%;
-}
-
-@keyframes rotate {
-  from {
-    transform: rotate(0deg)
-  }
-  to {
-    transform: rotate(360deg)
-  }
-}
-
-
-
-
-
+    @keyframes ui-spinner-rotate {
+      from {
+        transform: rotate(0deg)
+      }
+      to {
+        transform: rotate(360deg)
+      }
+    }
     "]
 end
 
@@ -999,13 +997,14 @@ Todo:
 - [x] Dropdown
   - [x] *bug* commit removal not working for enter / click (blurs list -> closes dropdown)
   - [x] *bug* gather/bottom filtering randomly (always includes correct answer + optionally any others in set).
-- [ ] Tab Box
+- [x] Tab Box
 - [ ] Rewrite AC on Dropdown
   - input
   - list (navigable)
 - [ ] container
   - card
 - [x] progress
+- [x] spinner
 - [ ] Tree
 - [ ] chip
 - [ ] date picker
