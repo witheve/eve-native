@@ -1,7 +1,5 @@
 # HTTP
 
-
-
 ## Send an HTTP Request
 
 HTTP requests accept several attributes:
@@ -99,10 +97,40 @@ commit
   chunk := none
 end
 
-## Process HTTP Requests
+## Receive HTTP Requests
 
 search
   server = [#http/server address]
 watch http
   ("server", server, address)
+end
+
+
+## Parse Query Strings
+
+search
+  url = [#html/url query]
+bind
+  [#html/url/parse-query url query]
+end
+
+search
+  parse = [#html/url/parse-query query]
+  (pair, i) = string/split[text: query by: "&"]
+  (token, index) = string/split[text: pair by: "="]
+bind
+  [#html/url/query-kvs parse pair token index]
+end
+
+search
+  [#html/url/query-kvs parse pair, token: key, index: 1]
+  [#html/url/query-kvs parse pair, token: value, index: 2]
+bind
+  parse.result += [#html/url/query key value]
+end
+
+search
+  [#html/url/parse-query url result]
+bind
+  url.parsed-query += result
 end
