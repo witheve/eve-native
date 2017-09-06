@@ -75,8 +75,6 @@ Decode the record we just encoded
   //[#ui/button #remove-record text: "Remove From Record"]
 //end
 
-
-
 ## Debug Display
 
 search
@@ -110,7 +108,7 @@ search
   entity? = if eav = [#json/encode/entity] then "entity"
             else ""
 bind
-  encode <- [| children:
+  encode <- [children:
     [#html/div sort: 0 text: "Encode EAVs"]
     [#html/table #eav-table | children:
       [#html/tr #eav-row eav children: 
@@ -129,7 +127,7 @@ search
   encode = [#flatten]
   [#json/encode/flatten record]
 bind
-  encode <- [| children:
+  encode <- [children:
     [#html/div sort: 0 text: "Flatten"]
     [#html/div sort: 1 text: "{{record}}"]
   ]
