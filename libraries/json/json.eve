@@ -97,7 +97,7 @@ end
 
 ### Bring it all together
 
-Join all encoded avs into a compelte string
+Join all encoded avs into a complete string
 
 search
   complete-av = [#json/encode/complete-av record]
