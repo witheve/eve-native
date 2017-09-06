@@ -2,17 +2,17 @@
 
 ## Deprecation Warnings
 
-~~~ eve
+
 search
   [#html/shortcut-tag shortcut tagname]
   not([#ui/shortcut-tag tagname])
 bind
   [#ui/deprecated-shortcut-tag shortcut: "ui/{{tagname}}" new-shortcut: shortcut tagname]
 end
-~~~
+
 
 Report deprecated shortcuts as warnings.
-~~~ eve
+
 search
   [#ui/deprecated-shortcut-tag shortcut: tag new-shortcut tagname]
   element = [tag]
@@ -20,12 +20,12 @@ bind
   [#eve/warning #ui/warning #eve/deprecated message: "The shortcut tag '#{{tag}}' for creating basic HTML elements has been deprecated. Instead, use '#{{new-shortcut}}'."]
   element <- [#html/element tagname]
 end
-~~~
+
 
 
 ## Shortcut Tags
 
-~~~ eve
+
 commit
   [#ui/shortcut-tag shortcut: "ui/row" tagname: "row"]
   [#ui/shortcut-tag shortcut: "ui/column" tagname: "column"]
@@ -34,51 +34,51 @@ commit
   [#ui/shortcut-tag shortcut: "ui/button" tagname: "button"]
   [#ui/shortcut-tag shortcut: "ui/input" tagname: "input"]
 end
-~~~
+
 
 Decorate shortcut elements as html.
-~~~ eve
+
 search
   [#ui/shortcut-tag shortcut: tag tagname]
   element = [tag]
 bind
   element <- [#html/element tagname]
 end
-~~~
+
 
 
 ## General Setup
 
 Clear ui events.
-~~~ eve
+
 search
   event = [#ui/event]
 commit
   event := none
 end
-~~~
+
 
 Translate bubble event names to event tags.
-~~~ eve
+
 search
   bubble = [#ui/bubble-event event: name]
 bind
   bubble.event-tag += "ui/event/{{name}}"
 end
-~~~
+
 
 Bubble ui events.
-~~~ eve
+
 search
   event = [#ui/event tag: event-tag element: from]
   [#ui/bubble-event event-tag from to]
 bind
   event.element += to
 end
-~~~
+
 
 Translate state/start/stop event names to event tags.
-~~~ eve
+
 search
   transition = [#ui/state-tag state start-event stop-event]
 bind
@@ -86,46 +86,46 @@ bind
   transition.start-tag += "ui/event/{{start-event}}"
   transition.stop-tag += "ui/event/{{stop-event}}"
 end
-~~~
+
 
 Apply state when start-event occurs.
-~~~ eve
+
 search
   [#ui/event tag: start-tag element: for]
   [#ui/state-tag for state-tag start-tag]
 commit
   for.tag += state-tag
 end
-~~~
+
 
 Remove state when stop-event occurs.
-~~~ eve
+
 search
   [#ui/event tag: stop-tag element: for]
   [#ui/state-tag for state-tag stop-tag]
 commit
   for.tag -= state-tag
 end
-~~~
+
 
 
 ## Buttons
 
 Give button elements icons if specified.
-~~~ eve
+
 search
   element = [#ui/button icon]
 bind
   element.class += "iconic"
   element.class += "ion-{{icon}}"
 end
-~~~
+
 
 
 ## Toggle
 
 A toggle is a checkbox and a label decorated as a toggle switch.
-~~~ eve
+
 search
   element = [#ui/toggle]
 bind
@@ -133,20 +133,20 @@ bind
     [#html/element tagname: "label" for: "ui-toggle-{{element}}"]
     [#html/input #ui/toggle/input type: "checkbox" id: "ui-toggle-{{element}}"]]
 end
-~~~
+
 
 Copy checked from input to toggle.
-~~~ eve
+
 search
   element = [#ui/toggle children: [#ui/toggle/input checked]]
 
 bind
   element.checked += checked
 end
-~~~
+
 
 Copy initial from toggle to input.
-~~~ eve
+
 search
   element = [#ui/toggle initial children: input]
   input = [#ui/toggle/input]
@@ -154,33 +154,33 @@ search
 bind
   input.initial += initial
 end
-~~~
+
 
 
 ## List
 
 Decorate list as html.
-~~~ eve
+
 search
   list = [#ui/list]
 bind
   list <- [#html/element tagname: "div"]
 end
-~~~
+
 
 Drop items into list (will eventually be flywheel'd).
-~~~ eve
+
 search
   list = [#ui/list item]
 bind
   list.children += item
 end
-~~~
+
 
 ## Selectable
 
 The default cursor for a selectable list is the first item.
-~~~ eve
+
 search
   selectable = [#ui/selectable item]
   not(selectable.cursor)
@@ -188,30 +188,30 @@ search
 commit
   selectable.cursor := item
 end
-~~~
+
 
 If the cursor is no longer an item, clear it.
-~~~ eve
+
 search
   selectable = [#ui/selectable cursor]
   not(selectable = [#ui/selectable item: cursor])
 commit
   selectable.cursor := none
 end
-~~~
+
 
 Selectable items are sorted by autosort if they don't specify a sort.
-~~~ eve
+
 search
   selectable = [#ui/selectable item]
   sort = if s = item.sort then s else item.eve-auto-index
 bind
   item.sort += sort
 end
-~~~
+
 
 Build a linked list of the items in the selectable for navigation.
-~~~ eve
+
 search
   selectable = [#ui/selectable item]
   (next-sort next) = gather/next[for: (item.sort item) per: selectable]
@@ -219,71 +219,71 @@ bind
   item.next-selectable-item += next
   next.prev-selectable-item += item
 end
-~~~
+
 
 Mark the currently selected element.
-~~~ eve
+
 search
   [#ui/selectable selected]
 bind
   selected += #ui/selected
 end
-~~~
+
 
 Mark the cursor element.
-~~~ eve
+
 search
   [#ui/selectable #ui/active cursor]
 bind
   cursor += #ui/current
 end
-~~~
+
 
 A focused selectable is active.
-~~~ eve
+
 search
   selectable = [#ui/selectable #html/focused]
 bind
   selectable += #ui/active
 end
-~~~
+
 
 
 ### Handlers
 
 If a selectable is focused by the client, activate it.
-~~~ eve
+
 search
   selectable = [#ui/selectable]
   [#html/event/focus element: selectable]
 bind
   [#ui/event #ui/event/activate element: selectable]
 end
-~~~
+
 
 If a selectable is blurred by the client, deactivate it.
-~~~ eve
+
 search
   selectable = [#ui/selectable]
   [#html/event/blur element: selectable]
 bind
   [#ui/event #ui/event/deactivate element: selectable]
 end
-~~~
+
 
 Clicking an item in a selectable selects the item.
-~~~ eve
+
 search
   selectable = [#ui/selectable item]
   [#html/event/mouse-down element: item]
 bind
   [#ui/event #ui/event/select element: selectable item]
 end
-~~~
+
 
 Clicking outside an active selectable deactivates it.
 @FIXME: This just won't work :( It clashes when used as a subcomponent.
-~~~ eve
+
 // search
 //   selectable = [#ui/selectable #ui/active]
 //   [#html/event/click]
@@ -292,10 +292,10 @@ Clicking outside an active selectable deactivates it.
 // bind
 //   [#ui/event #ui/event/deactivate element: selectable]
 // end
-~~~
+
 
 Escape or tab in a active selectable deactivates it.
-~~~ eve
+
 search
   selectable = [#ui/selectable #ui/active]
   event = if e = [#html/event/key-down key: "escape"] then e
@@ -304,124 +304,124 @@ search
 bind
   [#ui/event #ui/event/deactivate element: selectable]
 end
-~~~
+
 
 Enter in a active selectable selects its cursor.
-~~~ eve
+
 search
   selectable = [#ui/selectable #ui/active cursor:item]
   [#html/event/key-down key: "enter"]
 bind
   [#ui/event #ui/event/select element: selectable item]
 end
-~~~
+
 
 Down in a active selectable advances the cursor.
-~~~ eve
+
 search
   selectable = [#ui/selectable #ui/active cursor]
   event = [#html/event/key-down key: "down"]
 commit
   selectable.cursor := cursor.next-selectable-item
 end
-~~~
+
 
 Up in a active selectable retreats the cursor.
-~~~ eve
+
 search
   selectable = [#ui/selectable #ui/active cursor]
   [#html/event/key-down key: "up"]
 commit
   selectable.cursor := cursor.prev-selectable-item
 end
-~~~
+
 
 
 ### Events
 
 Describe selectable states.
-~~~ eve
+
 search
   selectable = [#ui/selectable]
 bind
   [#ui/state-tag for: selectable state: "active" start-event: "activate" stop-event: "deactivate"]
 end
-~~~
+
 
 Selecting an element updates the selected and cursor.
-~~~ eve
+
 search
   event = [#ui/event/select element: selectable item]
 commit
   selectable.selected += item
   selectable.cursor := item
 end
-~~~
+
 
 In a single-selectable selectable, selection overwrites the previous selected.
-~~~ eve
+
 search
   event = [#ui/event/select element: selectable item]
   selectable = [#ui/single-selectable]
 commit
   selectable.selected := item
 end
-~~~
+
 
 Clearing a selectable clears its selected.
-~~~ eve
+
 search
   event = [#ui/event/clear element: selectable]
 commit
   selectable.selected := none
 end
-~~~
+
 
 
 ### Dropdown
 
 Decorate dropdown as html.
-~~~ eve
+
 search
   dropdown = [#ui/dropdown]
 bind
   dropdown <- [#html/element tagname: "div"]
 end
-~~~
+
 
 A dropdown's first child is its input.
-~~~ eve
+
 search
   dropdown = [#ui/dropdown input]
 bind
   dropdown.children += input
   input.sort += 1
 end
-~~~
+
 
 A dropdown creates a selectable list of its items.
-~~~ eve
+
 search
   dropdown = [#ui/dropdown item]
 bind
   dropdown.children += [#ui/dropdown/list #ui/list #ui/selectable #ui/single-selectable dropdown container: dropdown sort: 999999 | item]
 end
-~~~
+
 
 A dropdown's selected is its list's
-~~~ eve
+
 search
   [#ui/dropdown/list dropdown selected]
 bind
   dropdown.selected += selected
 end
-~~~
+
 
 
 ### Handlers
 
 Clicking a dropdown opens it.
-~~~ eve
+
 search
   dropdown = [#ui/dropdown]
   not(dropdown = [#ui/active])
@@ -429,10 +429,10 @@ search
 bind
   [#ui/event #ui/event/activate element: dropdown]
 end
-~~~
+
 
 Clicking anywhere outside an open dropdown closes it.
-~~~ eve
+
 search
   dropdown = [#ui/dropdown #ui/active]
   [#html/event/click]
@@ -440,13 +440,13 @@ search
 bind
   [#ui/event #ui/event/deactivate element: dropdown]
 end
-~~~
+
 
 
 ### Events
 
 Describe dropdown event bubbling and states.
-~~~ eve
+
 search
   dropdown = [#ui/dropdown input]
   list = [#ui/dropdown/list dropdown]
@@ -455,83 +455,83 @@ bind
   [#ui/bubble-event from: list to: dropdown event: ("activate" "deactivate" "clear" "select")]
   [#ui/state-tag for: dropdown state: "active" start-event: "activate" stop-event: "deactivate"]
 end
-~~~
+
 
 Opening a button-based dropdown blurs the button.
-~~~ eve
+
 search
   [#ui/event/activate element: dropdown]
   dropdown.input.tagname = "button"
 commit
   dropdown.input += #html/trigger/blur
 end
-~~~
+
 
 
 ## Completer
 
 Decorate completer.
-~~~ eve
+
 search
   completer = [#ui/completer]
 bind
   completer <- [#ui/dropdown input:
     [#ui/input #ui/completer/input completer]]
 end
-~~~
+
 
 
 ### Setup
 
 Copy input placeholder.
-~~~ eve
+
 search input = [#ui/completer/input completer]
 bind   input.placeholder += completer.placeholder
 end
-~~~
+
 
 Copy input initial.
-~~~ eve
+
 search input = [#ui/completer/input completer]
 bind   input.initial += completer.initial
 end
-~~~
+
 
 A completer's value is its input's.
-~~~ eve
+
 search
   completer = [#ui/completer]
   value = if [#ui/completer/input completer value: v] then v else ""
 bind
   completer.value += value
 end
-~~~
+
 
 
 ### Handlers
 
 Focusing the completer opens the dropdown.
-~~~ eve
+
 search
   input = [#ui/completer/input completer]
   [#html/event/focus element: input]
 bind
   [#ui/event #ui/event/activate element: completer]
 end
-~~~
+
 
 Blurring the completer closes the dropdown.
-~~~ eve
+
 search
   input = [#ui/completer/input completer]
   [#html/event/blur element: input]
 bind
   [#ui/event #ui/event/deactivate element: completer]
 end
-~~~
+
 
 Changing the completer moves the cursor to the top of the list.
-~~~ eve
+
 search
   completer = [#ui/completer #ui/active item]
   list = [#ui/dropdown/list dropdown: completer]
@@ -541,57 +541,57 @@ search
 commit
   list.cursor := item
 end
-~~~
+
 
 
 ### Events
 
 Closing a completer blurs it.
-~~~ eve
+
 search
   [#ui/event/deactivate element: completer]
   completer = [#ui/completer input]
 commit
   input += #html/trigger/blur
 end
-~~~
+
 
 Opening a completer focuses it.
-~~~ eve
+
 search
   [#ui/event/activate element: completer]
   completer = [#ui/completer input]
 commit
   input += #html/trigger/focus
 end
-~~~
+
 
 
 ## Autocomplete
 
 Decorate autocomplete
-~~~ eve
+
 search
   completer = [#ui/autocomplete]
 bind
   completer <- [#ui/completer]
 end
-~~~
+
 
 ### Logic
 
 If an autocomplete's value disagrees with its selected, clear the selected.
-~~~ eve
+
 search
   completer = [#ui/autocomplete value: term selected]
   selected.text != term
 commit
   [#ui/event #ui/event/clear element: completer]
 end
-~~~
+
 
 Completions that match the current input value are matches, sorted by length.
-~~~ eve
+
 search
   completer = [#ui/autocomplete value: term completion]
   ix = string/index-of[text: completion.text substring: string/lowercase[text: term]]
@@ -600,12 +600,12 @@ bind
   completer.item += completion
   completion.sort += "{{sort}}{{completion.text}}"
 end
-~~~
+
 
 ### Handlers
 
 If the value matches perfectly on blur, select that match.
-~~~ eve
+
 search
   input = [#ui/completer/input completer]
   completer = [#ui/autocomplete]
@@ -616,33 +616,33 @@ search
 bind
   [#ui/event #ui/event/select element: completer item: match]
 end
-~~~
+
 
 Autocompletes update their values on select.
-~~~ eve
+
 search
   autocomplete = [#ui/autocomplete input]
   [#ui/event/select item element: autocomplete]
 commit
   input.value := item.text
 end
-~~~
+
 
 
 ### Events
 
 Clear the specified autocomplete.
-~~~ eve
+
 search
   event = [#ui/event/clear element: autocomplete]
   input = [#ui/autocomplete/input autocomplete]
 commit
   input.value := none
 end
-~~~
+
 
 When an autocomplete is opened, store its previous value.
-~~~ eve
+
 search
   event = [#ui/event/activate element: autocomplete]
   input = [#ui/autocomplete/input autocomplete]
@@ -650,74 +650,74 @@ search
 commit
   autocomplete.previous := value
 end
-~~~
+
 
 When an autocomplete is closed, erase its previous value.
-~~~ eve
+
 search
   event = [#ui/event/deactivate element: autocomplete]
   input = [#ui/autocomplete/input autocomplete]
 commit
   autocomplete.previous := none
 end
-~~~
+
 
 When an autocomplete is closed and its value is changed, emit a change event.
-~~~ eve
+
 search
   event = [#ui/event/deactivate element: autocomplete]
   autocomplete.value != autocomplete.previous
 commit
   [#ui/event #ui/event/change element: autocomplete value: autocomplete.value]
 end
-~~~
+
 
 When a selection is made that differs from the previous value, emit a change event.
-~~~ eve
+
 search
   event = [#ui/event/select element: autocomplete item]
   item.text != autocomplete.previous
 commit
   [#ui/event #ui/event/change element: autocomplete value: item.text]
 end
-~~~
+
 
 
 ## Token Completer
 
 Token completers are completers.
-~~~ eve
+
 search
   completer = [#ui/token-completer]
 bind
   completer <- [#ui/completer #html/listener/key | captured-key: ("space" "up" "down")]
 end
-~~~
+
 
 Token items are divs.
-~~~ eve
+
 search
   completer = [#ui/token-completer item]
 bind
   item += #html/div
 end
-~~~
+
 
 
 ### Logic
 
 The current term is the last word of the value.
-~~~ eve
+
 search
   completer = [#ui/token-completer value]
   (token, 1) = eve-internal/string/split-reverse[text: value by: " "]
 bind
   completer.needle += token
 end
-~~~
+
 
 Completions that match the current input value are matches, sorted by length.
-~~~ eve
+
 search
   completer = [#ui/token-completer needle: term completion]
   ix = string/index-of[text: string/lowercase[text: completion.text] substring: string/lowercase[text: term]]
@@ -726,32 +726,32 @@ bind
   completer.item += completion
   completion.sort += "{{sort}}{{completion.text}}"
 end
-~~~
+
 
 Space-separated words are tokens of the completer.
-~~~ eve
+
 search
   completer = [#ui/token-completer value]
   (token, ix) = string/split[text: value by: " "]
 bind
   completer.token += [#ui/token-completer/token token ix]
 end
-~~~
+
 
 Track the index of the last token.
-~~~ eve
+
 search
   completer = [#ui/token-completer token: [ix]]
   gather/top[for: ix per: completer limit: 1]
 bind
   completer.last-ix += ix
 end
-~~~
+
 
 ### Handlers
 
 Token completers append the new completed token in place of the in progress token on select.
-~~~ eve
+
 search
   event = [#ui/event/select element: completer item]
   input = [#ui/completer/input completer]
@@ -762,10 +762,10 @@ search
 commit
   input.value := "{{value}}{{item.text}} "
 end
-~~~
+
 
 Token completers without an in-progress token just append the new one.
-~~~ eve
+
 search
   event = [#ui/event/select element: completer item]
   input = [#ui/completer/input completer]
@@ -773,10 +773,10 @@ search
 commit
   input.value := "{{completer.value}}{{item.text}} "
 end
-~~~
+
 
 Space in a active selectable selects its cursor.
-~~~ eve
+
 search
   completer = [#ui/token-completer #ui/active]
   list = [#ui/dropdown/list dropdown: completer cursor:item]
@@ -784,9 +784,236 @@ search
 bind
   [#ui/event #ui/event/select element: list item]
 end
-~~~
 
 
+## Progress
+
+search
+  progress = [#ui/progress min max value width]
+  val = if value > max then max else value
+  percentage = val / (max - min)
+  percentage-display = math/to-fixed[value: percentage * 100 to: 0]
+  progress-width = width * val / (max - min)
+  display = if progress = [#label] then "inline" else "none"
+  color = if progress.color then progress.color else "rgb(111, 165, 81)"
+bind
+  progress <- [#ui/row | children: 
+    [#html/div #ui/progress/label progress | sort: 2 text: "{{percentage-display}}%" style: [display]] 
+    [#html/div  #ui/progress/container progress | sort: 1 style: [width: "{{width}}px"] children:
+      [#html/div #ui/progress/bar progress | style: [width: "{{progress-width}}px" background-color: color]]]]
+end
+
+Progress bars at 100% are marked `#ui/progress/complete`
+
+search
+  progress = [#ui/progress max value]
+  max = value
+bind
+  progress += #ui/progress/complete
+end
+
+## Slider
+
+search
+  slider = [#ui/slider min max width]
+  initial-value = if slider.initial-value then slider.initial-value else min
+bind
+  slider <- [#html/div children: [#ui/input min max slider type: "range" initial-value style: [width: "{{width}}px"]]]
+end
+
+If a slider as an `initial-value` but no calculated `value`, set it
+
+search
+  slider = [#ui/slider initial-value]
+  input = [#ui/input slider]
+  not(slider.value)
+commit
+  slider.value := initial-value
+  input.value := initial-value
+end
+
+An initial value out of range of the slider is set to its closest extreme and a warning is issued
+
+search
+  slider = [#ui/slider min max]
+  value = if slider.value > max then max
+          else if slider.value < min then min
+commit
+  slider.value := value
+  [#console/warn text: "Value of slider ({{slider.initial-value}}) is outside of the bounds of the slider"]
+end
+
+When the user changes the slider value in the UI, update its `value` in Eve
+
+search
+  [#html/event/change element: input value]
+  input = [#ui/input slider]
+  numeric-value = eve/parse-value[value]
+commit
+  slider.value := numeric-value
+end
+
+Sliders without a width are given a default
+
+search
+  slider = [#ui/slider]
+  not(slider = [width])
+commit
+  slider.width := 400
+end
+
+Draw a progress bar under the slider
+
+search
+  slider = [#ui/slider min max value width]
+bind
+  slider.children += [#ui/progress #slider-progress slider min max width sort: 0 | color: "rgb(0,121,177)" value]
+end
+
+search
+  [#ui/slider value]
+bind
+  [#html/div text: value]
+end
+
+
+## Tabbed Box
+
+Draw the `#ui/tabbed-box`
+
+search
+  tab-container = [#ui/tabbed-box tabs]
+bind
+  tab-container <- [#html/div | children:
+    [#ui/tabbed-box/tab-row #ui/row | children: 
+      [#html/div #ui/tabbed-box/tab-display tab: tabs sort: tabs.title text: tabs.title]]
+    [#ui/tabbed-box/content-display tabs container: tab-container]]
+end
+
+Give a default tag
+
+search
+  content = [#ui/tabbed-box/content-display tabs]
+  gather/bottom[for: tabs limit: 1]
+commit
+  tabs += #selected
+end
+
+Apply the selected tag to the `tag-display` for special styling
+
+search
+  tab = [#ui/tabbed-box/tab #selected title]
+  display = [#ui/tabbed-box/tab-display tab]
+bind
+  display += #selected
+end
+
+Inject tab content into the content are of thet `#ui/tabbed-box`
+
+search
+  content-display = [#ui/tabbed-box/content-display tabs]
+  tabs = [#ui/tabbed-box/tab #selected]
+  [#ui/tabbed-box/content tab: tabs content]
+bind
+  content-display <- [#html/div #ui/tabbed-box/has-content]
+  content-display.children += content
+end
+
+Clicking on a tab changes the selected tab
+
+search
+  [#html/event/click element: [#ui/tabbed-box/tab-display tab: clicked-tab]]
+  [#ui/tabbed-box/tab-display tab: selected-tab]
+  selected-tab = [#selected]
+  selected-tab != clicked-tab
+commit
+  selected-tab -= #selected
+  clicked-tab += #selected
+end
+
+## Spinner
+
+search
+  spinner = [#ui/spinner size]
+  radius = "{{size}}px"
+  diameter = "{{size * 2}}px"
+  border = "{{size / 4}}px solid rgb(0,158,224)"
+
+bind
+  spinner <- [#html/div #ui/spinner/circle #ui/spinner/rotate | style: [
+    height: radius 
+    width: diameter 
+    border-top-left-radius: diameter
+    border-top-right-radius: diameter
+    border-left: border
+    border-right: border
+    border-top: border]]
+end
+
+Give spinners a default size if none is specified
+
+search
+  spinner = [#ui/spinner]
+  not(spinner = [size])
+commit
+  spinner.size += 10
+end
+
+Remove the default size if one is set adter the fact
+
+search
+  spinner = [#ui/spinner size != 25]
+commit
+  spinner.size -= 25
+end
+
+## Styles
+
+commit
+  [#html/style text: "
+    .ui-tabbed-box {border: 1px solid rgb(230,230,230);}
+    .ui-tabbed-box-tab-display { background-color: rgb(230,230,230); padding: 20px;}
+    .ui-tabbed-box-tab-display.selected { border-bottom: 3px solid rgb(0,158,224);}
+    .ui-tabbed-box-tab-display:hover { background-color: rgb(240,240,240); }
+    .ui-tabbed-box-content-display {padding: 20px;}
+    .ui-progress {padding: 10px;}
+    .ui-progress-label {font-size: 14px; margin-top: -2px; margin-left: 4px;}
+    .ui-progress-container { background-color: rgb(200,200,200); height: 10px; border-radius: 5px; }
+    .ui-progress-bar { height: 100%; border-radius: 5px; }
+    input[type=range]{ -webkit-appearance: none; background-color: rgba(0,0,0,0);}
+    .ui-slider {margin: 10px; margin-left: 8px; }
+    .slider-progress {padding: 0px; padding-left: 2px; margin-bottom: -13px; }
+    input[type=range]::-webkit-slider-runnable-track {
+        height: 10px;
+        background: rgba(0,0,0,0);
+        border: none;
+        border-radius: 5px;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        height: 20px;
+        width: 20px;
+        border-radius: 50%;
+        background: rgb(0,158,224);
+        margin-top: -5px;
+    }
+    input[type=range]:focus { outline: none; }
+    input[type=range]:focus::-webkit-slider-runnable-track { background: rgba(0,0,0,0); }
+
+    .ui-spinner-circle { background-color: rgba(0,0,0,0); margin: 10px; }
+    .ui-spinner-rotate { animation: 1s linear infinite ui-spinner-rotate; position: relative; transform-origin: 50% 100%; }
+
+    @keyframes ui-spinner-rotate {
+      from {
+        transform: rotate(0deg)
+      }
+      to {
+        transform: rotate(360deg)
+      }
+    }
+    "]
+end
 
 
 Todo:
@@ -795,13 +1022,14 @@ Todo:
 - [x] Dropdown
   - [x] *bug* commit removal not working for enter / click (blurs list -> closes dropdown)
   - [x] *bug* gather/bottom filtering randomly (always includes correct answer + optionally any others in set).
-- [ ] Tab Box
+- [x] Tab Box
 - [ ] Rewrite AC on Dropdown
   - input
   - list (navigable)
 - [ ] container
   - card
-- [ ] progress
+- [x] progress
+- [x] spinner
 - [ ] Tree
 - [ ] chip
 - [ ] date picker

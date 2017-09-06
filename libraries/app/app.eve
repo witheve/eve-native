@@ -1,0 +1,149 @@
+# App
+
+This library provides a set of components to assist in quickly prototyping 
+single and multi page  applications.
+
+## Components 
+
+An app has three components:
+
+- `#app/settings` - Holds app-wide configuration data
+- `#app/page` - A page of your application. Holds the name of the page, store
+                page data, and hold the UI of a page.
+- `#app/ui` - Holds the layout of the application. UI stored on an `#app/page`
+              is injected into this layout for display.
+
+## Configuration
+
+The `#app/settings` record is a place to store app-wide configuration data. You
+can attach any records you like here, and they will be available for viewing 
+and editing in the `#app/page/settings` record, which will be displayed by 
+default in your app.
+
+Attributes of `#app/settings`:
+
+- name - the name of your application. Will be displayed in the header
+- settings - forms that allow you to view and edit configuration settings
+             of your app.
+             
+## Pages
+
+`#app/page`s are the core of your application. These are the top-level sections
+of your application, and will be accessible by a button in the navigation bar. 
+You can of course have sub pages as well. The navigation bar can be configured 
+to display these.
+
+Attributes of an `#app/page`:
+
+- name - Required: the name of the page
+- icon - an optional icon for your page. This will be displayed on the nav bar.
+- sort - an optoinal sorting for your page. Determines the order pages are 
+         displayed in the navigation bar.
+
+## Layout
+
+An `#app/ui` has four basic components:
+
+- Header - Located at the top of the application, spanning the entire width
+- Navigation - Contains controls that switch between pages in an application. 
+               Can be located on any of the sides of an appliation.
+- Content - Contains the pages of an application
+- Footer - Located at the bottom of an application, spanning the entire width.
+
+search
+  app-ui = [#app/ui]
+bind
+  app-ui.interface += [#app/layout #ui/column | children:
+    [#app/layout/header sort: 1]
+    [#app/layout/content sort: 3]
+    [#app/layout/footer sort: 5]]
+end
+
+### Header
+
+The `#app/layout/header` spans the entire width of the top of the application. It 
+automatically displays the name of your application, and contains two
+containers, `#app/layout/header/left` and `#app/layout/header/right`
+for displaying controls at the top corners of your application.
+
+search
+  header = [#app/layout/header]
+  [#app/settings name]
+bind
+  header <- [#ui/row | children:
+    [#html/div #app/layout/header/left sort: 1]
+    [#html/div #app/layout/header/middle sort: 2 text: name]
+    [#html/div #app/layout/header/right sort: 3]]
+end
+
+### Content and Navigation
+
+search
+  content = [#app/layout/content]
+bind
+  content <- [#ui/row | children:
+    [#app/layout/navigation sort: 1]
+    [#app/layout/page-container sort: 2]]
+end
+
+#### Navigation
+
+search
+  nav = [#app/layout/navigation]
+  page = [#app/page name icon sort]
+bind
+  nav <- [#ui/column | children: 
+    [#ui/list #ui/selectable #ui/single-selectable #navigation/pages | item:
+      [#app/layout/navigation-button #ui/button icon page text: name sort]]
+    [#ui/spacer #nav-spacer sort: 99]]
+end
+
+Clicking a navigation button switches the page.
+
+search
+  [#html/event/click element: [#app/layout/navigation-button page]]
+  ui = [#app/ui]
+commit
+  ui.page := page
+end
+
+#### Page Container
+
+search
+  page-container = [#app/layout/page-container]
+  [#app/ui page]
+bind
+  page-container <- [#html/div #app/layout/page | children: page]
+end
+
+### Footer
+
+The footer spans the entire width of the bottom of the application. It
+contains three containers`#app/layout/footer/left`, `#app/layout/footer/middle`
+and `#app/layout/footer/right`.
+
+search
+  header = [#app/layout/footer]
+bind
+  header <- [#ui/row | children:
+    [#html/div #app/layout/footer/left sort: 1]
+    [#html/div #app/layout/footer/middle sort: 2 text: "Footer"]
+    [#html/div #app/layout/footer/right sort: 3]]
+end
+
+## Styles
+
+commit
+  [#html/style text: "
+    .app-layout { background-color: rgb(255,255,255); width: 100vw; height: 100vh;  color: rgb(80,80,80); font-family: sans-serif; user-select: none; cursor: default; display: flex; }
+    .app-layout-header { background-color: rgb(200,200,200); display: flex; justify-content: space-between; }
+    .app-layout-header-middle { padding: 10px; }
+    .app-layout-footer { background-color: rgb(200,200,200); display: flex; justify-content: space-between; }
+    .app-layout-footer-middle { padding: 10px; }
+    .app-layout-content {flex-grow: 1;}
+    .app-layout-page-container { padding: 10px; }
+    .app-layout-navigation { background-color: rgb(130,130,130);  }
+    .app-layout-navigation-button { padding: 10px 20px 10px 20px; background-color: rgb(230,230,230); margin: 0px; border: 0px; border-radius: 0px; width: 100%; min-height: 75px;  }
+    .app-layout-navigation-button.ui-selected { background-color: rgb(255,255,255); color: rgb(0,158,224);  }
+    "]
+end
