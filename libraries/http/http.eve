@@ -23,7 +23,7 @@ search
   request = [#http/request]
   not(request.method)
 bind
-  request.method := "GET"
+  request.method += "GET"
 end
 
 Default empty body
@@ -47,10 +47,11 @@ end
 Associate response with its request
 
 search
-  response = [#http/response request]
+  response-change = [#http/response/change response]
+  response = [#html/response request]
   request = [#http/request]
 commit
-  response := none
+  response-change := none
   request.response := response
 end
 

@@ -162,6 +162,9 @@ fn send_http_request(id: &String, request: hyper::Request, outgoing: &Sender<Run
         let mut response_changes: Vec<RawChange> = vec![];
         let status = res.status().as_u16();
         let response_id = format!("http/response|{:?}",id);
+        let response_change_id = format!("http/response/received|{:?}",id);
+        response_changes.push(new_change(&response_change_id, "tag", Internable::from_str("http/response/received"), node));
+        response_changes.push(new_change(&response_change_id, "response", Internable::String(response_id.clone()), node));
         response_changes.push(new_change(&response_id, "tag", Internable::from_str("http/response"), node));
         response_changes.push(new_change(&response_id, "status", Internable::String(status.to_string()), node));
         response_changes.push(new_change(&response_id, "request", Internable::String(id.clone()), node));
