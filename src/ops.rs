@@ -2024,7 +2024,13 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
 }
 
 pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
-    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, input_round, ref current_params, ref mut changes, ..} = current {
+        if let Some(counts) = items.get(params) {
+            let sum:Count = counts.iter().filter(|cur| cur.abs() <= current_round as i32).map(|&cur| if cur < 0 { -1 } else { 1 }).sum();
+            if sum < 0 {
+                return;
+            }
+        }
         if let &Some(_) = current_params {
             let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
                 .rev()
@@ -2034,29 +2040,42 @@ pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>
                 .filter(|entry| is_aggregate_in_round(entry, current_round))
                 .next();
             match prev {
-                Some((v, _)) => {
-                    let mut neue = v.clone();
-                    neue.extend(params.iter().cloned());
-                    changes.push((neue, current_round, 1));
-                    if let Some((prev_next, _)) = next {
+                Some((v, prev_rounds)) => {
+                    let mut do_it = current_round == input_round ||
+                        prev_rounds.iter().find(|&c| *c == current_round as i32).is_some();
+                    if do_it {
                         let mut neue = v.clone();
-                        neue.extend(prev_next.iter().cloned());
-                        changes.push((neue, current_round, -1));
+                        neue.extend(params.iter().cloned());
+                        changes.push((neue, current_round, 1));
+                    }
+
+                    if let Some((prev_next, prev_next_rounds)) = next {
+                        do_it = do_it ||
+                            prev_next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
+                        if do_it {
+                            let mut neue = v.clone();
+                            neue.extend(prev_next.iter().cloned());
+                            changes.push((neue, current_round, -1));
+                        }
                     }
                 }
                 _ => { }
             }
-            if let Some((params_next, _)) = next {
-                let mut neue = params.clone();
-                neue.extend(params_next.iter().cloned());
-                changes.push((neue, current_round, 1));
+            if let Some((params_next, next_rounds)) = next {
+                let do_it = current_round == input_round ||
+                    next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
+                if do_it {
+                    let mut neue = params.clone();
+                    neue.extend(params_next.iter().cloned());
+                    changes.push((neue, current_round, 1));
+                }
             }
         }
     }
 }
 
 pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
-    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, input_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
                 .rev()
@@ -2066,29 +2085,48 @@ pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internab
                 .filter(|entry| is_aggregate_in_round(entry, current_round))
                 .next();
             match prev {
-                Some((v, _)) => {
-                    let mut neue = v.clone();
-                    neue.extend(params.iter().cloned());
-                    changes.push((neue, current_round, -1));
-                    if let Some((prev_next, _)) = next {
+                Some((v, prev_rounds)) => {
+                    let interesting = prev_rounds.iter().find(|&c| *c == current_round as i32);
+                    let mut do_it = current_round == input_round || interesting.is_some();
+                    if do_it {
                         let mut neue = v.clone();
-                        neue.extend(prev_next.iter().cloned());
-                        changes.push((neue, current_round, 1));
+                        neue.extend(params.iter().cloned());
+                        changes.push((neue, current_round, -1));
+                    }
+
+                    if let Some((prev_next, prev_next_rounds)) = next {
+                        let interesting = prev_next_rounds.iter().find(|&c| *c == current_round as i32);
+                        do_it = do_it || interesting.is_some();
+                        if do_it {
+                            let mut neue = v.clone();
+                            neue.extend(prev_next.iter().cloned());
+                            changes.push((neue, current_round, 1));
+                        }
                     }
                 }
                 _ => { }
             }
-            if let Some((params_next, _)) = next {
-                let mut neue = params.clone();
-                neue.extend(params_next.iter().cloned());
-                changes.push((neue, current_round, -1));
+            if let Some((params_next, next_rounds)) = next {
+                let do_it = current_round == input_round ||
+                    next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
+                if do_it {
+                    let mut neue = params.clone();
+                    neue.extend(params_next.iter().cloned());
+                    changes.push((neue, current_round, -1));
+                }
             }
         }
     }
 }
 
 pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
-    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, input_round, ref current_params, ref mut changes, ..} = current {
+        if let Some(counts) = items.get(params) {
+            let sum:Count = counts.iter().filter(|cur| cur.abs() <= current_round as i32).map(|&cur| if cur < 0 { -1 } else { 1 }).sum();
+            if sum < 0 {
+                return;
+            }
+        }
         if let &Some(_) = current_params {
             let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
                 .rev()
@@ -2098,29 +2136,42 @@ pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>
                 .filter(|entry| is_aggregate_in_round(entry, current_round))
                 .next();
             match prev {
-                Some((v, _)) => {
-                    let mut neue = v.clone();
-                    neue.extend(params.iter().cloned());
-                    changes.push((neue, current_round, 1));
-                    if let Some((prev_next, _)) = next {
+                Some((v, prev_rounds)) => {
+                    let interesting = prev_rounds.iter().find(|&c| *c == current_round as i32);
+                    let mut do_it = current_round == input_round || interesting.is_some();
+                    if do_it {
                         let mut neue = v.clone();
-                        neue.extend(prev_next.iter().cloned());
-                        changes.push((neue, current_round, -1));
+                        neue.extend(params.iter().cloned());
+                        changes.push((neue, current_round, 1));
+                    }
+
+                    if let Some((prev_next, prev_next_rounds)) = next {
+                        let interesting = prev_next_rounds.iter().find(|&c| *c == current_round as i32);
+                        do_it = do_it || interesting.is_some();
+                        if do_it {
+                            let mut neue = v.clone();
+                            neue.extend(prev_next.iter().cloned());
+                            changes.push((neue, current_round, -1));
+                        }
                     }
                 }
                 _ => { }
             }
-            if let Some((params_next, _)) = next {
-                let mut neue = params.clone();
-                neue.extend(params_next.iter().cloned());
-                changes.push((neue, current_round, 1));
+            if let Some((params_next, next_rounds)) = next {
+                let do_it = current_round == input_round ||
+                    next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
+                if do_it {
+                    let mut neue = params.clone();
+                    neue.extend(params_next.iter().cloned());
+                    changes.push((neue, current_round, 1));
+                }
             }
         }
     }
 }
 
 pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
-    if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, input_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(_) = current_params {
             let next = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
                 .rev()
@@ -2130,22 +2181,35 @@ pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internab
                 .filter(|entry| is_aggregate_in_round(entry, current_round))
                 .next();
             match prev {
-                Some((v, _)) => {
-                    let mut neue = v.clone();
-                    neue.extend(params.iter().cloned());
-                    changes.push((neue, current_round, -1));
-                    if let Some((prev_next, _)) = next {
+                Some((v, prev_rounds)) => {
+                    let interesting = prev_rounds.iter().find(|&c| *c == current_round as i32);
+                    let mut do_it = current_round == input_round || interesting.is_some();
+                    if do_it {
                         let mut neue = v.clone();
-                        neue.extend(prev_next.iter().cloned());
-                        changes.push((neue, current_round, 1));
+                        neue.extend(params.iter().cloned());
+                        changes.push((neue, current_round, -1));
+                    }
+
+                    if let Some((prev_next, prev_next_rounds)) = next {
+                        let interesting = prev_next_rounds.iter().find(|&c| *c == current_round as i32);
+                        do_it = do_it || interesting.is_some();
+                        if do_it {
+                            let mut neue = v.clone();
+                            neue.extend(prev_next.iter().cloned());
+                            changes.push((neue, current_round, 1));
+                        }
                     }
                 }
                 _ => { }
             }
-            if let Some((params_next, _)) = next {
-                let mut neue = params.clone();
-                neue.extend(params_next.iter().cloned());
-                changes.push((neue, current_round, -1));
+            if let Some((params_next, next_rounds)) = next {
+                let do_it = current_round == input_round ||
+                    next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
+                if do_it {
+                    let mut neue = params.clone();
+                    neue.extend(params_next.iter().cloned());
+                    changes.push((neue, current_round, -1));
+                }
             }
         }
     }
@@ -2855,7 +2919,7 @@ fn transaction_flow_meta(commits: &mut Vec<Change>, frame: &mut Frame, iter_pool
             while current_round <= max_round {
                 let round = items.get_round(&mut program.state.rounds, current_round);
                 for change in round.iter() {
-                    // println!("{}", change.print(&program.state.interner));
+                    // println!("-> {}", change.print(&program.state.interner));
                     // If this is an add, we want to do it *before* we start running pipes.
                     // This ensures that if there are two constraints in a single block that
                     // would both match the given input, they both have a chance to see this

@@ -252,6 +252,38 @@ test!(base_join_nested_record, {
 });
 
 //--------------------------------------------------------------------
+// Strings
+//--------------------------------------------------------------------
+
+test!(base_string, {
+    search
+        baz = "Hello"
+    bind
+        [#foo baz]
+    end
+
+    search
+        [#foo baz: "Hello"]
+    bind
+        [#success]
+    end
+});
+
+test!(base_string_escape_chars, {
+    search
+        baz = "Hello \\ \n \"World\" "
+    bind
+        [#foo baz]
+    end
+
+    search
+        [#foo baz: "Hello \\ \n \"World\" "]
+    bind
+        [#success]
+    end
+});
+
+//--------------------------------------------------------------------
 // Interpolation
 //--------------------------------------------------------------------
 
