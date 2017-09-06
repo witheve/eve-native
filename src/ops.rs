@@ -1612,6 +1612,7 @@ pub fn string_length(params: Vec<&Internable>) -> Option<Internable> {
 pub fn string_encode(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::String(ref text)] => Some(Internable::String(base64::encode(text.as_bytes()))),
+        &[&Internable::Number(ref number)] => Some(Internable::String(number.to_string())),
         _ => None
     }
 }
@@ -1619,6 +1620,7 @@ pub fn string_encode(params: Vec<&Internable>) -> Option<Internable> {
 pub fn string_urlencode(params: Vec<&Internable>) -> Option<Internable> {
     match params.as_slice() {
         &[&Internable::String(ref text)] => Some(Internable::String(urlencoding::encode(text))),
+        &[&Internable::Number(ref number)] => Some(Internable::String(number.to_string())),
         _ => None
     }
 }
