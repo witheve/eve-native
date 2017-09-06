@@ -22,7 +22,7 @@ Default method
 search
   request = [#http/request]
   not(request.method)
-commit
+bind
   request.method := "GET"
 end
 
@@ -50,6 +50,7 @@ search
   response = [#http/response request]
   request = [#http/request]
 commit
+  response := none
   request.response := response
 end
 
