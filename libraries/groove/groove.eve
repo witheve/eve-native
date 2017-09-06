@@ -1,0 +1,240 @@
+# Groove API
+
+The groove API is configured with a record tagged `#groove` with the following shape:
+
+`[#groove client-id client-secret endpoint redirect-uri]`
+
+
+## Logging Into Groove
+
+Commit a `#groove/login` to initiate the login process. This redirects to a 
+login portal, which asks the user to authorize access to Eve. Once the user
+grants access, the browser is redirect back to the supplied `redirect-uri`.
+
+search
+  [#groove/login]
+  [#groove client-id client-secret redirect-uri]
+  response-type = "token"
+  scopes = string/url-encode[text: "MicrosoftMediaServices.GrooveApiAccess offline_access"]
+  encoded-redirect-uri = string/url-encode[text: redirect-uri]
+  address = "https://login.live.com/oauth20_authorize.srf/?client_id={{client-id}}&response_type={{response-type}}&redirect_uri={{encoded-redirect-uri}}&scope={{scopes}}"
+commit
+  [#html/redirect url: address]
+end
+
+A successful login will return to the app an access token
+
+search
+  [#html/url query: [#html/url/query key: "access_token" value: access-token]]
+  groove = [#groove]
+commit
+  groove.access-token := access-token
+end
+
+
+## Getting Groove User Data
+
+With an access token in hand, we can use that to get user-specific information.
+
+search
+  [#groove/get-user]
+  [#groove access-token endpoint]
+commit
+  [#http/request #groove-profile address: "{{endpoint}}/1/user/music/profile" method: "GET" headers: 
+    [#http/header key: "Authorization" value: "Bearer  {{access-token}}"]]
+end
+
+search
+  [#groove-profile response]
+commit
+  [#json/decode #groove-profile json: response.body]
+end
+
+Create a Groove user from the response
+
+search
+  [#groove-profile json-object: profile]
+commit
+  [#groove/user region: profile.Culture subscription: profile.HasSubscription]
+end
+
+
+## Search Groove
+
+search
+  [#groove/search-track query]
+  [#groove access-token endpoint]
+  encoded-query = string/replace[text: query replace: " " with: "+"]
+  address = "{{endpoint}}/1/content/music/search?q={{encoded-query}}&filters=tracks"
+commit
+  [#http/request #groove-search query address headers: 
+    [#http/header key: "Authorization" value: "Bearer {{access-token}}"]]
+end
+
+search
+  [#groove-search query response: [body]]
+commit
+  [#json/decode #groove-search query json: body]
+end
+
+search
+  [#groove-search query json-object]
+  json-object = [Tracks: [Items: [value: [Id Name ReleaseDate Duration ImageUrl Album Artists: [value: [Artist]]]]]]
+commit
+  [#groove/track query name: Name, id: Id, duration: Duration, image: ImageUrl album: Album | artist: Artist]
+end
+
+
+## Get a full song strem
+
+search
+  [#groove/full-stream track]
+  [#groove access-token endpoint]
+  address = "{{endpoint}}/1/content/{{track.id}}/stream?clientInstanceId=2E19AC92-8600-11E7-8200-4CC9641576C9"
+commit  
+  [#http/request #groove-get-song track address headers: 
+    [#http/header key: "Authorization" value: "Bearer {{access-token}}"]]
+end
+
+search
+  [#groove-get-song track response: [body]]
+commit
+  [#json/decode #groove-get-song track json: body]
+end
+
+search
+  [#groove-get-song track json-object]
+  groove-stream = [#groove/full-stream track]
+commit
+  groove-stream <- [stream-url: json-object.Url content-type: json-object.ContentType]
+end
+
+
+## Streaming Player
+
+A stream player has a playback control
+
+search
+  stream = [#groove/stream-player track]
+bind
+  stream.controls += [#groove/stream-player/playback-control track]
+end
+
+Playback controls are also buttons, so they render
+
+search
+  playback-control = [#groove/stream-player/playback-control track]
+bind
+  playback-control += #ui/button
+end
+
+
+A stream player also has a playback element
+
+search
+  groove = [#groove client-id]
+  player = [#groove/stream-player track]
+commit
+  playback = [#html/stream #groove/stream-player/playback track style: [display: "none"]]
+  player.playback := playback
+  groove.streams += playback
+end
+
+The icon of a control matches the state of its player
+
+search
+  control = [#groove/stream-player/playback-control track]
+  playback = [#groove/stream-player/playback track]
+  not(playback = [#pending])
+  state = if playback = [#playing] then "pause"
+          else "play"
+bind
+  control.icon += state
+end
+
+The icon of a pending stream is a loading animation
+
+search
+  control = [#groove/stream-player/playback-control track]
+  playback = [#groove/stream-player/playback #pending track]
+bind
+  control.icon += "load-a"
+end
+
+Display controls in the DOM
+
+search
+  stream = [#groove/stream-player #display controls]
+bind
+  stream += #html/div
+  controls += #display
+  stream.children += controls
+end
+
+Hide controls that aren't tagged `#dispaly`
+
+search
+  controls = [#groove/stream-player/playback-control]
+  not(controls = [#display])
+bind
+  controls.style.display += "none"
+end
+
+Clicking the play button for the first time gets a link to the stream and
+starts playback when the stream is ready.
+
+search
+  [#html/event/click element: [#groove/stream-player/playback-control track]]
+  pending-playback = [#groove/stream-player/playback track]
+  track = [#groove/track id]
+  not(pending-playback = [#ready])
+commit
+  pending-playback += #pending
+  [#groove/full-stream track]
+end
+
+Attach the stream info to the stream playback
+
+search
+  [#groove/full-stream track stream-url content-type]
+  playback = [#groove/stream-player/playback track]
+commit
+  playback <- [source: stream-url content-type]
+end
+
+search
+  playback = [#groove/stream-player/playback #ready #pending track]
+commit
+  playback.play := "true"
+  playback -= #pending
+end
+
+Clicking the playback button when the stream is ready will toggle the stream
+
+search
+  q  = [#html/event/click element: [#groove/stream-player/playback-control track]]
+  playback = [#groove/stream-player/playback #ready track]
+  state = if playback = [#playing] then "false"
+          else "true"
+commit
+  playback.play := state
+end
+
+If we ever get into a state where a stream is both `#playing` and `#paused` we
+can default to paused.
+
+search
+  stream = [#groove/stream-player #playing #paused]
+commit
+  stream -= #playing
+end
+
+A streaming player that has no controls is paused, because you'd have no way to pause it yourself.
+
+search
+  [#groove streams]
+  streams = [#groove/stream-player/playback #playing track]
+  not([#groove/stream-player/playback-control track])
+commit
+  streams.play := "false"
+end
