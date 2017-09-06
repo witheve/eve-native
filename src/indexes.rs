@@ -10,7 +10,7 @@ extern crate fnv;
 use indexes::fnv::FnvHasher;
 use std::hash::{BuildHasherDefault};
 use std::collections::hash_map::{Entry};
-use std::iter::{Iterator, self};
+use std::iter::{self, Iterator, repeat};
 use std::collections::{BTreeMap, HashMap, BTreeSet, btree_map};
 use compiler::{FunctionKind};
 
@@ -766,7 +766,7 @@ pub enum AggregateEntry {
     Result(f32),
     Counted { sum: f32, count: f32, result: f32 },
     SortedSum { items: BTreeMap<Vec<Internable>, Vec<Internable>>, result: Internable },
-    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, current_round: Round, current_params:Option<Vec<Internable>>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
+    Sorted { items: BTreeMap<Vec<Internable>, Vec<Count>>, input_round: Round, current_round: Round, current_params:Option<Vec<Internable>>, changes: Vec<(Vec<Internable>, Round, Count)>, limit: usize },
 }
 
 impl AggregateEntry {
@@ -788,11 +788,19 @@ enum IntermediateLevel {
     SortAggregate(Vec<Round>, AggregateEntry),
 }
 
+pub struct DebugEntry {
+    input: Internable,
+    count: Count,
+    pairs: Vec<(Internable, Internable, Count)>
+}
+
 pub struct IntermediateIndex {
     index: HashMap<Vec<Interned>, IntermediateLevel, MyHasher>,
     pub rounds: HashMap<Round, HashMap<Vec<Interned>, IntermediateChange, MyHasher>, MyHasher>,
     max_round: Round,
     empty: Vec<i32>,
+
+    debug_vec: Vec<DebugEntry>
 }
 
 // FIXME: attack of the clones.
@@ -888,7 +896,7 @@ pub fn update_aggregate(interner: &mut Interner, changes: &mut Vec<AggregateChan
 impl IntermediateIndex {
 
     pub fn new() -> IntermediateIndex {
-        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![], max_round:0 }
+        IntermediateIndex { index: HashMap::default(), rounds: HashMap::default(), empty: vec![], max_round:0, debug_vec: vec![] }
     }
 
     pub fn check(&self, key:&Vec<Interned>, value:&Vec<Interned>) -> bool {
@@ -937,7 +945,7 @@ impl IntermediateIndex {
                 if kind == FunctionKind::Sum || kind == FunctionKind::SortedSum {
                     IntermediateLevel::SumAggregate(BTreeMap::new())
                 } else {
-                    IntermediateLevel::SortAggregate(vec![], AggregateEntry::Sorted { items: BTreeMap::new(), current_round: 0, current_params:None, changes: vec![], limit: 0 })
+                    IntermediateLevel::SortAggregate(vec![], AggregateEntry::Sorted { items: BTreeMap::new(), current_round: 0, input_round: 0, current_params:None, changes: vec![], limit: 0 })
                 }
             });
             match cur {
@@ -971,19 +979,22 @@ impl IntermediateIndex {
                     }
                 }
                 &mut IntermediateLevel::SortAggregate(ref mut rounds, ref mut entry) => {
-                    if let &mut AggregateEntry::Sorted { ref mut current_params, .. } = entry {
+                    if let &mut AggregateEntry::Sorted { ref mut current_params, ref mut input_round, .. } = entry {
                         *current_params = Some(value);
+                        *input_round = round;
                     }
                     let start = match rounds.binary_search(&round) {
                         Ok(pos) =>  { pos }
                         Err(pos) => { rounds.insert(pos, round); pos },
                     };
+
                     for round in rounds[start..].iter().cloned() {
                         if let &mut AggregateEntry::Sorted { ref mut current_round, .. } = entry {
                             *current_round = round;
                         }
                         action(entry, &projection, &projection);
                     }
+
                     if let &mut AggregateEntry::Sorted { current_params: Some(ref value), ref mut items, changes:ref mut entry_changes, .. } = entry {
                         // we have to extend the projection with the params in order to account for
                         // things like the limit changing. If we didn't store that, we might
@@ -992,6 +1003,7 @@ impl IntermediateIndex {
                         // [2], depending on the order we receive the adds/removes, we might end up
                         // with no [foo, bar] key at all.
                         projection.extend(value.iter().cloned());
+                        let debug_cause = projection[0].clone();
                         // Insert it into the items btree
                         match items.entry(projection) {
                             btree_map::Entry::Occupied(ref mut ent) => {
@@ -1001,6 +1013,19 @@ impl IntermediateIndex {
                                 ent.insert(vec![round as i32 * count]);
                             }
                         }
+
+                        // if kind == FunctionKind::NeedleSort {
+                        //     let mut debug_changes = DebugEntry{input: debug_cause, count: (round as i32) * count, pairs: vec![]};
+                        //     for &(ref proj, r, c) in entry_changes.iter() {
+                        //         if proj.len() == 4 {
+                        //             debug_changes.pairs.push((proj[0].clone(), proj[2].clone(), (r as i32) * c));
+                        //         }
+                        //     }
+                        //     self.debug_vec.push(debug_changes);
+                        //     println!("--------------------------------------------------------------------------------");
+                        //     print_debug_table(&self.debug_vec);
+                        // }
+
                         // and update the rounds to make sure we include this round in the future
                         changes.extend(entry_changes.drain(..).map(|(mut value, round, count)| {
                             let result = value.drain(..).map(|x| interner.internable_to_id(x)).collect();
@@ -1091,6 +1116,73 @@ impl IntermediateIndex {
         intermediate_distinct(&mut self.index, &mut self.rounds, full_key, key, value, round, count, negate);
     }
 
+}
+
+
+// DEBUG
+pub fn is_neato(value:&Internable) -> bool {
+    value == &Internable::String("dean".to_owned()) ||
+        value == &Internable::String("hello".to_owned())
+}
+
+pub fn print_debug_table(debug_vec:&Vec<DebugEntry>) {
+    let mut keys = vec![];
+    let mut cause_keys = vec![];
+    for debug_changes in debug_vec.iter() {
+        cause_keys.push(&debug_changes.input);
+
+        for &(ref from, ref to, _) in debug_changes.pairs.iter() {
+            if is_neato(from) || is_neato(to) {
+                keys.push((from, to));
+            }
+        }
+    }
+    keys.sort();
+    keys.dedup();
+    cause_keys.sort();
+    cause_keys.dedup();
+    let cause_offset = cause_keys.len();
+
+    let mut columns:Vec<String> = vec![];
+    columns.extend(cause_keys.iter().map(|ref cause| format!(" {} ", Internable::to_string(cause))));
+    columns.extend(keys.iter().map(|&(ref from, ref to)| format!(" {}->{} ", Internable::to_string(from), Internable::to_string(to))));
+
+    let mut table = vec![];
+    for debug_changes in debug_vec.iter() {
+        let mut row:Vec<String> = vec![];
+        let mut row_map:HashMap<(Internable, Internable), Vec<String>> = HashMap::new();
+
+        for column in columns.iter() {
+            row.push(repeat(" ").take(column.len()).collect::<String>());
+        }
+
+        let cause_ix = cause_keys.iter().position(|&k| k == &debug_changes.input).expect(&format!("Unable to find '{:?}' in causes", debug_changes.input));
+        row[cause_ix] = format!(" {:>width$} ", debug_changes.count, width = columns[cause_ix].len() - 2);
+
+        for &(ref from, ref to, c) in debug_changes.pairs.iter() {
+            if is_neato(from) || is_neato(to) {
+                let entry = row_map.entry((from.clone(), to.clone()));
+                let value = if c >= 0 {
+                    format!("+{}", c)
+                } else {
+                    format!("{}", c)
+                };
+                entry.or_insert_with(|| vec![]).push(value);
+            }
+        }
+        for (key, values) in row_map.drain() {
+            let ix = cause_offset + keys.iter().position(|k| k == &(&key.0, &key.1)).expect(&format!("Unable to find '{:?} -> {:?}' in keys!", key.0, key.1));
+            row[ix] = format!(" {:>width$} ", values.join(", "), width = columns[ix].len() - 2);
+        }
+        table.push(row);
+    }
+
+    let header = columns.join("|");
+    println!("{}", header);
+    println!("{}", columns.iter().map(|ref column| repeat("-").take(column.len()).collect::<String>()).collect::<Vec<String>>().join("+"));
+    for row in table.iter() {
+        println!("{}", row.join("|"));
+    }
 }
 
 //-------------------------------------------------------------------------
