@@ -4,9 +4,12 @@
 
 ## Send an HTTP Request
 
-Watch for HTTP requests. requests with multiple headers will be processed
-several times, but the request is not send until the diff is completely
-resolved to avoid duplicate requests.
+HTTP requests accept several attributes:
+
+- address - the destination for the request
+- method - the method of the request is one of GET, PUT, POST, DELETE, HEAD, TRACE, CONNECT, PATCH 
+- body - the body of the HTTP request
+- headers - request headers take the form of `[#http/header key value]`
 
 search
   request = [#http/request address method body headers: [#http/header key value]]
