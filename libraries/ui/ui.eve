@@ -794,13 +794,13 @@ search
   percentage = val / (max - min)
   percentage-display = math/to-fixed[value: percentage * 100 to: 0]
   progress-width = width * val / (max - min)
-  display = if progress = [#label] then "inline"
-            else "none"
+  display = if progress = [#label] then "inline" else "none"
+  color = if progress.color then progress.color else "rgb(111, 165, 81)"
 bind
   progress <- [#ui/row | children: 
     [#html/div #ui/progress/label progress | sort: 2 text: "{{percentage-display}}%" style: [display]] 
     [#html/div  #ui/progress/container progress | sort: 1 style: [width: "{{width}}px"] children:
-      [#html/div #ui/progress/bar progress | style: [width: "{{progress-width}}px"]]]]
+      [#html/div #ui/progress/bar progress | style: [width: "{{progress-width}}px" background-color: color]]]]
 end
 
 Progress bars at 100% are marked `#ui/progress/complete`
@@ -815,19 +815,21 @@ end
 ## Slider
 
 search
-  slider = [#ui/slider min max]
+  slider = [#ui/slider min max width]
   initial-value = if slider.initial-value then slider.initial-value else min
 bind
-  slider <- [#ui/input type: "range" initial-value]
+  slider <- [#html/div children: [#ui/input min max slider type: "range" initial-value style: [width: "{{width}}px"]]]
 end
 
 If a slider as an `initial-value` but no calculated `value`, set it
 
 search
   slider = [#ui/slider initial-value]
+  input = [#ui/input slider]
   not(slider.value)
 commit
   slider.value := initial-value
+  input.value := initial-value
 end
 
 An initial value out of range of the slider is set to its closest extreme and a warning is issued
@@ -841,15 +843,39 @@ commit
   [#console/warn text: "Value of slider ({{slider.initial-value}}) is outside of the bounds of the slider"]
 end
 
-When the user changes the slider value, update its `value` in Eve
+When the user changes the slider value in the UI, update its `value` in Eve
 
 search
-  [#html/event/change element: slider value]
-  slider = [#ui/slider]
+  [#html/event/change element: input value]
+  input = [#ui/input slider]
   numeric-value = eve/parse-value[value]
 commit
   slider.value := numeric-value
 end
+
+Sliders without a width are given a default
+
+search
+  slider = [#ui/slider]
+  not(slider = [width])
+commit
+  slider.width := 400
+end
+
+Draw a progress bar under the slider
+
+search
+  slider = [#ui/slider min max value width]
+bind
+  slider.children += [#ui/progress #slider-progress slider min max width sort: 0 | color: "rgb(0,121,177)" value]
+end
+
+search
+  [#ui/slider value]
+bind
+  [#html/div text: value]
+end
+
 
 ## Tabbed Box
 
@@ -950,31 +976,30 @@ commit
     .ui-tabbed-box-tab-display.selected { border-bottom: 3px solid rgb(0,158,224);}
     .ui-tabbed-box-tab-display:hover { background-color: rgb(240,240,240); }
     .ui-tabbed-box-content-display {padding: 20px;}
-    .ui-progress {margin: 10px;}
+    .ui-progress {padding: 10px;}
     .ui-progress-label {font-size: 14px; margin-top: -2px; margin-left: 4px;}
     .ui-progress-container { background-color: rgb(200,200,200); height: 10px; border-radius: 5px; }
-    .ui-progress-bar { background-color: green; height: 100%; border-radius: 5px; }
-    input[type=range]{ -webkit-appearance: none; }
-
+    .ui-progress-bar { height: 100%; border-radius: 5px; }
+    input[type=range]{ -webkit-appearance: none; background-color: rgba(0,0,0,0);}
+    .ui-slider {margin: 10px; margin-left: 8px; }
+    .slider-progress {padding: 0px; padding-left: 2px; margin-bottom: -13px; }
     input[type=range]::-webkit-slider-runnable-track {
-        width: 300px;
-        height: 7px;
-        background: #ccc;
+        height: 10px;
+        background: rgba(0,0,0,0);
         border: none;
-        border-radius: 3px;
+        border-radius: 5px;
     }
 
     input[type=range]::-webkit-slider-thumb {
         -webkit-appearance: none;
-        border: none;
-        height: 16px;
-        width: 16px;
+        height: 20px;
+        width: 20px;
         border-radius: 50%;
         background: rgb(0,158,224);
         margin-top: -5px;
     }
     input[type=range]:focus { outline: none; }
-    input[type=range]:focus::-webkit-slider-runnable-track { background: #ccc; }
+    input[type=range]:focus::-webkit-slider-runnable-track { background: rgba(0,0,0,0); }
 
     .ui-spinner-circle { background-color: rgba(0,0,0,0); margin: 10px; }
     .ui-spinner-rotate { animation: 1s linear infinite ui-spinner-rotate; position: relative; transform-origin: 50% 100%; }
