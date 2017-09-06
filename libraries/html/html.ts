@@ -120,9 +120,6 @@ export class HTML extends Library {
     window.addEventListener("keydown", this._keyEventHandler("key-down"));
     window.addEventListener("keyup", this._keyEventHandler("key-up"));
 
-    // Frame events
-    window.addEventListener("hashchange", this._hashChangeHandler("url-change"));
-    //window.addEventListener("pageshow", this._pageShowHandler("page-show"));
     this.getURL(window.location);
   }
 
@@ -645,89 +642,24 @@ export class HTML extends Library {
     };
   }
 
-  _hashChangeHandler(tagname:string) {
-    console.log("Hash Change");
-    return (event: HashChangeEvent) => {
-      if (event.newURL !== null) {
-        let eavs:RawEAV[] = [];
-        let eventId = createId();
-        let urlId = createId();
-        let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(event.newURL, true);
-        eavs.push(
-          [eventId, "tag", "html/event"],
-          [eventId, "tag", `html/event/${tagname}`],
-          [eventId, "url", `${urlId}`],
-          [urlId, "tag", "html/url"],
-          [urlId, "host", `${host}`],
-          [urlId, "hash", `${hash}`],
-          [urlId, "hostname", `${hostname}`],
-          [urlId, "href", `${href}`],
-          [urlId, "pathname", `${pathname}`],
-          [urlId, "port", `${port}`],
-          [urlId, "protocol", `${protocol}`],
-        );
-        let ix = 1;
-        for (var key in query) {
-          let value = query[key];
-          let queryId = createId();
-          eavs.push(
-            [urlId, "query", `${queryId}`],
-            [queryId, "index", `${ix}`],
-            [queryId, "key", key],
-            [queryId, "value", value],
-          )
-          ix++;
-        }
-        this._sendEvent(eavs);
-      }    
-    }
-  }
-
   getURL(location: Location) {
-    let {hash, host, hostname, href, path, pathname, port, protocol, query} = url.parse(location.href, true);
+    let {hash, host, hostname, href, pathname, port, protocol, search} = location;
     let eavs:RawEAV[] = [];
     let urlId = createId();
     eavs.push(
       [urlId, "tag", "html/url"],
       [urlId, "host", `${host}`],
-      [urlId, "hash", `${hash}`],
       [urlId, "hostname", `${hostname}`],
       [urlId, "href", `${href}`],
       [urlId, "pathname", `${pathname}`],
       [urlId, "port", `${port}`],
       [urlId, "protocol", `${protocol}`],
     );
-    // Parse Query String
-    let ix = 1;
-    for (var key in query) {
-      let value = query[key];
-      let queryId = createId();
-      eavs.push(
-        [urlId, "query", `${queryId}`],
-        [queryId, "tag", `html/url/query`],
-        [queryId, "index", `${ix}`],
-        [queryId, "key", key],
-        [queryId, "value", value],
-      )
-      ix++;
+    if(hash !== "") {
+      eavs.push([urlId, "hash", `${hash.substring(1)}`]);
     }
-    // Parse Hash String
-    if (hash !== undefined && hash !== null) {
-      let pairs = hash.substring(1).split('&');  
-      for (var pair of pairs) {
-        let queryId = createId();
-        let parts = pair.split('=');
-        if (parts.length == 2) {
-          eavs.push(
-            [urlId, "query", `${queryId}`],
-            [queryId, "tag", `html/url/query`],
-            [queryId, "index", `${ix}`],
-            [queryId, "key", parts[0]],
-            [queryId, "value", parts[1]],
-          )
-        }
-        ix++;
-      }
+    if(search !== "") {
+      eavs.push([urlId, "query", `${search.substring(1)}`]);
     }
     this._sendEvent(eavs);
   }
