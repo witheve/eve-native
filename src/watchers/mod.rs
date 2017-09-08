@@ -15,3 +15,4 @@ pub mod textcompiler;
 pub mod editor;
 pub mod remote;
 pub mod websocket;
+pub mod test;

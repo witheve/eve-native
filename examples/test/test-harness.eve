@@ -1,0 +1,15 @@
+~~~ eve
+search
+  [#success]
+watch test
+  ("success")
+end
+~~~
+
+~~~ eve
+search
+  not([#success])
+watch test
+  ("fail")
+end
+~~~
