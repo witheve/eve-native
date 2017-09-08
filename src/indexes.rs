@@ -351,7 +351,7 @@ pub struct RoundEntry {
     active_rounds: Vec<i32>,
 }
 
-fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Count) {
+pub fn update_active_rounds_vec(active_rounds: &mut Vec<i32>, round:Round, count:Count) {
         let round_i32 = round as i32;
         if count > 0 {
             match active_rounds.binary_search_by(|probe| probe.abs().cmp(&round_i32)) {
@@ -1121,8 +1121,9 @@ impl IntermediateIndex {
 
 // DEBUG
 pub fn is_neato(value:&Internable) -> bool {
-    value == &Internable::String("dean".to_owned()) ||
-        value == &Internable::String("hello".to_owned())
+    // value == &Internable::String("dean".to_owned()) ||
+    //     value == &Internable::String("hello".to_owned())
+    true
 }
 
 pub fn print_debug_table(debug_vec:&Vec<DebugEntry>) {

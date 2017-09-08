@@ -1893,6 +1893,11 @@ fn is_aggregate_in_round(&(_, v): &(&Vec<Internable>, &Vec<Count>), round:Round)
     sum > 0
 }
 
+fn is_in_round(rounds:&Vec<Count>, round:Round) -> bool {
+    let sum:Count = rounds.iter().filter(|cur| cur.abs() <= round as i32).map(|&cur| if cur < 0 { -1 } else { 1 }).sum();
+    sum > 0
+}
+
 pub fn aggregate_top_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
     if let &mut AggregateEntry::Sorted { ref mut items, current_round, ref current_params, ref mut changes, ..} = current {
         if let &Some(ref limit_params) = current_params {
@@ -2023,100 +2028,131 @@ pub fn aggregate_bottom_remove(current: &mut AggregateEntry, params: &Vec<Intern
     }
 }
 
-pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
-    if let &mut AggregateEntry::Sorted { ref mut items, current_round, input_round, ref current_params, ref mut changes, ..} = current {
-        if let Some(counts) = items.get(params) {
-            let sum:Count = counts.iter().filter(|cur| cur.abs() <= current_round as i32).map(|&cur| if cur < 0 { -1 } else { 1 }).sum();
-            if sum < 0 {
-                return;
-            }
-        }
-        if let &Some(_) = current_params {
-            let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
-                .rev()
-                .filter(|entry| is_aggregate_in_round(entry, current_round))
-                .next();
-            let next = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
-                .filter(|entry| is_aggregate_in_round(entry, current_round))
-                .next();
-            match prev {
-                Some((v, prev_rounds)) => {
-                    let mut do_it = current_round == input_round ||
-                        prev_rounds.iter().find(|&c| *c == current_round as i32).is_some();
-                    if do_it {
-                        let mut neue = v.clone();
-                        neue.extend(params.iter().cloned());
-                        changes.push((neue, current_round, 1));
-                    }
+pub fn aggregate_get_last_round_at(rounds: &Vec<Count>, round: Round) -> Count {
+    let mut last = 0;
+    for c in rounds.iter() {
+        let r = c.abs() as u32;
+        if r > round { break; }
+        last = *c;
+    }
+    last
+}
 
-                    if let Some((prev_next, prev_next_rounds)) = next {
-                        do_it = do_it ||
-                            prev_next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
-                        if do_it {
-                            let mut neue = v.clone();
-                            neue.extend(prev_next.iter().cloned());
-                            changes.push((neue, current_round, -1));
-                        }
-                    }
-                }
-                _ => { }
+pub fn aggregate_get_delta(rounds: &Vec<Count>, round: Round) -> Count {
+    rounds.iter().find(|&c| c.abs() as u32 == round).cloned().unwrap_or(0).signum()
+}
+
+pub fn aggregate_pair_delta(from_rounds:&Vec<Count>, to_rounds:&Vec<Count>, current_round:Round, input_round:Round) -> Count {
+    let from_exists = is_in_round(from_rounds, current_round);
+    let to_exists = is_in_round(to_rounds, current_round);
+    if !from_exists && !to_exists { return 0; }
+
+    let from_delta = aggregate_get_delta(from_rounds, current_round);
+    let to_delta = aggregate_get_delta(to_rounds, current_round);
+    if from_delta == 0 && to_delta == 0 {
+        if input_round == current_round { return 1; }
+        else { return 0; }
+    }
+    if from_delta == -1 || to_delta == -1 { return -1; }
+    return 1;
+}
+
+pub fn aggregate_cur_pair_delta(cur_delta:Count, to_rounds:&Vec<Count>, current_round:Round) -> Count {
+    let to_delta = aggregate_get_delta(to_rounds, current_round);
+    let to_exists = aggregate_get_last_round_at(to_rounds, current_round) > 0;
+    println!("            ({:+}, {:+})", cur_delta, to_delta);
+    if cur_delta == 0 && to_delta == 0 { return 0; }
+    // if cur_delta == -1 && to_delta == -1 { return 0; }
+    if cur_delta == -1 || to_delta == -1 { return -1; }
+    if !to_exists { return 0; }
+    return 1;
+}
+
+pub fn aggregate_needle_change(from_proj:&Vec<Internable>, to_proj:&Vec<Internable>, round:Round, count:Count) -> (Vec<Internable>, Round, Count) {
+    let mut neue = from_proj.clone();
+    neue.extend(to_proj.iter().cloned());
+    (neue, round, count)
+}
+
+pub fn aggregate_next_do(current: &mut AggregateEntry, params: &Vec<Internable>, change_type: Count) {
+    if let &mut AggregateEntry::Sorted { ref mut items, current_round, input_round, ref current_params, ref mut changes, ..} = current {
+        // let empty = vec![]; // @FIXME
+        // let mut cur:Vec<_> = items.get(params).unwrap_or(&empty).clone();
+        // let mut ix = 0;
+        // for c in cur.iter() {
+        //     let r = c.abs() as u32;
+        //     if r > input_round { break; }
+        //     if r == input_round && c.signum() == 1 { break; }
+        //     ix += 1;
+        // }
+        // cur.insert(ix, input_round as i32 * change_type);
+        // let cur_rounds = &cur;
+
+        let empty = vec![]; // @FIXME
+        let cur_rounds = items.get(params).unwrap_or(&empty);
+        let input_active = aggregate_get_last_round_at(cur_rounds, current_round).abs() as u32 <= input_round;
+        let cur_delta = if input_round == current_round { 1 } else { 0 };
+
+        let label = if change_type == 1 { "add" } else { "remove" };
+        println!("    {} {:?} {}/{} {:?} {}", label, Internable::to_string(&params[0]), current_round, input_round, cur_rounds, input_active);
+        if !input_active { return; }
+
+        let next_iter = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded));
+        let next = next_iter.clone().find(|entry| is_aggregate_in_round(&entry, current_round));
+
+        let mut last_delta = cur_delta;
+        for (prev_proj, prev_rounds) in items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params))).rev() {
+            if prev_rounds.len() == 0 { continue; }
+            let prev_delta = aggregate_cur_pair_delta(last_delta, prev_rounds, current_round);
+            println!("        prev {:?} {:?} {:+}", Internable::to_string(&prev_proj[0]), prev_rounds, prev_delta);
+            if prev_delta != 0 || last_delta == -change_type {
+                changes.push(
+                    aggregate_needle_change(prev_proj, params, current_round, change_type * prev_delta)
+                );
+
+                last_delta = prev_delta;
             }
-            if let Some((params_next, next_rounds)) = next {
-                let do_it = current_round == input_round ||
-                    next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
-                if do_it {
-                    let mut neue = params.clone();
-                    neue.extend(params_next.iter().cloned());
-                    changes.push((neue, current_round, 1));
+            for (next_proj, next_rounds) in next_iter.clone() {
+                if next_rounds.len() == 0 { continue; }
+                // let next_delta = aggregate_pair_delta(prev_rounds, next_rounds, current_round, input_round);
+                let next_delta = aggregate_cur_pair_delta(prev_delta, next_rounds, current_round);
+                println!("            prevnext {:?} {:?} {:+}", Internable::to_string(&next_proj[0]), next_rounds, next_delta);
+                if next_delta == change_type || prev_delta == -change_type {
+                    let delta = if next_delta == -1 || prev_delta == -1 { -1 } else { 1 };
+                    changes.push(
+                        aggregate_needle_change(prev_proj, next_proj, current_round, -change_type * delta)
+                    );
                 }
+
+                if next_delta == 1 { break; }
             }
+
+            if prev_delta == 1 { break; }
+        }
+
+        last_delta = cur_delta;
+        for (next_proj, next_rounds) in next_iter {
+            if next_rounds.len() == 0 { continue; }
+            let next_delta = aggregate_cur_pair_delta(last_delta, next_rounds, current_round);
+            println!("        next {:?} {:?} {:+}", Internable::to_string(&next_proj[0]), next_rounds, next_delta);
+            if next_delta != 0 {
+                changes.push(
+                    aggregate_needle_change(params, next_proj, current_round, change_type * next_delta)
+                );
+                last_delta = next_delta;
+            }
+
+            if next_delta == 1 { break; }
         }
     }
 }
 
-pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
-    if let &mut AggregateEntry::Sorted { ref mut items, current_round, input_round, ref current_params, ref mut changes, ..} = current {
-        if let &Some(_) = current_params {
-            let prev = items.range::<Vec<Internable>, _>((Bound::Unbounded, Bound::Excluded(params)))
-                .rev()
-                .filter(|entry| is_aggregate_in_round(entry, current_round))
-                .next();
-            let next = items.range::<Vec<Internable>, _>((Bound::Excluded(params), Bound::Unbounded))
-                .filter(|entry| is_aggregate_in_round(entry, current_round))
-                .next();
-            match prev {
-                Some((v, prev_rounds)) => {
-                    let interesting = prev_rounds.iter().find(|&c| *c == current_round as i32);
-                    let mut do_it = current_round == input_round || interesting.is_some();
-                    if do_it {
-                        let mut neue = v.clone();
-                        neue.extend(params.iter().cloned());
-                        changes.push((neue, current_round, -1));
-                    }
+pub fn aggregate_next_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
+    aggregate_next_do(current, params, 1);
+}
 
-                    if let Some((prev_next, prev_next_rounds)) = next {
-                        let interesting = prev_next_rounds.iter().find(|&c| *c == current_round as i32);
-                        do_it = do_it || interesting.is_some();
-                        if do_it {
-                            let mut neue = v.clone();
-                            neue.extend(prev_next.iter().cloned());
-                            changes.push((neue, current_round, 1));
-                        }
-                    }
-                }
-                _ => { }
-            }
-            if let Some((params_next, next_rounds)) = next {
-                let do_it = current_round == input_round ||
-                    next_rounds.iter().find(|&c| *c == current_round as i32).is_some();
-                if do_it {
-                    let mut neue = params.clone();
-                    neue.extend(params_next.iter().cloned());
-                    changes.push((neue, current_round, -1));
-                }
-            }
-        }
-    }
+pub fn aggregate_next_remove(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
+    aggregate_next_do(current, params, -1);
 }
 
 pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>, _: &Vec<Internable>) {
@@ -2147,7 +2183,7 @@ pub fn aggregate_prev_add(current: &mut AggregateEntry, params: &Vec<Internable>
 
                     if let Some((prev_next, prev_next_rounds)) = next {
                         let interesting = prev_next_rounds.iter().find(|&c| *c == current_round as i32);
-                        do_it = do_it || interesting.is_some();
+                        do_it = current_round == input_round || interesting.is_some();
                         if do_it {
                             let mut neue = v.clone();
                             neue.extend(prev_next.iter().cloned());
@@ -2192,7 +2228,7 @@ pub fn aggregate_prev_remove(current: &mut AggregateEntry, params: &Vec<Internab
 
                     if let Some((prev_next, prev_next_rounds)) = next {
                         let interesting = prev_next_rounds.iter().find(|&c| *c == current_round as i32);
-                        do_it = do_it || interesting.is_some();
+                        do_it = current_round == input_round || interesting.is_some();
                         if do_it {
                             let mut neue = v.clone();
                             neue.extend(prev_next.iter().cloned());
@@ -2784,9 +2820,14 @@ impl Program {
         self.block_info.blocks.iter().filter(|block| block.path == path).collect()
     }
 
+
     pub fn attach(&mut self, watcher:Box<Watcher + Send>) {
         let name = watcher.get_name();
         println!("[{}] {} {}", &self.name, BrightCyan.paint("Loaded Watcher:"), name);
+        self.watchers.insert(name, watcher);
+    }
+    pub fn attach_quiet(&mut self, watcher:Box<Watcher + Send>) {
+        let name = watcher.get_name();
         self.watchers.insert(name, watcher);
     }
 
@@ -3544,6 +3585,12 @@ impl ProgramRunner {
     }
 
     pub fn run(self) -> RunLoop {
+        self._run(true)
+    }
+    pub fn run_quiet(self) -> RunLoop {
+        self._run(false)
+    }
+    pub fn _run(self, report:bool) -> RunLoop {
         let outgoing = self.program.outgoing.clone();
         let echo_channel = outgoing.clone();
         let mut program = self.program;
@@ -3557,10 +3604,10 @@ impl ProgramRunner {
             let mut blocks = vec![];
             let mut start_ns = time::precise_time_ns();
             for path in paths {
-                blocks.extend(parse_file(&mut program.state.interner, &path, true, debug_compile));
+                blocks.extend(parse_file(&mut program.state.interner, &path, report, debug_compile));
             }
             let mut end_ns = time::precise_time_ns();
-            println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
+            if report { println!("[{}] Compile took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0); }
 
             start_ns = time::precise_time_ns();
             let mut txn = CodeTransaction::new();
@@ -3569,10 +3616,10 @@ impl ProgramRunner {
             }
             txn.exec(&mut program, blocks, vec![]);
             end_ns = time::precise_time_ns();
-            println!("[{}] Load took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0);
+            if report { println!("[{}] Load took {:?}", &program.name, (end_ns - start_ns) as f64 / 1_000_000.0); }
 
             let mut iter_pool = EstimateIterPool::new();
-            println!("[{}] Starting run loop.", &program.name);
+            if report { println!("[{}] Starting run loop.", &program.name); }
 
             let mut paused = false;
 
@@ -3597,7 +3644,7 @@ impl ProgramRunner {
                                 Err(_) => path,
                             };
                             let resolved_path = resolved.to_str().unwrap();
-                            println!("Hot-reloading {} ...", resolved_path);
+                            if report { println!("Hot-reloading {} ...", resolved_path); }
 
                             let mut parsed_blocks:Vec<Block> = if resolved.exists() {
                                 parse_file(&mut program.state.interner, resolved_path, true, debug_compile)
@@ -3620,7 +3667,7 @@ impl ProgramRunner {
                     }
                     (Ok(RunLoopMessage::Transaction(v)), true) => {},
                     (Ok(RunLoopMessage::Transaction(v)), false) => {
-                        println!("[{}] Txn started", &program.name);
+                        if report { println!("[{}] Txn started", &program.name); }
                         let start_ns = time::precise_time_ns();
                         let mut txn = Transaction::new(&mut iter_pool);
                         for cur in v {
@@ -3639,12 +3686,12 @@ impl ProgramRunner {
 
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        if report { println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor()); }
                     }
                     (Ok(RunLoopMessage::RemoteTransaction(v)), true) => {},
                     (Ok(RunLoopMessage::RemoteTransaction(v)), false) => {
                         let start_ns = time::precise_time_ns();
-                        println!("[{}] Remote txn started", &program.name);
+                        if report { println!("[{}] Remote txn started", &program.name); }
                         let mut txn = RemoteTransaction::new(&mut iter_pool);
                         for cur in v {
                             txn.input_change(cur.to_change(&mut program.state.interner));
@@ -3652,52 +3699,27 @@ impl ProgramRunner {
                         txn.exec(&mut program, &mut persistence_channel);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor());
+                        if report { println!("[{}] Txn took {:?} - {:?} insts ({:?} ns) - {:?} inserts ({:?} ns)", &program.name, time / 1_000_000.0, txn.frame.counters.instructions, (time / (txn.frame.counters.instructions as f64)).floor(), txn.frame.counters.inserts, (time / (txn.frame.counters.inserts as f64)).floor()); }
                     }
                     (Ok(RunLoopMessage::CodeTransaction(adds, removes)), _) => {
                         let start_ns = time::precise_time_ns();
                         let mut tx = CodeTransaction::new();
-                        println!("[{}] Code Txn started", &program.name);
-                        if adds.len() > 0 {
-                            println!("  ADDS:");
-                            for block in adds.iter() {
-                                print_block_constraints(&block);
-                            }
-                        }
-                        if removes.len() > 0 {
-                            println!("  REMOVES:");
-                            for block in removes.iter() {
-                                println!("    - {:?}", block);
-                            }
-                        }
+                        if report { println!("[{}] Code Txn started", &program.name); }
                         tx.exec(&mut program, adds, removes);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
+                        if report { println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0); }
                     }
                     (Ok(RunLoopMessage::RemoteCodeTransaction(adds, removes)), _) => {
                         let start_ns = time::precise_time_ns();
                         let mut tx = CodeTransaction::new();
-                        println!("[{}] Remote Code Txn started", &program.name);
+                        if report { println!("[{}] Remote Code Txn started", &program.name); }
                         let added_blocks:Vec<Block> = adds.iter().map(|b| b.intern(&mut program.state.interner)).collect();
-
-                        if adds.len() > 0 {
-                            println!("  ADDS:");
-                            for block in added_blocks.iter() {
-                                print_block_constraints(&block);
-                            }
-                        }
-                        if removes.len() > 0 {
-                            println!("  REMOVES:");
-                            for block in removes.iter() {
-                                println!("    - {:?}", block);
-                            }
-                        }
 
                         tx.exec(&mut program, added_blocks, removes);
                         let end_ns = time::precise_time_ns();
                         let time = (end_ns - start_ns) as f64;
-                        println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0);
+                        if report { println!("[{}] Txn took {:?}", &program.name, time / 1_000_000.0); }
 
                     }
                     (Err(_), _) => { break; }
@@ -3706,7 +3728,7 @@ impl ProgramRunner {
             if let Some(channel) = persistence_channel {
                 channel.send(PersisterMessage::Stop).unwrap();
             }
-            println!("Closing run loop.");
+            if report { println!("Closing run loop."); }
         }).unwrap();
 
         RunLoop { thread, outgoing }
