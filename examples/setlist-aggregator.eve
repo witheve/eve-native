@@ -1,4 +1,4 @@
-# Setlist Aggregator
+  # Setlist Aggregator
 
 
 This app takes a set of concerts, and accesses the setlist.fm api to retreive
@@ -8,92 +8,36 @@ the MS Groove API to create playlists for those concerts.
 ## App Configuration
 
 commit
+  [#app/settings name: "Setlist Aggregator" 
+                 groove: [#groove client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba" client-secret: "UskJMTfCRNffOLbuBnGSBb2" redirect-uri: "http://localhost:8081"]
+                 setlist-fm: [#setlist-fm api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275"]]
+  [#app/ui]
   playing = [#app/page name: "Now Playing" icon: "ios-musical-notes" sort: 0]
-  showlist = [#app/page name: "Show List" icon: "ios-list-outline" sort: 1]
+  showlist = [#app/page #default name: "Show List" icon: "ios-list-outline" sort: 1]
   collection = [#app/page name: "Collection" icon: "ios-albums-outline" sort: 2]
   stats = [#app/page name: "Show Stats" icon: "stats-bars" sort: 3]
   map = [#app/page name: "Map" icon: "map" sort: 4]  
   settings = [#app/page name: "Settings" icon: "gear-a"] 
-  [#app/configuration groove: [#groove client-id: "1efe0909-4134-4740-96e6-dfb02ac095ba" client-secret: "UskJMTfCRNffOLbuBnGSBb2" endpoint: "https://music.xboxlive.com" redirect-uri: "http://localhost:8081"]
-                      setlist-fm: [#setlist-fm api-key: "f6c6164c-e52f-4aa5-bd22-1c76b208d275" endpoint: "https://api.setlist.fm/rest"]
-                      pages: (showlist, collection, map, playing, stats)]
-  [#app/interface page: showlist]
-end
-
-## Layout
-
-### Skeleton Layout
-
-search
-  interface = [#app/interface]
-commit
-  interface <- [|children:
-    [#ui/column style: [width: "1600px" height: "900px"] | children:
-      [#header]
-      [#content]
-      [#global-playback]
-    ]]
-end
-
-### Header
-
-search
-  header = [#header]
-bind
-  header += #ui/row
-  header <- [|children:
-    [#html/div #header/top-left sort: 1]
-    [#ui/spacer sort: 2]
-    [#html/div sort: 3 text: "Setlist Aggregator"]
-    [#ui/spacer sort: 4]
-    [#html/div #header/top-right sort: 5]
-  ]
-end
-
-### Navigation
-
-search
-  nav = [#navigation]
-  [#app/configuration pages: page]
-  page = [#app/page name icon sort]
-  settings = [#app/page name: "Settings"]
-bind
-  nav <- [#ui/column | children: 
-    [#ui/list #ui/selectable #ui/single-selectable #navigation/pages | item:
-      [#navigation/button #ui/button icon page text: name sort]]
-    [#ui/spacer sort: 99]
-    [#navigation/button #ui/button page: settings icon: settings.icon text: settings.name sort: 100]
-  ]
-end
-
-### Content
-
-search
-  content = [#content]
-bind
-  content <- [#ui/row style: [height: "100%"] |children:
-    [#navigation sort: 1]
-    [#page-container sort: 2]
-    [#ui/spacer sort: 3]
-  ]
 end
 
 ### Footer
 
 search
-  playback = [#global-playback]
-  
+  middle = [#app/layout/footer/middle]
 bind
-  playback <- [#ui/row]
+  middle += #global-playback
 end
 
 search
   playback = [#global-playback]
   [#now-playing track]
+  [#html/stream track current-time duration]
 bind
-  playback <- [|children: 
+  playback <- [children: 
     [#ui/spacer sort: 1]
-    [#groove/stream-player/playback-control #global-play sort: 2 track]
+    [#ui/column #now-playing-controls sort: 2 | children:
+      [#groove/stream-player/playback-control #global-play sort: 1 track]
+      [#ui/progress #song-progress min: 0 max: duration value: current-time width: 400]]
     [#ui/spacer sort: 3]]
 end
 
@@ -103,42 +47,19 @@ search
   playback = [#global-playback]
   not([#now-playing track])
 bind
-  playback <- [|children:
+  playback <- [children:
     [#ui/spacer sort: 1]
     [#groove/stream-player/playback-control #ui/button #global-play icon: "play"]
     [#ui/spacer sort: 3]]
 end
 
-
-### Page Container
-
-search
-  page-container = [#page-container]
-  [#app/interface page]
-commit
-  page-container += #html/div
-  page-container <- [|children: page]
-end
-
-### Navigate Between Pages
-
-search
-  [#html/event/click element: [#navigation/button page]]
-  interface = [#app/interface]
-commit
-  interface.page := page
-end
-
-
 ## Header 
 
 search
-  top-right = [#header/top-right]
+  top-right = [#html/div #app/layout/header/right]
   not([#groove/user])
 bind
-  top-right <- [|children: 
-    [#ui/button #groove-login text: "Log in to Groove"]
-  ]
+  top-right.children += [#ui/button #groove-login text: "Log in to Groove"]
 end
 
 Logging in is kicked off by clicking the login button.
@@ -164,7 +85,7 @@ end
 
 search
   page.name = "Now Playing"
-  [#app/interface page]
+  [#app/ui page]
   [#now-playing track]
   track = [#groove/track image name duration artist album]
 bind
@@ -198,7 +119,7 @@ end
 
 search
   page.name = "Collection"
-  [#app/interface page]
+  [#app/ui page]
   track = [#groove/track image name image duration artist album]
 bind
   page <- [#html/div #scrollable | children: 
@@ -216,12 +137,12 @@ end
 
 search
   page.name = "Show List"
-  [#app/interface page]
+  [#app/ui page]
 bind
   page <- [#ui/row | style: [width: "100%"] children: 
-    [#show-list/shows]
-    [#show-list/show-detail]
-    [#show-list/search-pane]
+    [#app/page/pane #show-list/shows width: 1]
+    [#app/page/pane #show-list/show-detail width: 1]
+    [#app/page/pane #show-list/search-pane width: 2]
   ]
 end
 
@@ -232,7 +153,7 @@ search
   show = [#show artist date]
   not(show = [#matched])
 bind
-  show-list <- [#ui/column | children:
+  show-list <- [children:
     [#html/div #ui/header text: "Unmatched Shows"]
     [#show-list/unmatched-shows #ui/list #ui/selectable #ui/single-selectable | item:
       [#html/div #show-list/unmatched-show sort: "{{date}}{{artist}}" show text: "{{date}} - {{artist}} "]
@@ -270,7 +191,7 @@ search
   [#setlist-fm/search/setlists artist: show.artist date: show.date setlist]
   not(show = [#matched])
 bind
-  show-detail <- [#ui/column | children: 
+  show-detail <- [children: 
     [#ui/row #info-head | children:
       [#ui/column #show-info sort: 1 | children: 
         [#html/div #artist sort: -1 text: setlist.artist.name]
@@ -359,7 +280,7 @@ search
   track = [#groove/track query name image duration artist album]
   song.artist = artist.Name
 bind
-  search-pane <- [#ui/column | children: 
+  search-pane <- [children: 
     [#ui/row #track-search children:
       [#ui/spacer sort: 1]
       [#ui/input sort: 2 icon: "play" value: query]
@@ -403,13 +324,6 @@ bind
   matched-song.children += [#groove/stream-player #display track]
 end
 
-
-
-
-
-
-
-
 ## App Data
 
 commit
@@ -431,90 +345,6 @@ end
 
 
 
-
-
-
-
-## Get Data From Setlist.fm
-
-search
-  find-setlist = [#setlist-fm/search/setlists artist date]
-  [#setlist-fm api-key endpoint]
-  encoded-artist = string/url-encode[text: artist]
-  address = "{{endpoint}}/1.0/search/setlists?artistName={{encoded-artist}}&date={{date}}&p=1"
-commit
-  [#http/request #find-setlist find-setlist address headers: 
-      [#http/header key: "x-api-key" value: api-key]
-      [#http/header key: "Accept" value: "application/json"]]
-end
-
-search
-  [#find-setlist find-setlist response: [body]]
-commit
-  [#json/decode #find-setlist find-setlist json: body]
-end
-
-search
-  result = [#find-setlist find-setlist json-object]
-  not(result = [#finished])
-  json-object = [setlist: [value: [artist id eventDate tour venue sets: [set]]]]
-  set = [index: set-number value: [song: [index: song-number value: [name: song-name]]]]
-commit
-  result += #finished
-  find-setlist += #finished
-  songs = [#setlist-fm/song artist: artist.name number: song-number, name: song-name]
-  sets  = [#setlist-fm/set id number: set-number | songs]
-  find-setlist.setlist += [#setlist-fm/setlist id artist venue date: eventDate, tour: tour.name | sets]
-end
-
-Clean up records
-
-search
-  complete = [#find-setlist #finished json-object]
-  find-setlist = [#find-setlist]
-commit
-  find-setlist := none
-  complete := none
-end
-
-
-## Misc Diagnostics
-
-search
-  [#http/request/error error]
-commit
-  [#html/div text: error]
-end
-
-search
-  [#disable]
-  [#http/request/finished request]
-commit
-  [#html/div request text: "***Finished*** {{request}}"]
-end
-
-search
-  [#disable]
-  q = [#http/response body]
-commit
-  [#html/div text: "THIS IS THE BODY: {{body}}"]
-  //[#json/decode json: body]
-end
-
-search
-  [#disable]
-  [#json/decode json-object]
-commit
-  [#html/div text: "{{json-object.Tracks.Items.value.Name}} {{json-object.Tracks.Items.value.Album.Name}}  - {{json-object.Tracks.Items.value.Id}}"] 
-end
-
-search
-  request = [#http/request]
-  not(request = [#finished])
-bind
-  [#html/div text: "Processing request..."]
-end
-
 ## Styles
 
 Style all playback controls as circle buttons
@@ -526,51 +356,49 @@ bind
 end
 
 
-commit
-  [#html/style text: "
-    body { background-color: rgb(24,24,24); height: 40px; color: rgb(200,200,200); }
-    div { user-select: none; cursor: default;}
-    div::-webkit-scrollbar { width: 5px; }
-    div::-webkit-scrollbar-track { -webkit-box-shadow: inset 0 0 6px rgba(0,0,0,0); }
-    div::-webkit-scrollbar-thumb { background-color: rgba(255,255,255,.5); outline: 1px solid slategrey; border-radius: 25px; }
-    .ui-button { background-color: rgb(40,40,40); color: rgb(200,200,200); padding: 10px; border: 1px solid rgb(60,60,60); margin-bottom: 10px; }
-    .ui-button:hover { background-color: rgb(50,50,50); color: rgb(200,200,200); border: 1px solid rgb(60,60,60);}
-    .header { background-color: rgb(18,18,18); padding: 10px; }    
-    .global-playback { background-color: rgb(40,40,40); height: 100px; color: rgb(200,200,200); }    
-    .ui-list-item { padding-top: 10px; padding-bottom: 10px; border-bottom: 1px solid rgb(80,80,80); }
-    .ui-list-item:hover { background-color: rgb(40,40,40); }
-    .show-list-shows { width: 250px; }
-    .show-list-show-detail {padding-left: 20px; padding-right: 20px; background-color: rgb(22,22,22); width: 400px; margin-right: 10px;}
-    .artist { font-size: 26px; margin-bottom: 10px; }
-    .tour { margin-bottom: 5px; color: rgb(150,150,150); }
-    .venue { margin-bottom: 5px; color: rgb(150,150,150);}
-    .date { margin-bottom: 5px; color: rgb(150,150,150);}
-    .setlists { overflow: auto; max-height: 650px; margin-top: 15px; padding-right: 10px;}
-    .setlist { margin-top: 10px; margin-bottom: 20px; }
-    .song { padding: 5px; line-height: 30px; }
-    .song-number { width: 15px; margin-right: 10px; color: rgb(120,120,120); text-align: right }
-    .song:hover { background-color: rgb(40,40,40);}
-    .show-list-search-pane {min-width: 400px; max-width: 500px; overflow: auto;}
-    .album-image {width: 100px; margin-right: 20px;}
-    .album-result {padding: 20px;}
-    .ui-header {padding: 10px; margin-bottom: 10px; font-size: 20px;}
-    .track-search {padding: 10px; padding-top: 20px; padding-bottom: 20px; background-color: rgb(18,18,18);}
-    .navigation { background-color: rgb(18,18,18); width: 150px; height: 100%; }
-    .navigation-button { padding: 10px 20px 10px 20px; background-color: rgb(30,30,30); user-select: none; cursor: default; margin: 0px; border: 0px; width: 100%; min-height: 75px;}
-    .navigation-button:hover { color: rgb(255,255,255); border: 0px; }
-    .circle-button {padding: 0px; padding-left: 10px; border-radius: 40px; width: 30px; height: 30px; background-color: rgba(0,0,0,0); border: 1px solid white; margin: 10px;}
-    .circle-button:hover {background-color: rgb(0,158,224,1); border-color:  white; color:  white;}
-    .track-name {padding-bottom: 10px;}
-    .results-list .ui-list {padding-right: 10px;}
-    .results-list {overflow: auto; max-height: 700px;}
-    .track-info {width: 150px;}
-    table { border-collapse: collapse; margin: 20px;}
-    td { padding: 10px; }
-    table, th, td { border: 1px solid rgb(80,80,80); }
-    .scrollable {  overflow: auto; height: 800px; }
-    .global-playback {padding-top: 8px;}
-    .global-play {width: 50px; height: 50px; font-size: 25px; padding-left: 17px;}
-    .ui-input {padding: 5px 10px 5px 10px; border-radius: 20px; border: 1px solid rgb(80,80,80); outline: none;}
-    .large-button {width: 50px; height: 50px; font-size: 25px; padding-left: 15px;}
-    "]
-end
+
+[#html/style text: "
+  body { background-color: rgb(24,24,24); height: 40px; color: rgb(200,200,200); }
+  div { user-select: none; cursor: default;}
+  div::-webkit-scrollbar { width: 5px; }
+  div::-webkit-scrollbar-track { -webkit-box-shadow: inset 0 0 6px rgba(0,0,0,0); }
+  div::-webkit-scrollbar-thumb { background-color: rgba(255,255,255,.5); outline: 1px solid slategrey; border-radius: 25px; }
+  .ui-button { background-color: rgb(40,40,40); color: rgb(200,200,200); padding: 10px; border: 1px solid rgb(60,60,60); margin-bottom: 10px; }
+  .ui-button:hover { background-color: rgb(50,50,50); color: rgb(200,200,200); border: 1px solid rgb(60,60,60);}
+  .header { background-color: rgb(18,18,18); padding: 10px; }    
+  .global-playback { background-color: rgb(40,40,40); height: 100px; color: rgb(200,200,200); }    
+
+  .show-list-shows { width: 250px; }
+  .show-list-show-detail {padding-left: 20px; padding-right: 20px; background-color: rgb(22,22,22); width: 400px; margin-right: 10px;}
+  .artist { font-size: 26px; margin-bottom: 10px; }
+  .tour { margin-bottom: 5px; color: rgb(150,150,150); }
+  .venue { margin-bottom: 5px; color: rgb(150,150,150);}
+  .date { margin-bottom: 5px; color: rgb(150,150,150);}
+  .setlists { overflow: auto; max-height: 650px; margin-top: 15px; padding-right: 10px;}
+  .setlist { margin-top: 10px; margin-bottom: 20px; }
+  .song { padding: 5px; line-height: 30px; }
+  .song-number { width: 15px; margin-right: 10px; color: rgb(120,120,120); text-align: right }
+  .song:hover { background-color: rgb(40,40,40);}
+  .show-list-search-pane {min-width: 400px; max-width: 500px; overflow: auto;}
+  .album-image {width: 100px; margin-right: 20px;}
+  .album-result {padding: 20px;}
+  
+  .track-search {padding: 10px; padding-top: 20px; padding-bottom: 20px; background-color: rgb(18,18,18);}
+  .navigation { background-color: rgb(18,18,18); width: 150px; height: 100%; }
+  .navigation-button { padding: 10px 20px 10px 20px; background-color: rgb(30,30,30); user-select: none; cursor: default; margin: 0px; border: 0px; width: 100%; min-height: 75px;}
+  .navigation-button:hover { color: rgb(255,255,255); border: 0px; }
+  .circle-button {padding: 0px; padding-left: 10px; border-radius: 40px; width: 30px; height: 30px; background-color: rgba(0,0,0,0); border: 1px solid white; margin: 10px;}
+  .circle-button:hover {background-color: rgb(0,158,224,1); border-color:  white; color:  white;}
+  .track-name {padding-bottom: 10px;}
+  .results-list .ui-list {padding-right: 10px;}
+  .results-list {overflow: auto; max-height: 700px;}
+  .track-info {width: 150px;}
+  table { border-collapse: collapse; margin: 20px;}
+  td { padding: 10px; }
+  table, th, td { border: 1px solid rgb(80,80,80); }
+  .scrollable {  overflow: auto; height: 800px; }
+  .global-playback {padding-top: 8px;}
+  .global-play {width: 50px; height: 50px; font-size: 25px; padding-left: 17px;}
+  
+  .large-button {width: 50px; height: 50px; font-size: 25px; padding-left: 15px;}
+  "]

@@ -1,0 +1,34 @@
+# Gui Editor
+
+This is a drag and drop editor for interfaces in Eve
+
+commit
+  [#app/settings name: "GUI Builder"]
+  showlist = [#app/page #default name: "Editor" icon: "ios-list-outline" sort: 1]
+  [#app/ui]
+end
+
+
+search
+  page.name = "Editor"
+  [#app/ui page]
+bind
+  page <- [#html/div #html/listener/context-menu #main-area | children:
+    [#html/div text: "Hello world"]]
+end
+
+
+search
+  [#html/event/mouse-up button: "right" target: container page-x page-y]
+  //canvas = [#main-area]
+commit
+  //container.children += [#container page-x page-y]
+  container.children += [#container text: "{{page-x}}{{page-y}}" x: page-x y: page-y]
+end
+
+
+search
+  container = [#container x y]
+bind
+  container <- [#html/div #html/listener/context-menu style: [min-width: "100px" min-height: "100px" padding: "10px" border: "1px solid black"]]
+end

@@ -1012,6 +1012,10 @@ commit
         transform: rotate(360deg)
       }
     }
+    .ui-header {padding: 10px; margin-bottom: 10px; font-size: 20px;}
+    .ui-list-item { padding-top: 10px; padding-bottom: 10px; border-bottom: 1px solid rgb(200,200,200); }
+    .ui-list-item:hover { background-color: rgb(250,250,250); }
+    .ui-input {padding: 5px 10px 5px 10px; border-radius: 20px; border: 1px solid rgb(200,200,200); outline: none;}
     "]
 end
 

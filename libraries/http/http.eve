@@ -19,9 +19,9 @@ Default method
 
 search
   request = [#http/request]
-  not(request.method)
+  method = if m = request.method then m else "GET"
 bind
-  request.method += "GET"
+  request.method += method
 end
 
 Default empty body
@@ -45,11 +45,11 @@ end
 Associate response with its request
 
 search
-  response-change = [#http/response/change response]
-  response = [#html/response request]
+  response-received = [#http/response/received response]
+  response = [#http/response]
   request = [#http/request]
 commit
-  response-change := none
+  response-received := none
   request.response := response
 end
 
@@ -116,7 +116,7 @@ end
 
 search
   parse = [#html/url/parse-query query]
-  (pair, i) = string/split[text: query by: "&"]
+  pair = if (qq, i) = string/split[text: query by: "&"] then qq else query
   (token, index) = string/split[text: pair by: "="]
 bind
   [#html/url/query-kvs parse pair token index]
@@ -133,4 +133,42 @@ search
   [#html/url/parse-query url result]
 bind
   url.parsed-query += result
+end
+
+
+## Diagnostics
+
+search
+  [#http/request/error error]
+commit
+  [#html/div text: error]
+end
+
+search
+  [#disable]
+  [#http/request/finished request]
+commit
+  [#html/div request text: "***Finished*** {{request}}"]
+end
+
+search
+  [#disable]
+  q = [#http/response body]
+commit
+  [#html/div text: "THIS IS THE BODY: {{body}}"]
+  //[#json/decode json: body]
+end
+
+search
+  [#disable]
+  [#json/decode json-object]
+commit
+  [#html/div text: "{{json-object.Tracks.Items.value.Name}} {{json-object.Tracks.Items.value.Album.Name}}  - {{json-object.Tracks.Items.value.Id}}"] 
+end
+
+search
+  request = [#http/request]
+  not(request = [#finished])
+bind
+  [#html/div text: "Processing request..."]
 end

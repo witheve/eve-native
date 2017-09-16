@@ -1,0 +1,55 @@
+# Setlist.fm
+
+
+## Specify endpoint
+
+
+search
+  setlist = [#setlist-fm]
+  e-point = if setlist.endpoint then setlist.endpoint else "https://api.setlist.fm/rest"
+bind
+  setlist.endpoint += e-point
+end
+
+## Search Setlists
+
+search
+  find-setlist = [#setlist-fm/search/setlists artist date]
+  [#setlist-fm api-key endpoint]
+  encoded-artist = string/url-encode[text: artist]
+  address = "{{endpoint}}/1.0/search/setlists?artistName={{encoded-artist}}&date={{date}}&p=1"
+commit
+  [#http/request #setlist-fm/find-setlist find-setlist address headers: 
+      [#http/header key: "x-api-key" value: api-key]
+      [#http/header key: "Accept" value: "application/json"]]
+end
+
+search
+  [#setlist-fm/find-setlist find-setlist response: [body]]
+commit
+  [#json/decode #setlist-fm/find-setlist find-setlist json: body]
+end
+
+search
+  result = [#setlist-fm/find-setlist find-setlist json-object]
+  not(result = [#finished])
+  json-object = [setlist: [value: [artist id eventDate tour venue sets: [set]]]]
+  set = [index: set-number value: [song: [index: song-number value: [name: song-name]]]]
+commit
+  result += #finished
+  find-setlist += #finished
+  songs = [#setlist-fm/song artist: artist.name number: song-number, name: song-name]
+  sets  = [#setlist-fm/set id number: set-number | songs]
+  find-setlist.setlist += [#setlist-fm/setlist id artist venue date: eventDate, tour: tour.name | sets]
+end
+
+Clean up records
+
+search
+  complete = [#setlist-fm/find-setlist #finished json-object]
+  find-setlist = [#setlist-fm/find-setlist]
+commit
+  find-setlist := none
+  complete := none
+end
+

@@ -26,27 +26,42 @@ export class Stream extends Library {
     
             });
             video.onplay = function () {
-              let play_id = createId();
+              let id = createId();
               program.inputEAVs([
-                [play_id, "tag", "html/event/stream-play"],
-                [play_id, "stream", streamID],
+                [id, "tag", "html/event/stream-play"],
+                [id, "stream", streamID],
               ]);                
             };
             video.onpause = function () {
-              let paused_id = createId();
+              let id = createId();
               program.inputEAVs([
-                [paused_id, "tag", "html/event/stream-pause"],
-                [paused_id, "stream", streamID],
+                [id, "tag", "html/event/stream-pause"],
+                [id, "stream", streamID],
               ]);    
             };
             video.onloadeddata = function () {
-              let ready_id = createId();
+              let id = createId();
               program.inputEAVs([
-                [ready_id, "tag", "html/event/stream-ready"],
-                [ready_id, "stream", streamID],
+                [id, "tag", "html/event/stream-ready"],
+                [id, "stream", streamID],
               ]);  
             }
-            //window.addEventListener("pageshow", video.onplay());
+            video.ontimeupdate = function () {
+              let id = createId();
+              program.inputEAVs([
+                [id, "tag", "html/event/time-change"],
+                [id, "stream", streamID],
+                [id, "time", video.currentTime]
+              ]);  
+            }
+            video.ondurationchange = function() {
+              let id = createId();
+              program.inputEAVs([
+                [id, "tag", "html/event/duration-change"],
+                [id, "stream", streamID],
+                [id, "duration", video.duration]
+              ]);  
+            }
             this.streams[streamID] = video; 
          }
       }

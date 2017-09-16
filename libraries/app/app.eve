@@ -107,13 +107,36 @@ commit
   ui.page := page
 end
 
+If no tab is selected, display the default page
+
+search
+  default-page = [#app/page #default]
+  default-page-button = [#app/layout/navigation-button page: default-page]
+  ui = [#app/ui]
+  nav = [#navigation/pages]
+  not([#app/layout/navigation-button #ui/selected])
+commit
+  nav.selected := default-page-button
+  ui.page := default-page
+end
+
 #### Page Container
 
 search
   page-container = [#app/layout/page-container]
   [#app/ui page]
 bind
-  page-container <- [#html/div #app/layout/page | children: page]
+  page-container <- [#html/div #app/layout/page children: page]
+end
+
+#### Panes
+
+search
+  pane = [#app/page/pane]
+  width = if pane.width then pane.width else 1
+bind
+  pane += #ui/column
+  pane <- [style: [flex-grow: "{{width}}"]]
 end
 
 ### Footer
@@ -127,7 +150,7 @@ search
 bind
   header <- [#ui/row | children:
     [#html/div #app/layout/footer/left sort: 1]
-    [#html/div #app/layout/footer/middle sort: 2 text: "Footer"]
+    [#html/div #app/layout/footer/middle sort: 2]
     [#html/div #app/layout/footer/right sort: 3]]
 end
 
@@ -140,8 +163,10 @@ commit
     .app-layout-header-middle { padding: 10px; }
     .app-layout-footer { background-color: rgb(200,200,200); display: flex; justify-content: space-between; }
     .app-layout-footer-middle { padding: 10px; }
-    .app-layout-content {flex-grow: 1;}
-    .app-layout-page-container { padding: 10px; }
+    .app-layout-content {flex-grow: 1; display: flex;}
+    .app-page { display: flex; height: 100%; }
+    .app-page-pane {padding: 10px; overflow: auto;}
+    .app-layout-page-container { padding: 10px; flex-grow: 1; }
     .app-layout-navigation { background-color: rgb(130,130,130);  }
     .app-layout-navigation-button { padding: 10px 20px 10px 20px; background-color: rgb(230,230,230); margin: 0px; border: 0px; border-radius: 0px; width: 100%; min-height: 75px;  }
     .app-layout-navigation-button.ui-selected { background-color: rgb(255,255,255); color: rgb(0,158,224);  }

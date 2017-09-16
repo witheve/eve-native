@@ -2,8 +2,16 @@
 
 The groove API is configured with a record tagged `#groove` with the following shape:
 
-`[#groove client-id client-secret endpoint redirect-uri]`
+`[#groove client-id client-secret redirect-uri]`
 
+## Specify Groove endpoint
+
+search
+  groove = [#groove]
+  e-point = if groove.endpoint then groove.endpoint else "https://music.xboxlive.com"
+bind
+  groove.endpoint += e-point
+end
 
 ## Logging Into Groove
 
@@ -22,10 +30,16 @@ commit
   [#html/redirect url: address]
 end
 
+search
+  [#html/url hash]
+bind
+  [#html/url/parse-query query: hash]
+end
+
 A successful login will return to the app an access token
 
 search
-  [#html/url query: [#html/url/query key: "access_token" value: access-token]]
+  [#html/url/query key: "access_token" value: access-token]
   groove = [#groove]
 commit
   groove.access-token := access-token
@@ -37,7 +51,6 @@ end
 With an access token in hand, we can use that to get user-specific information.
 
 search
-  [#groove/get-user]
   [#groove access-token endpoint]
 commit
   [#http/request #groove/profile address: "{{endpoint}}/1/user/music/profile" method: "GET" headers: 
