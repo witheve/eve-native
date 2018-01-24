@@ -6,7 +6,7 @@
  
 Eve is a programming language based on years of research into building a human-first programming platform. 
 
-**This repository hosts a preview of Eve v0.4 alpha, which is currently under active development. Please don't share the contents of this repository.**
+**This repository hosts a preview of Eve v0.4 alpha, which is unfortunately no longer under development.**
 
 ## Getting Started with Eve v0.4 alpha
 
