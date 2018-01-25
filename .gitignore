@@ -1,5 +1,4 @@
 target
-Cargo.lock
 data/*
 *.evedb
 .rpt2_cache/
