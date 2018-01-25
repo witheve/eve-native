@@ -17,6 +17,12 @@ commit
     "li"
     "ul"
     "ol"
+    "audio"
+    "source"
+    "video"
+    "table"
+    "tr"
+    "td"
     )]
 end
 ~~~
@@ -373,3 +379,11 @@ watch client/websocket
   ("html/export triggers" element trigger)
 end
 ~~~
+
+Redirect to a url.
+~~~ eve
+search
+  [#html/redirect url]
+watch client/websocket
+  ("html/redirect" url)
+end
