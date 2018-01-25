@@ -76,7 +76,7 @@ Please file any issues in this repository. Before you file an issue, please take
 
 ## License
 
-(c) 2017 Kodowa Inc, All Rights Reserved
+Eve is licensed under the Apache 2.0 license, see [LICENSE](https://github.com/witheve/eve-native/blob/master/LICENSE) for details.
 
 ## Disclaimer
 
