@@ -122,6 +122,8 @@ lazy_static! {
         m.insert("string/replace".to_string(), FunctionInfo::new(vec!["text", "replace", "with"]));
         m.insert("string/contains".to_string(), FunctionInfo::new(vec!["text", "substring"]));
         m.insert("string/lowercase".to_string(), FunctionInfo::new(vec!["text"]));
+        m.insert("string/encode".to_string(), FunctionInfo::new(vec!["text"]));
+        m.insert("string/url-encode".to_string(), FunctionInfo::new(vec!["text"]));
         m.insert("string/uppercase".to_string(), FunctionInfo::new(vec!["text"]));
         m.insert("string/length".to_string(), FunctionInfo::new(vec!["text"]));
         m.insert("string/substring".to_string(), FunctionInfo::new(vec!["text", "from", "to"]));

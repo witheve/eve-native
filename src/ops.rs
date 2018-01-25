@@ -6,6 +6,8 @@ extern crate time;
 extern crate serde_json;
 extern crate bincode;
 extern crate term_painter;
+extern crate data_encoding;
+extern crate urlencoding;
 extern crate natord;
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -35,6 +37,7 @@ use std::f32::consts::{PI};
 use std::mem;
 use std::usize;
 use rand::{Rng, SeedableRng, XorShiftRng};
+use self::data_encoding::base64;
 use self::term_painter::ToStyle;
 use self::term_painter::Color::*;
 use parser;
@@ -703,6 +706,10 @@ impl Internable {
         Internable::Number(value)
     }
 
+    pub fn from_str(s: &str) -> Internable { 
+        Internable::String(s.to_string()) 
+    } 
+
     pub fn print(&self) -> String {
         match self {
             &Internable::String(ref s) => {
@@ -1310,6 +1317,8 @@ pub fn make_function(op: &str, params: Vec<Field>, output: Field) -> Constraint 
         "string/length" => string_length,
         "eve/type-of" => eve_type_of,
         "eve/parse-value" => eve_parse_value,
+        "string/encode" => string_encode,
+        "string/url-encode" => string_urlencode,
         "concat" => concat,
         "gen_id" => gen_id,
         _ => panic!("Unknown function: {:?}", op)
@@ -1599,6 +1608,23 @@ pub fn string_length(params: Vec<&Internable>) -> Option<Internable> {
         _ => None
     }
 }
+
+pub fn string_encode(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(base64::encode(text.as_bytes()))),
+        &[&Internable::Number(ref number)] => Some(Internable::String(number.to_string())),
+        _ => None
+    }
+}
+
+pub fn string_urlencode(params: Vec<&Internable>) -> Option<Internable> {
+    match params.as_slice() {
+        &[&Internable::String(ref text)] => Some(Internable::String(urlencoding::encode(text))),
+        &[&Internable::Number(ref number)] => Some(Internable::String(number.to_string())),
+        _ => None
+    }
+}
+
 
 pub fn string_substring(params: Vec<&Internable>) -> Option<Internable> {
     let params_slice = params.as_slice();

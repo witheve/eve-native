@@ -17,6 +17,12 @@ commit
     "li"
     "ul"
     "ol"
+    "audio"
+    "source"
+    "video"
+    "table"
+    "tr"
+    "td"
     )]
 end
 ~~~
@@ -118,6 +124,7 @@ search
     type != "checkbox"
     type != "submit"
     type != "radio"
+    type != "range"
     then input
   if input = [#html/element tagname: "input"]
     not(input.type)
@@ -373,3 +380,11 @@ watch client/websocket
   ("html/export triggers" element trigger)
 end
 ~~~
+
+Redirect to a url.
+~~~ eve
+search
+  [#html/redirect url]
+watch client/websocket
+  ("html/redirect" url)
+end

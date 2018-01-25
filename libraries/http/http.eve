@@ -1,0 +1,174 @@
+# HTTP
+
+## Send an HTTP Request
+
+HTTP requests accept several attributes:
+
+- address - the destination for the request
+- method - the method of the request is one of GET, PUT, POST, DELETE, HEAD, TRACE, CONNECT, PATCH 
+- body - the body of the HTTP request
+- headers - request headers take the form of `[#http/header key value]`
+
+search
+  request = [#http/request address method body headers: [#http/header key value]]
+watch http
+  ("request", request, address, method, body, key, value)
+end
+
+Default method
+
+search
+  request = [#http/request]
+  method = if m = request.method then m else "GET"
+bind
+  request.method += method
+end
+
+Default empty body
+
+search
+  request = [#http/request]
+  not(request.body)
+commit
+  request.body := ""
+end
+
+Default empty header
+
+search
+  request = [#http/request]
+  not(request.headers)
+commit
+  request.headers := [#http/header key: "" value: ""]
+end
+
+Associate response with its request
+
+search
+  response-received = [#http/response/received response]
+  response = [#http/response]
+  request = [#http/request]
+commit
+  response-received := none
+  request.response := response
+end
+
+Associate an error with its request
+
+search
+  error = [#http/request/error request]
+  request = [#http/request]
+commit
+  request.error := error
+end
+
+Tag a finished request as such
+
+search
+  [#http/request/finished request]
+commit
+  request += #finished
+end
+
+Reconstruct a body from chunks, only after the request is`#finished`
+
+search
+  [#http/body-chunk response chunk index]
+  response = [#http/response request]
+  request = [#http/request #finished]
+watch http
+  ("body", response, chunk, index)
+end
+
+When the full body is reconstructed, attach it to the response
+
+search
+  q = [#http/full-body body response]
+commit
+  response.body := body
+end
+
+Clean up body chunks once the body is reconstructed
+
+search
+  chunk = [#http/body-chunk response]
+  response = [#http/response body]
+commit
+  chunk := none
+end
+
+## Receive HTTP Requests
+
+search
+  server = [#http/server address]
+watch http
+  ("server", server, address)
+end
+
+
+## Parse Query Strings
+
+search
+  url = [#html/url query]
+bind
+  [#html/url/parse-query url query]
+end
+
+search
+  parse = [#html/url/parse-query query]
+  pair = if (qq, i) = string/split[text: query by: "&"] then qq else query
+  (token, index) = string/split[text: pair by: "="]
+bind
+  [#html/url/query-kvs parse pair token index]
+end
+
+search
+  [#html/url/query-kvs parse pair, token: key, index: 1]
+  [#html/url/query-kvs parse pair, token: value, index: 2]
+bind
+  parse.result += [#html/url/query key value]
+end
+
+search
+  [#html/url/parse-query url result]
+bind
+  url.parsed-query += result
+end
+
+
+## Diagnostics
+
+search
+  [#http/request/error error]
+commit
+  [#html/div text: error]
+end
+
+search
+  [#disable]
+  [#http/request/finished request]
+commit
+  [#html/div request text: "***Finished*** {{request}}"]
+end
+
+search
+  [#disable]
+  q = [#http/response body]
+commit
+  [#html/div text: "THIS IS THE BODY: {{body}}"]
+  //[#json/decode json: body]
+end
+
+search
+  [#disable]
+  [#json/decode json-object]
+commit
+  [#html/div text: "{{json-object.Tracks.Items.value.Name}} {{json-object.Tracks.Items.value.Album.Name}}  - {{json-object.Tracks.Items.value.Id}}"] 
+end
+
+search
+  request = [#http/request]
+  not(request = [#finished])
+bind
+  [#html/div text: "Processing request..."]
+end
