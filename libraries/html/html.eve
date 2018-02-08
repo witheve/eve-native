@@ -118,6 +118,7 @@ search
     type != "checkbox"
     type != "submit"
     type != "radio"
+    type != "range"
     then input
   if input = [#html/element tagname: "input"]
     not(input.type)
