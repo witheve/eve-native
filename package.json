@@ -8,8 +8,8 @@
     "url": "https://github.com/Kodowa/eve-native"
   },
   "scripts": {
-    "build": "rollup -c",
-    "watch": "rollup -c -w",
+    "build": "webpack --mode production",
+    "watch": "webpack --watch --mode development",
     "postinstall": "postinstall-build build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -30,16 +30,22 @@
     "@types/md5": "^2.1.32",
     "@types/uuid": "^3.4.0",
     "autoprefixer": "^7.1.2",
+    "awesome-typescript-loader": "^5.0.0",
+    "css-loader": "^0.28.11",
+    "exports-loader": "^0.7.0",
+    "file-loader": "^2.0.0",
+    "imports-loader": "^0.8.0",
+    "mini-css-extract-plugin": "^0.8.0",
     "postcss-color-function": "^4.0.0",
     "postcss-custom-properties": "^6.1.0",
-    "rollup": "^0.45.2",
-    "rollup-plugin-commonjs": "8.0.2",
-    "rollup-plugin-json": "^2.3.0",
-    "rollup-plugin-multi-entry": "2.0.0",
-    "rollup-plugin-node-resolve": "3.0.0",
-    "rollup-plugin-postcss": "^0.5.4",
-    "rollup-plugin-typescript2": "^0.4.6",
-    "rollup-watch": "^4.3.1",
-    "typescript": "^2.4.1"
+    "postcss-loader": "^3.0.0",
+    "raw-loader": "^0.5.1",
+    "source-map-loader": "^0.2.3",
+    "style-loader": "^0.21.0",
+    "typescript": "^2.9.2",
+    "url-loader": "^1.1.2",
+    "webpack": "^4.12.0",
+    "webpack-cli": "^3.0.4",
+    "webpack-dev-server": "^3.1.4"
   }
 }
