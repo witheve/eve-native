@@ -43,7 +43,7 @@ function make_default_config_for_entry(entry, params) {
         "process.env.ASSET_PATH": JSON.stringify(ASSET_PATH)
       }),
       new MiniCssExtractPlugin({
-        filename: `./dist/${name}.css`
+        filename: `./${name}.css`
       })
     ],
 
@@ -92,7 +92,8 @@ function make_default_config_for_entry(entry, params) {
 }
 
 module.exports = [
-  make_default_config_for_entry("./ts/main.ts", {no_compile_fluorine: true})
+  make_default_config_for_entry("./libraries/eve-libraries.css", {name: "eve-libraries", no_compile_fluorine: true}),
+  make_default_config_for_entry("./ts/main.ts", {name: "eve-libraries", no_compile_fluorine: true})
   // "./libraries/**/*.css"
 ];
 

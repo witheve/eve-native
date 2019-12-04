@@ -8,7 +8,7 @@
     "url": "https://github.com/Kodowa/eve-native"
   },
   "scripts": {
-    "build": "webpack --mode production",
+    "build": "webpack --mode development",
     "watch": "webpack --watch --mode development",
     "postinstall": "postinstall-build build",
     "test": "echo \"Error: no test specified\" && exit 1"
